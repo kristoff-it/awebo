@@ -1,0 +1,42 @@
+.{
+    .name = .awebo,
+    .version = "0.0.1",
+    .fingerprint = 0x50424de2ba07ebcc,
+    .minimum_zig_version = "0.16.0-dev.1484+d0ba6642b",
+    .dependencies = .{
+        .dvui = .{
+            .url = "git+https://github.com/david-vanderson/dvui?ref=zig16-dev#9ae8d224eb35e337fd8372fb6b3b2c4415216767",
+            .hash = "dvui-0.4.0-dev-AQFJmcME2gArIJl8ARlpxg_5A-ePF4aHuQPuQs1EnUlS",
+        },
+        .portaudio = .{
+            .url = "git+https://github.com/allyourcodebase/portaudio.git#9ebdee1dbcbb02e4f65c57f67028ee23e84b1ea2",
+            .hash = "portaudio-19.7.0-2-Wv4wb8IrAAA3nebRbuallsoerxEHkOdyCwouQlxPKumz",
+        },
+        .opus = .{
+            .url = "git+https://github.com/allyourcodebase/opus#0a50d25f1b304b4fa9566592eeec02f3a4396195",
+            .hash = "opus-0.0.1-vuF-cK4kAABi0QScXyy5TqaHBG7L9OFM70pQVstDAUzO",
+        },
+        .folders = .{
+            .url = "git+https://github.com/ziglibs/known-folders#bafef170a73c064dc706fcfbdc2e406a35681a9c",
+            .hash = "known_folders-0.0.0-Fy-PJovNAAAtqbaXgBhV6G-Z4-WNo7P0Rov-x-npZq21",
+        },
+        .opus_tools = .{
+            .url = "git+https://github.com/allyourcodebase/opus-tools#3dd8b35416b2554dfbee7109bdb2f35ff4c6159f",
+            .hash = "opus_tools-0.0.1-ERo7OssyAAAN9CWsY1_J-RpkcnlXkMo46VWYfMIhxh3P",
+        },
+        .zqlite = .{
+            .url = "git+https://github.com/karlseguin/zqlite.zig.git#dc081e6536f10e47c8c4a68155102be215c3ecde",
+            .hash = "zqlite-0.0.0-RWLaY9C4mADXxgEw5CF98ei5ImiVvQT8s3H_5jFVAMvF",
+        },
+        .zigwin32 = .{
+            .url = "git+https://github.com/marlersoft/zigwin32#5587b16fa040573846a6bf531301f6206d31a6bf",
+            .hash = "zigwin32-25.0.28-preview-AAAAAICM5AMResOGQnQ85mfe60TTOQeMtt7GRATUOKoP",
+            .lazy = true,
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

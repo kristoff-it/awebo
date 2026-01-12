@@ -1,0 +1,252 @@
+const std = @import("std");
+const zon = @import("build.zig.zon");
+
+const Context = enum { client, server };
+
+const Audio = enum {
+    portaudio,
+    wasapi,
+    dummy,
+};
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const check = b.step("check", "check everything");
+
+    const folders = b.dependency("folders", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const zqlite = b.dependency("zqlite", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const audio_backend = configureAudioBackend(b, target, optimize);
+    setupServer(b, target, optimize, check, zqlite, folders);
+    setupClientGui(b, target, optimize, check, folders, audio_backend);
+
+    const ci = b.step("ci", "Run all the steps for the CI");
+    ci.dependOn(b.getInstallStep());
+
+    {
+        const exe = b.addExecutable(.{
+            .name = "audiotest",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/audiotest.zig"),
+                .target = target,
+            }),
+        });
+        if (target.result.os.tag == .windows) {
+            if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
+                exe.root_module.addImport("win32", win32_dep.module("win32"));
+            }
+        }
+
+        exe.root_module.addImport("audio_backend", audio_backend);
+
+        const install = b.addInstallArtifact(exe, .{});
+        ci.dependOn(&install.step);
+        const run = b.addRunArtifact(exe);
+        run.step.dependOn(&install.step);
+        if (b.args) |args| run.addArgs(args);
+        b.step("audiotest", "Run the audio test application").dependOn(&run.step);
+        check.dependOn(&install.step);
+    }
+}
+
+pub fn setupServer(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    check: *std.Build.Step,
+    zqlite: *std.Build.Dependency,
+    folders: *std.Build.Dependency,
+) void {
+    const server = b.addExecutable(.{
+        .name = "awebo-server",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main_server.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const options = b.addOptions();
+    options.addOption(Context, "context", .server);
+    options.addOption(bool, "slow", b.option(
+        bool,
+        "slow",
+        "(server option) add 1s delay to most operations",
+    ) orelse false);
+    options.addOption(bool, "echo", b.option(
+        bool,
+        "echo",
+        "(server option) echo a client's audio back to them",
+    ) orelse false);
+    options.addOption([]const u8, "version", b.option(
+        []const u8,
+        "override-version",
+        "Overrides the version of awebo",
+    ) orelse zon.version);
+
+    server.root_module.addOptions("options", options);
+    server.root_module.addImport("folders", folders.module("known-folders"));
+    server.root_module.addImport("zqlite", zqlite.module("zqlite"));
+
+    server.root_module.addCSourceFile(.{
+        .file = zqlite.path("lib/sqlite3.c"),
+        .flags = &[_][]const u8{
+            "-DSQLITE_DQS=0",
+            "-DSQLITE_DEFAULT_WAL_SYNCHRONOUS=1",
+            "-DSQLITE_USE_ALLOCA=1",
+            "-DSQLITE_THREADSAFE=1",
+            "-DSQLITE_TEMP_STORE=3",
+            "-DSQLITE_ENABLE_API_ARMOR=1",
+            "-DSQLITE_ENABLE_UNLOCK_NOTIFY",
+            "-DSQLITE_DEFAULT_FILE_PERMISSIONS=0600",
+            "-DSQLITE_OMIT_DECLTYPE=1",
+            "-DSQLITE_OMIT_DEPRECATED=1",
+            "-DSQLITE_OMIT_LOAD_EXTENSION=1",
+            "-DSQLITE_OMIT_PROGRESS_CALLBACK=1",
+            "-DSQLITE_OMIT_SHARED_CACHE",
+            "-DSQLITE_OMIT_TRACE=1",
+            "-DSQLITE_OMIT_UTF16=1",
+            "-DHAVE_USLEEP=0",
+            "-DSQLITE_ENABLE_FTS5=1",
+        },
+    });
+    server.root_module.link_libc = true;
+
+    const install = b.addInstallArtifact(server, .{});
+    b.getInstallStep().dependOn(&install.step);
+
+    const serve_cmd = b.addRunArtifact(server);
+
+    serve_cmd.step.dependOn(&install.step);
+
+    if (b.args) |args| {
+        serve_cmd.addArgs(args);
+    }
+
+    const serve_step = b.step("server", "Launch the server executable");
+    serve_step.dependOn(&serve_cmd.step);
+
+    check.dependOn(&server.step);
+}
+
+pub fn setupClientGui(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    check: *std.Build.Step,
+    folders: *std.Build.Dependency,
+    audio_backend: *std.Build.Module,
+) void {
+    const dvui = b.dependency("dvui", .{
+        .target = target,
+        .optimize = optimize,
+        .backend = .sdl3,
+    });
+
+    const client = b.addExecutable(.{
+        .name = "awebo-gui",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main_client_gui.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const opus = b.dependency("opus", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const opus_tools = b.dependency("opus_tools", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const options = b.addOptions();
+    options.addOption(Context, "context", .client);
+    client.root_module.addOptions("options", options);
+    client.root_module.addImport("dvui", dvui.module("dvui_sdl3"));
+    client.root_module.addImport("folders", folders.module("known-folders"));
+    client.root_module.linkLibrary(opus.artifact("opus"));
+    client.root_module.linkLibrary(opus_tools.artifact("opus-tools"));
+    if (target.result.os.tag == .windows) {
+        if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
+            client.root_module.addImport("win32", win32_dep.module("win32"));
+        }
+    }
+    client.root_module.addImport("audio_backend", audio_backend);
+
+    const install = b.addInstallArtifact(client, .{});
+    b.getInstallStep().dependOn(&install.step);
+
+    const run_cmd = b.addRunArtifact(client);
+    run_cmd.step.dependOn(&install.step);
+
+    if (b.args) |args| {
+        run_cmd.addArgs(args);
+    }
+
+    const run_step = b.step("gui", "Launch the GUI client");
+    run_step.dependOn(&run_cmd.step);
+
+    check.dependOn(&client.step);
+}
+
+fn configureAudioBackend(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Module {
+    const audio_default: Audio = switch (target.result.os.tag) {
+        .windows => .wasapi,
+        else => .portaudio,
+    };
+    const audio_desc = b.fmt(
+        "The audio implementation (defaults to {s})",
+        .{@tagName(audio_default)},
+    );
+    const audio_backend = blk: {
+        switch (b.option(Audio, "audio", audio_desc) orelse audio_default) {
+            .portaudio => {
+                const audio_backend = b.createModule(.{
+                    .root_source_file = b.path("src/client/audio/portaudio.zig"),
+                });
+                if (target.result.os.tag == .windows) {
+                    if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
+                        audio_backend.addImport("win32", win32_dep.module("win32"));
+                    }
+                }
+                if (b.lazyDependency("portaudio", .{
+                    .target = target,
+                    .optimize = optimize,
+                })) |portaudio| {
+                    audio_backend.linkLibrary(portaudio.artifact("portaudio"));
+                }
+                break :blk audio_backend;
+            },
+            .wasapi => {
+                const audio_backend = b.createModule(.{
+                    .root_source_file = b.path("src/client/audio/wasapi.zig"),
+                });
+                if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
+                    audio_backend.addImport("win32", win32_dep.module("win32"));
+                }
+                break :blk audio_backend;
+            },
+            .dummy => break :blk b.createModule(.{
+                .root_source_file = b.path("src/client/audio/dummy.zig"),
+            }),
+        }
+    };
+
+    return audio_backend;
+}
