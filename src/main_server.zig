@@ -1,12 +1,8 @@
 const options = @import("options");
 const builtin = @import("builtin");
 const std = @import("std");
+const process = std.process;
 const Io = std.Io;
-
-var gpa_impl: std.heap.DebugAllocator(.{ .stack_trace_frames = 12 }) = .{};
-pub const gpa = if (builtin.mode == .Debug) gpa_impl.allocator() else std.heap.smp_allocator;
-var threaded: Io.Threaded = undefined;
-pub const io = threaded.io();
 
 pub const Resource = enum {
     server,
@@ -21,15 +17,11 @@ pub const Resource = enum {
     @"-h",
 };
 
-pub fn main() !void {
-    defer if (builtin.mode == .Debug) {
-        _ = gpa_impl.deinit();
-    };
+pub fn main(init: process.Init) !void {
+    const arena = init.arena.allocator();
+    const gpa = init.gpa;
 
-    threaded = .init(gpa);
-    defer threaded.deinit();
-
-    var it = try std.process.argsWithAllocator(gpa);
+    var it = try init.minimal.args.iterateAllocator(arena);
     _ = it.skip();
 
     const resource = it.next() orelse {
@@ -46,10 +38,10 @@ pub fn main() !void {
         .version => exitVersion(),
         .help, .@"--help", .@"-h" => fatalHelp(),
 
-        .role => @import("server/cli/role.zig").run(gpa, &it),
-        .user => @import("server/cli/user.zig").run(gpa, &it),
-        .message => @import("server/cli/message.zig").run(gpa, &it),
-        .server => @import("server/cli/server.zig").run(gpa, &it),
+        .role => @import("server/cli/role.zig").run(init.io, gpa, &it),
+        .user => @import("server/cli/user.zig").run(init.io, gpa, &it),
+        .message => @import("server/cli/message.zig").run(init.io, gpa, &it),
+        .server => @import("server/cli/server.zig").run(init.io, gpa, &it),
     }
 }
 

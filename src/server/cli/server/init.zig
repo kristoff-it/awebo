@@ -3,24 +3,25 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
+const Settings = @import("../../Settings.zig");
 const Database = @import("../../Database.zig");
 const zqlite = @import("zqlite");
 const awebo = @import("../../../awebo.zig");
 
 const log = std.log.scoped(.db);
 
-pub fn run(gpa: Allocator, it: *std.process.ArgIterator) void {
+pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     const cmd: Command = .parse(it);
 
     const db: Database = .init(cmd.db_path, .create);
     defer db.conn.close();
 
-    initTables(gpa, cmd, db.conn) catch |err| {
+    initTables(io, gpa, cmd, db.conn) catch |err| {
         fatal("unable to initialize database: {t}", .{err});
     };
 }
 
-fn initTables(gpa: Allocator, cmd: Command, conn: zqlite.Conn) !void {
+fn initTables(io: Io, gpa: Allocator, cmd: Command, conn: zqlite.Conn) !void {
     inline for (comptime std.meta.declarations(tables)) |d| {
         const s = @field(tables, d.name);
         inline for (s, 0..) |q, i| {
@@ -35,7 +36,7 @@ fn initTables(gpa: Allocator, cmd: Command, conn: zqlite.Conn) !void {
     const pass_str = std.crypto.pwhash.argon2.strHash(cmd.owner.password, .{
         .allocator = gpa,
         .params = .interactive_2id,
-    }, &out) catch |err| {
+    }, &out, io) catch |err| {
         fatal("unable to hash admin password: {t}", .{err});
     };
 
@@ -46,12 +47,19 @@ fn initTables(gpa: Allocator, cmd: Command, conn: zqlite.Conn) !void {
     , .{@intFromEnum(awebo.User.Power.owner)});
     conn.exec(admin, .{ cmd.owner.handle, pass_str }) catch fatalDb(conn);
 
-    const server_name =
+    const settings: Settings = .{
+        .name = cmd.server.name,
+    };
+
+    const setting_kv =
         \\INSERT INTO settings VALUES
-        \\  ('server_name', ?)
+        \\  (?, ?)
         \\;
     ;
-    conn.exec(server_name, .{cmd.server.name}) catch fatalDb(conn);
+
+    inline for (std.meta.fields(Settings)) |f| {
+        conn.exec(setting_kv, .{ f.name, @field(settings, f.name) }) catch fatalDb(conn);
+    }
 
     // const owner_role =
     //     // Give Owner role to first user.
@@ -287,7 +295,7 @@ const Command = struct {
     },
     db_path: [:0]const u8,
 
-    fn parse(it: *std.process.ArgIterator) Command {
+    fn parse(it: *std.process.Args.Iterator) Command {
         var server_name: ?[]const u8 = null;
         var owner_handle: ?[]const u8 = null;
         var owner_pass: ?[]const u8 = null;

@@ -4,6 +4,7 @@ const std = @import("std");
 const Io = std.Io;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
+const Settings = @import("../../Settings.zig");
 const Database = @import("../../Database.zig");
 const RateLimiter = @import("../../RateLimiter.zig");
 const awebo = @import("../../../awebo.zig");
@@ -11,20 +12,18 @@ const Host = awebo.Host;
 const Header = awebo.protocol.media.Header;
 const OpenStream = awebo.protocol.media.OpenStream;
 
-const server = @import("../../../main_server.zig");
-const gpa = server.gpa;
-const io = server.io;
-
 const server_log = std.log.scoped(.server);
 
-var shutdown_event: Io.Threaded.ResetEvent = .unset;
-pub fn run(it: *std.process.ArgIterator) void {
+var shutdown_event_io: Io = undefined;
+var shutdown_event: Io.Event = .unset;
+pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     const cmd: Command = .parse(it);
 
     server_log.info("starting awebo server", .{});
     defer server_log.info("goodbye", .{});
 
     // Setup graceful shutdown signal handler
+    shutdown_event_io = io;
     switch (builtin.target.os.tag) {
         .linux, .macos => {
             const posix = std.posix;
@@ -33,7 +32,7 @@ pub fn run(it: *std.process.ArgIterator) void {
                     .handler = struct {
                         fn handler(_: posix.SIG) callconv(.c) void {
                             server_log.info("received SIGINT", .{});
-                            shutdown_event.set();
+                            shutdown_event.set(shutdown_event_io);
                         }
                     }.handler,
                 },
@@ -72,10 +71,10 @@ pub fn run(it: *std.process.ArgIterator) void {
 
     server_log.info("loading database", .{});
     db = .init(cmd.db_path, .read_write);
-    ___state.init() catch |err| {
+    ___state.init(io, gpa) catch |err| {
         fatal("unable to load state from database: {t}", .{err});
     };
-    defer ___state.deinit();
+    defer ___state.deinit(gpa);
 
     server_log.info("starting tcp interface at {f}", .{cmd.tcp});
     var tcp = cmd.tcp.listen(io, .{ .reuse_address = true }) catch |err| {
@@ -83,7 +82,7 @@ pub fn run(it: *std.process.ArgIterator) void {
     };
     defer tcp.deinit(io);
 
-    var tcp_future = io.concurrent(runTcpAccept, .{tcp}) catch |err| fatalIo(err);
+    var tcp_future = io.concurrent(runTcpAccept, .{ io, gpa, tcp }) catch |err| fatalIo(err);
     defer {
         server_log.info("shutting down tcp interface", .{});
         tcp_future.cancel(io) catch {};
@@ -95,7 +94,7 @@ pub fn run(it: *std.process.ArgIterator) void {
     };
     defer udp.close(io);
 
-    var udp_future = io.concurrent(runUdpSocket, .{udp}) catch |err| fatalIo(err);
+    var udp_future = io.concurrent(runUdpSocket, .{ io, gpa, udp }) catch |err| fatalIo(err);
     defer {
         server_log.info("shutting down udp interface", .{});
         udp_future.cancel(io) catch {};
@@ -103,11 +102,11 @@ pub fn run(it: *std.process.ArgIterator) void {
 
     server_log.info("server started, send SIGINT (ctrl+c) to shutdown", .{});
     defer server_log.info("begin graceful shutdown", .{});
-    shutdown_event.waitUncancelable();
+    shutdown_event.waitUncancelable(io);
 }
 
 /// Only canceled on a graceful shutdown by run
-fn runTcpAccept(tcp: Io.net.Server) !void {
+fn runTcpAccept(io: Io, gpa: Allocator, tcp: Io.net.Server) !void {
     var g: Io.Group = .init;
     defer g.cancel(io);
 
@@ -127,7 +126,7 @@ fn runTcpAccept(tcp: Io.net.Server) !void {
             continue;
         };
 
-        g.concurrent(io, runClientManager, .{stream}) catch {
+        g.concurrent(io, runClientManager, .{ io, gpa, stream }) catch {
             stream.close(io);
         };
     }
@@ -136,7 +135,7 @@ fn runTcpAccept(tcp: Io.net.Server) !void {
 /// Spawns runClientReceive and runClientSend for a TCP connection.
 /// Failure in either child coroutine will trigger cancelation of all,
 /// ending with the TCP connection getting closed.
-fn runClientManager(stream: Io.net.Stream) void {
+fn runClientManager(io: Io, gpa: Allocator, stream: Io.net.Stream) void {
     server_log.debug("{s} starting", .{@src().fn_name});
     defer {
         server_log.debug("{s} exiting", .{@src().fn_name});
@@ -156,10 +155,10 @@ fn runClientManager(stream: Io.net.Stream) void {
         },
     };
     defer {
-        var locked = lockState();
-        defer locked.unlock();
+        const locked = lockState(io);
+        defer locked.unlock(io);
         const state = locked.state;
-        client.deinit(state);
+        client.deinit(io, gpa, state);
     }
 
     const log = client.scopedLog();
@@ -176,20 +175,20 @@ fn runClientManager(stream: Io.net.Stream) void {
             return;
         }
 
-        client.authenticateRequest(reader) catch |err| {
+        client.authenticateRequest(io, gpa, reader) catch |err| {
             // TODO: failing auth should consume rate limiter tokens
             log.err("error processing Authenticate: {t}", .{err});
             return;
         };
     }
 
-    var receive_future = io.concurrent(runClientTcpRead, .{&client}) catch {
+    var receive_future = io.concurrent(runClientTcpRead, .{ io, gpa, &client }) catch {
         log.debug("failed to start coroutine", .{});
         return;
     };
     defer receive_future.cancel(io) catch {};
 
-    var send_future = io.concurrent(runClientTcpWrite, .{&client}) catch {
+    var send_future = io.concurrent(runClientTcpWrite, .{ io, gpa, &client }) catch {
         log.debug("failed to start coroutine", .{});
         return;
     };
@@ -199,7 +198,7 @@ fn runClientManager(stream: Io.net.Stream) void {
 }
 
 /// Runs in a per-connection coroutine after successful authentication.
-fn runClientTcpRead(client: *Client) !void {
+fn runClientTcpRead(io: Io, gpa: Allocator, client: *Client) !void {
     const log = client.scopedLog();
 
     log.debug("{s} started", .{@src().fn_name});
@@ -233,17 +232,17 @@ fn runClientTcpRead(client: *Client) !void {
                 return error.AweboProtocolError;
             },
             awebo.protocol.client.CallJoin.marker => {
-                client.callJoinRequest(reader) catch |err| {
+                client.callJoinRequest(io, gpa, reader) catch |err| {
                     log.err("error processing CallJoin: {t}", .{err});
                 };
             },
             awebo.protocol.client.ChatMessageSend.marker => {
-                client.chatMessageSendRequest(reader) catch |err| {
+                client.chatMessageSendRequest(io, gpa, reader) catch |err| {
                     log.err("error processing ChatMessageSend: {t}", .{err});
                 };
             },
             awebo.protocol.client.ChannelCreate.marker => {
-                client.channelCreate(reader) catch |err| {
+                client.channelCreate(io, gpa, reader) catch |err| {
                     log.err("error processing ChannelCreate: {t}", .{err});
                 };
             },
@@ -251,7 +250,7 @@ fn runClientTcpRead(client: *Client) !void {
     }
 }
 
-fn runClientTcpWrite(client: *Client) !void {
+fn runClientTcpWrite(io: Io, gpa: Allocator, client: *Client) !void {
     const log = client.scopedLog();
 
     log.debug("{s} started", .{@src().fn_name});
@@ -261,8 +260,7 @@ fn runClientTcpWrite(client: *Client) !void {
 
     const writer = &client.tcp.writer_state.interface;
     while (true) {
-        // TODO: set to 64 when stdlib fixes this
-        var msgbuf: [1][]const u8 = undefined;
+        var msgbuf: [64][]const u8 = undefined;
         const messages = msgbuf[0..try client.tcp.queue.get(io, &msgbuf, 1)];
         log.debug("tcp write got {} messages to send", .{messages.len});
         if (options.slow) {
@@ -279,7 +277,7 @@ fn runClientTcpWrite(client: *Client) !void {
     }
 }
 
-fn runUdpSocket(udp: Io.net.Socket) !void {
+fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
     server_log.debug("{s} started", .{@src().fn_name});
     defer server_log.debug("{s} exiting", .{@src().fn_name});
 
@@ -291,7 +289,10 @@ fn runUdpSocket(udp: Io.net.Socket) !void {
         }
 
         const packet = udp.receive(io, &dbuf) catch |err| {
-            server_log.debug("udp socket error: '{t}'", .{err});
+            switch (err) {
+                error.Canceled => {},
+                else => server_log.debug("udp socket error: '{t}'", .{err}),
+            }
             return;
         };
 
@@ -305,8 +306,8 @@ fn runUdpSocket(udp: Io.net.Socket) !void {
             continue;
         };
 
-        var locked = lockState();
-        defer locked.unlock();
+        var locked = lockState(io);
+        defer locked.unlock(io);
         const state = locked.state;
 
         switch (header.kind()) {
@@ -334,10 +335,10 @@ fn runUdpSocket(udp: Io.net.Socket) !void {
                 }
 
                 if (client.udp != null) {
-                    state.removeUdp(client);
+                    state.removeUdp(io, gpa, client);
                 }
 
-                state.setUdp(client, packet.from);
+                state.setUdp(gpa, client, packet.from);
 
                 {
                     const cu: awebo.protocol.server.CallersUpdate = .{
@@ -352,7 +353,7 @@ fn runUdpSocket(udp: Io.net.Socket) !void {
                     const msg = cu.serializeAlloc(gpa) catch unreachable;
                     errdefer gpa.free(msg);
 
-                    state.tcpBroadcast(msg);
+                    state.tcpBroadcast(io, msg);
                 }
             },
 
@@ -420,7 +421,7 @@ const Client = struct {
     pub const Id = u64;
 
     /// Clean up all references to this client and deinit it
-    fn deinit(client: *Client, state: *State) void {
+    fn deinit(client: *Client, io: Io, gpa: Allocator, state: *State) void {
         // remove from tcp linked list
         {
             if (client.next) |next| {
@@ -436,7 +437,7 @@ const Client = struct {
         _ = state.clients.tcp_index.remove(client.tcp.connected_at);
 
         // remove from callers
-        state.removeFromCall(client);
+        state.removeFromCall(io, gpa, client);
 
         // free unsent messages
         // for (0..client.tcp.queue.capacity()) |_| {
@@ -445,17 +446,17 @@ const Client = struct {
         // }
     }
 
-    fn authenticateRequest(client: *Client, reader: *Io.Reader) !void {
+    fn authenticateRequest(client: *Client, io: Io, gpa: Allocator, reader: *Io.Reader) !void {
         const log = client.scopedLog();
 
-        var locked = lockState();
-        defer locked.unlock();
+        const locked = lockState(io);
+        defer locked.unlock(io);
         const state = locked.state;
 
         const cmd = try awebo.protocol.client.Authenticate.deserializeAlloc(gpa, reader);
         defer cmd.deinit(gpa);
 
-        const user = db.getUserByLogin(gpa, cmd.method.login.username, cmd.method.login.password) catch |err| switch (err) {
+        const user = db.getUserByLogin(io, gpa, cmd.method.login.username, cmd.method.login.password) catch |err| switch (err) {
             error.NotFound, error.Password => {
                 log.debug("failed auth attempt for user '{s}': {t}", .{ cmd.method.login.username, err });
                 const reply: awebo.protocol.server.AuthenticateReply = .{
@@ -548,12 +549,12 @@ const Client = struct {
         }
     }
 
-    fn channelCreate(client: *Client, reader: *Io.Reader) !void {
+    fn channelCreate(client: *Client, io: Io, gpa: Allocator, reader: *Io.Reader) !void {
         const cc = try awebo.protocol.client.ChannelCreate.deserializeAlloc(gpa, reader);
         assert(cc.kind == .chat);
 
-        var locked = lockState();
-        defer locked.unlock();
+        const locked = lockState(io);
+        defer locked.unlock(io);
         const state = locked.state;
 
         const chat = state.host.chats.create(gpa, cc.name) catch |err| switch (err) {
@@ -587,14 +588,14 @@ const Client = struct {
         }
     }
 
-    fn callJoinRequest(client: *Client, reader: *Io.Reader) !void {
+    fn callJoinRequest(client: *Client, io: Io, gpa: Allocator, reader: *Io.Reader) !void {
         const log = client.scopedLog();
 
         const cmd = try awebo.protocol.client.CallJoin.deserialize(reader);
         // TODO: decide if we should noop when old_voice == new voice
         {
-            var locked = lockState();
-            defer locked.unlock();
+            const locked = lockState(io);
+            defer locked.unlock(io);
             const state = locked.state;
 
             {
@@ -647,12 +648,12 @@ const Client = struct {
         try client.tcp.queue.putOne(io, bytes);
     }
 
-    fn chatMessageSendRequest(client: *Client, reader: *Io.Reader) !void {
+    fn chatMessageSendRequest(client: *Client, io: Io, gpa: Allocator, reader: *Io.Reader) !void {
         const log = client.scopedLog();
         const cms = try awebo.protocol.client.ChatMessageSend.deserializeAlloc(gpa, reader);
 
-        var locked = lockState();
-        defer locked.unlock();
+        const locked = lockState(io);
+        defer locked.unlock(io);
         const state = locked.state;
 
         state.user_limits.items[client.authenticated.?].takeToken(io, .user_action) catch {
@@ -698,7 +699,7 @@ const Client = struct {
             const bytes = try cmn.serializeAlloc(gpa);
             errdefer gpa.free(bytes);
 
-            state.tcpBroadcast(bytes);
+            state.tcpBroadcast(io, bytes);
         }
     }
 
@@ -723,7 +724,7 @@ const Client = struct {
     };
 };
 
-pub fn lockState() Locked {
+pub fn lockState(io: Io) Locked {
     mutex.lockUncancelable(io);
     return .{ .state = &___state };
 }
@@ -732,11 +733,9 @@ var mutex: Io.Mutex = .init;
 pub const Locked = struct {
     state: *State,
 
-    pub fn unlock(l: *Locked) void {
+    pub fn unlock(l: Locked, io: Io) void {
+        _ = l;
         mutex.unlock(io);
-        if (std.debug.runtime_safety) {
-            l.state = undefined;
-        }
     }
 };
 
@@ -744,6 +743,7 @@ var db: Database = undefined;
 
 pub const State = @TypeOf(___state);
 var ___state: struct {
+    settings: Settings = undefined,
     host: Host = .{},
     callers: struct {} = .{},
     /// Cache of latest messages we received, so that we can quickly sync
@@ -767,7 +767,7 @@ var ___state: struct {
             std.AutoArrayHashMapUnmanaged(*Client, void),
         ) = .{},
 
-        fn deinit(self: *@This()) void {
+        fn deinit(self: *@This(), gpa: Allocator) void {
             assert(self.head == null);
 
             assert(self.tcp_index.count() == 0);
@@ -783,7 +783,7 @@ var ___state: struct {
 
     var client_id: u15 = 0;
 
-    fn init(state: *State) !void {
+    fn init(state: *State, io: Io, gpa: Allocator) !void {
         const user_limits = blk: {
             var r = db.conn.row("SELECT COUNT(*) FROM users", .{}) catch db.fatal(@src());
             defer r.?.deinit();
@@ -798,15 +798,29 @@ var ___state: struct {
             break :blk user_limits;
         };
 
+        const settings = blk: {
+            var settings: Settings = undefined;
+
+            var rows = db.rows("SELECT key, value FROM settings", .{}) catch db.fatal(@src());
+            defer rows.deinit();
+
+            outer: while (rows.next()) |r| {
+                const key = r.textNoDupe(.key);
+                inline for (std.meta.fields(Settings)) |f| {
+                    if (std.mem.eql(u8, f.name, key)) {
+                        @field(settings, f.name) = switch (f.type) {
+                            []const u8 => try r.text(gpa, .value),
+                            usize => @intCast(r.int(.value)),
+                            else => @compileError("implement mapping for " ++ @typeName(f.type)),
+                        };
+                        continue :outer;
+                    }
+                }
+            }
+            break :blk settings;
+        };
+
         const host: awebo.Host = host: {
-            // host settings
-            const name = blk: {
-                var r = db.row("SELECT value FROM settings WHERE key = 'server_name'", .{}) catch db.fatal(@src());
-                defer r.?.deinit();
-
-                break :blk try r.?.text(gpa, .value);
-            };
-
             const chats = blk: {
                 var rs = db.rows("SELECT id, name FROM channels WHERE kind = ?", .{
                     @intFromEnum(awebo.channels.Kind.chat),
@@ -848,7 +862,7 @@ var ___state: struct {
             };
 
             break :host .{
-                .name = name,
+                .name = settings.name,
                 .chats = chats,
                 .voices = voices,
             };
@@ -879,13 +893,14 @@ var ___state: struct {
         };
 
         state.* = .{
+            .settings = settings,
             .host = host,
             .latest_messages = latest_messages,
             .user_limits = user_limits,
         };
     }
 
-    fn deinit(state: *State) void {
+    fn deinit(state: *State, gpa: Allocator) void {
         if (builtin.mode != .Debug) return;
 
         {
@@ -895,11 +910,11 @@ var ___state: struct {
         }
 
         state.host.deinit(gpa);
-        state.clients.deinit();
+        state.clients.deinit(gpa);
         state.user_limits.deinit(gpa);
     }
 
-    fn setUdp(state: *State, client: *Client, addr: Io.net.IpAddress) void {
+    fn setUdp(state: *State, gpa: Allocator, client: *Client, addr: Io.net.IpAddress) void {
         std.debug.assert(client.udp == null);
 
         client_id += 1;
@@ -914,9 +929,9 @@ var ___state: struct {
         state.clients.udp_index.put(gpa, addr, client) catch unreachable;
     }
 
-    fn removeFromCall(state: *State, client: *Client) void {
+    fn removeFromCall(state: *State, io: Io, gpa: Allocator, client: *Client) void {
         const vid = if (client.voice) |v| v.id else return;
-        state.removeUdp(client);
+        state.removeUdp(io, gpa, client);
         client.voice = null;
 
         const room = state.clients.voice_index.getPtr(vid).?;
@@ -929,7 +944,7 @@ var ___state: struct {
         }
     }
 
-    fn removeUdp(state: *State, client: *Client) void {
+    fn removeUdp(state: *State, io: Io, gpa: Allocator, client: *Client) void {
         const udp = client.udp orelse return;
         const vid = client.voice.?.id;
         const cu: awebo.protocol.server.CallersUpdate = .{
@@ -942,13 +957,13 @@ var ___state: struct {
         };
 
         const bytes = cu.serializeAlloc(gpa) catch @panic("oom");
-        state.tcpBroadcast(bytes);
+        state.tcpBroadcast(io, bytes);
 
         _ = state.clients.udp_index.remove(client.udp.?.addr);
         client.udp = null;
     }
 
-    fn tcpBroadcast(state: *State, msg: []const u8) void {
+    fn tcpBroadcast(state: *State, io: Io, msg: []const u8) void {
         var maybe_cur: ?*Client = state.clients.head;
         while (maybe_cur) |cur| : (maybe_cur = cur.next) {
             // TODO: this needs to be a tryPut + client disconnection if the queue is full
@@ -980,7 +995,7 @@ const Command = struct {
     udp: Io.net.IpAddress,
     db_path: [:0]const u8,
 
-    fn parse(it: *std.process.ArgIterator) Command {
+    fn parse(it: *std.process.Args.Iterator) Command {
         var tcp: ?Io.net.IpAddress = null;
         var udp: ?Io.net.IpAddress = null;
         var db_path: ?[:0]const u8 = null;

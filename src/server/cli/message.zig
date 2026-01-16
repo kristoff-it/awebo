@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const zqlite = @import("zqlite");
 const Database = @import("../Database.zig");
@@ -10,7 +11,8 @@ const Subcommand = enum {
     @"-h",
     @"--help",
 };
-pub fn run(gpa: Allocator, it: *std.process.ArgIterator) void {
+pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
+    _ = io;
     _ = gpa;
 
     const raw_subcmd = it.next() orelse {

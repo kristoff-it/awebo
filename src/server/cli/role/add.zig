@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 const Database = @import("../../Database.zig");
@@ -7,7 +8,7 @@ const zqlite = @import("zqlite");
 
 const log = std.log.scoped(.db);
 
-pub fn run(gpa: Allocator, it: *std.process.ArgIterator) void {
+pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     const cmd: Command = .parse(it);
 
     const db: Database = .init(cmd.db_path, .read_write);
@@ -16,7 +17,7 @@ pub fn run(gpa: Allocator, it: *std.process.ArgIterator) void {
     const pass_str = std.crypto.pwhash.argon2.strHash(cmd.password, .{
         .allocator = gpa,
         .params = .interactive_2id,
-    }, &out) catch |err| {
+    }, &out, io) catch |err| {
         fatal("unable to hash user password: {t}", .{err});
     };
 
@@ -34,7 +35,7 @@ const Command = struct {
     display_name: []const u8,
     db_path: [:0]const u8,
 
-    fn parse(it: *std.process.ArgIterator) Command {
+    fn parse(it: *std.process.Args.Iterator) Command {
         var handle: ?[]const u8 = null;
         var password: ?[]const u8 = null;
         var display_name: ?[]const u8 = null;

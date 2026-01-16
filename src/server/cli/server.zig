@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const zqlite = @import("zqlite");
 const Database = @import("../Database.zig");
@@ -12,7 +13,7 @@ const Subcommand = enum {
     @"-h",
 };
 
-pub fn run(gpa: Allocator, it: *std.process.ArgIterator) void {
+pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     const raw_subcmd = it.next() orelse fatalHelp();
 
     const subcmd = std.meta.stringToEnum(Subcommand, raw_subcmd) orelse {
@@ -22,8 +23,8 @@ pub fn run(gpa: Allocator, it: *std.process.ArgIterator) void {
 
     switch (subcmd) {
         .help, .@"-h", .@"--help" => fatalHelp(),
-        .init => return @import("server/init.zig").run(gpa, it),
-        .run => return @import("server/run.zig").run(it),
+        .init => return @import("server/init.zig").run(io, gpa, it),
+        .run => return @import("server/run.zig").run(io, gpa, it),
     }
 }
 

@@ -1,9 +1,11 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const awebo = @import("../../../awebo.zig");
 
-pub fn run(gpa: Allocator, it: *std.process.ArgIterator) void {
+pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
+    _ = io;
     _ = gpa;
     if (it.next()) |arg| {
         if (!std.mem.eql(u8, arg, "--help") and !std.mem.eql(u8, arg, "-h"))

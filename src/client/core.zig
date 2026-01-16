@@ -31,7 +31,7 @@ pub var refresh: *const RefreshFn = undefined;
 var start_time: std.time.Instant = undefined;
 
 pub fn init(_refresh: *const RefreshFn) void {
-    threaded = .init(gpa);
+    threaded = .init(gpa, .{ .environ = .empty });
     refresh = _refresh;
     start_time = std.time.Instant.now() catch @panic("need clock");
 }
@@ -447,7 +447,7 @@ var ___state: struct { // ___ = no touchy
         host_id: Host.ClientOnly.Id = undefined,
         voice_id: Voice.Id = undefined,
         status: Status = .{},
-        push_future: ?Io.Future(error{Canceled}!void) = null,
+        push_future: ?Io.Future(error{ Closed, Canceled }!void) = null,
         manager_future: ?Io.Future(void) = null,
 
         pub const Status = ui.AtomicEnum(true, .intent, &.{

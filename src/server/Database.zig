@@ -70,19 +70,25 @@ pub fn init(db_path: [:0]const u8, mode: Mode) Database {
 /// Validation logic is part of this function to make efficient use of the memory returned from sqlite,
 /// which becomes invalid as soon as the relative `Row` is deinited.
 /// On success dupes `username`.
-pub fn getUserByLogin(db: Database, gpa: Allocator, username: []const u8, password: []const u8) error{ NotFound, Password }!awebo.User {
+pub fn getUserByLogin(
+    db: Database,
+    io: Io,
+    gpa: Allocator,
+    username: []const u8,
+    password: []const u8,
+) error{ NotFound, Password }!awebo.User {
     const maybe_pswd_row = db.row("SELECT pswd_hash FROM users WHERE handle = ?", .{
         username,
     }) catch db.fatal(@src());
     const pswd_row = maybe_pswd_row orelse {
-        std.crypto.pwhash.argon2.strVerify("bananarama123", password, .{ .allocator = gpa }) catch {};
+        std.crypto.pwhash.argon2.strVerify("bananarama123", password, .{ .allocator = gpa }, io) catch {};
         return error.NotFound;
     };
     defer pswd_row.deinit();
 
     const pswd_hash = pswd_row.textNoDupe(.pswd_hash);
 
-    std.crypto.pwhash.argon2.strVerify(pswd_hash, password, .{ .allocator = gpa }) catch |err| switch (err) {
+    std.crypto.pwhash.argon2.strVerify(pswd_hash, password, .{ .allocator = gpa }, io) catch |err| switch (err) {
         error.PasswordVerificationFailed => return error.Password,
         error.OutOfMemory => oom(),
         else => fatalErr(err),
@@ -96,7 +102,7 @@ pub fn getUserByLogin(db: Database, gpa: Allocator, username: []const u8, passwo
 
     return .{
         .id = @intCast(user_row.int(.id)),
-        .power =  @enumFromInt(user_row.int(.power)),
+        .power = @enumFromInt(user_row.int(.power)),
         .display_name = user_row.text(gpa, .display_name) catch oom(),
         .avatar = user_row.text(gpa, .avatar) catch oom(),
         .handle = gpa.dupe(u8, username) catch oom(),

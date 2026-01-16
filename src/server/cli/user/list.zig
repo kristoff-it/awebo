@@ -7,7 +7,8 @@ const zqlite = @import("zqlite");
 
 const log = std.log.scoped(.db);
 
-pub fn run(gpa: Allocator, it: *std.process.ArgIterator) void {
+pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
+    _ = io;
     _ = gpa;
     const cmd: Command = .parse(it);
 
@@ -35,7 +36,7 @@ pub fn run(gpa: Allocator, it: *std.process.ArgIterator) void {
 const Command = struct {
     db_path: [:0]const u8,
 
-    fn parse(it: *std.process.ArgIterator) Command {
+    fn parse(it: *std.process.Args.Iterator) Command {
         var db_path: ?[:0]const u8 = null;
 
         const eql = std.mem.eql;

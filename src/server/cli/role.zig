@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 const Subcommand = enum {
@@ -14,7 +15,7 @@ const Subcommand = enum {
     @"--help",
 };
 
-pub fn run(gpa: Allocator, it: *std.process.ArgIterator) void {
+pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     const raw_subcmd = it.next() orelse {
         std.debug.print("missing command for user resource\n", .{});
         fatalHelp();
@@ -26,10 +27,10 @@ pub fn run(gpa: Allocator, it: *std.process.ArgIterator) void {
     };
 
     switch (subcmd) {
-        .add => @import("role/add.zig").run(gpa, it),
-        .edit => @import("role/edit.zig").run(gpa, it),
-        .list => @import("role/list.zig").run(gpa, it),
-        .permissions => @import("role/permissions.zig").run(gpa, it),
+        .add => @import("role/add.zig").run(io, gpa, it),
+        .edit => @import("role/edit.zig").run(io, gpa, it),
+        .list => @import("role/list.zig").run(io, gpa, it),
+        .permissions => @import("role/permissions.zig").run(io, gpa, it),
         .delete,
         .show,
         => @panic("TODO"),
