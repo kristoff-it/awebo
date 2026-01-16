@@ -59,7 +59,7 @@ pub fn host_name(h: *awebo.Host) void {
 
         dvui.labelNoFmt(@src(), h.name, .{}, .{
             .gravity_x = 0.5,
-            .font_style = .title_2,
+            .font = dvui.Font.theme(.title).larger(2),
         });
     }
     _ = dvui.separator(@src(), .{ .expand = .horizontal });
@@ -85,7 +85,7 @@ pub fn new_chat_floating_window(state: *core.State, h: *awebo.Host) !void {
         }
         dvui.labelNoFmt(@src(), "Create new Chat", .{}, .{
             .gravity_x = 0.5,
-            .font_style = .title_2,
+            .font = dvui.Font.theme(.title).larger(2),
             .expand = .horizontal,
         });
     }
@@ -225,7 +225,7 @@ pub fn chat_list(h: *awebo.Host) void {
         }
 
         dvui.labelNoFmt(@src(), c.name, .{}, .{
-            .font_style = .title_3,
+            .font = dvui.Font.theme(.title).larger(4),
             .id_extra = idx,
         });
     }
@@ -236,7 +236,7 @@ fn voice_list(h: *awebo.Host, state: *core.State) !void {
 
     const opts: dvui.Options = .{
         .margin = dvui.Rect.all(8),
-        .font_style = .title_2,
+        .font = dvui.Font.theme(.title).larger(2),
         .expand = .horizontal,
         .background = true,
         // .color_fill = .{ .name = .fill },
@@ -307,7 +307,7 @@ fn voice_list(h: *awebo.Host, state: *core.State) !void {
                         }
                     }
                     dvui.labelNoFmt(@src(), v.name, .{}, .{
-                        .font_style = .title_3,
+                        .font = dvui.Font.theme(.title).larger(4),
                         .id_extra = idx,
                     });
                 }
@@ -387,7 +387,7 @@ fn voice_list(h: *awebo.Host, state: *core.State) !void {
                 const bg_color: ?dvui.Color = if (speaking) .yellow else null;
 
                 dvui.labelNoFmt(@src(), m.display_name, .{}, .{
-                    .font_style = .title_4,
+                    .font = .theme(.title),
                     .id_extra = caller.id,
                     .color_text = text_color,
                     .background = true,
@@ -413,14 +413,14 @@ fn joined_voice(state: *core.State) !void {
             defer vbox.deinit();
 
             dvui.labelNoFmt(@src(), "Voice Connected", .{}, .{
-                .font_style = .caption_heading,
+                .font = .theme(.heading).larger(-2),
             });
 
             const h = state.hosts.get(call.host_id).?;
             const v = h.voices.get(call.voice_id).?;
 
             dvui.label(@src(), "{s} / {s}", .{ v.name, h.name }, .{
-                .font_style = .caption,
+                .font = .theme(.body).larger(-2),
             });
         }
 
@@ -460,14 +460,13 @@ fn userbox(state: *core.State, h: *awebo.Host) !void {
         defer text_box.deinit();
 
         dvui.labelNoFmt(@src(), user.display_name, .{}, .{
-            .font_style = .caption_heading,
+            .font = .theme(.heading).larger(-2),
             // x left, y top, w right, h bottom
             .padding = dvui.Rect.all(0),
             .margin = dvui.Rect.all(0),
         });
 
         dvui.labelNoFmt(@src(), "Online", .{}, .{
-            .font_style = .body,
             // x left, y top, w right, h bottom
             .padding = dvui.Rect.all(0),
             .margin = dvui.Rect.all(0),

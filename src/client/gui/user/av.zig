@@ -15,7 +15,7 @@ pub fn draw(state: *core.State) !void {
     defer vbox.deinit();
     dvui.labelNoFmt(@src(), tab_name, .{}, .{
         .gravity_x = 0.5,
-        .font_style = .title_2,
+        .font = .theme(.title).larger(4),
     });
     _ = dvui.separator(@src(), .{ .expand = .horizontal });
 
@@ -37,12 +37,12 @@ pub fn draw(state: *core.State) !void {
 
             dvui.labelNoFmt(@src(), "Audio Input", .{}, .{
                 .gravity_x = 0.5,
-                .font_style = .title_3,
+                .font = .theme(.title).larger(2),
                 .expand = .horizontal,
             });
             if (try deviceDropdown(@src(), &state.audio.user.capture, .{
                 .gravity_x = 0.5,
-                .font_style = .title_4,
+                .font = .theme(.title),
                 .expand = .horizontal,
             })) {}
 
@@ -64,13 +64,13 @@ pub fn draw(state: *core.State) !void {
 
             dvui.labelNoFmt(@src(), "Audio Output", .{}, .{
                 .gravity_x = 0.5,
-                .font_style = .title_3,
+                .font = .theme(.title).larger(2),
                 .expand = .horizontal,
             });
 
             if (try deviceDropdown(@src(), &state.audio.user.playout, .{
                 .gravity_x = 0.5,
-                .font_style = .title_4,
+                .font = .theme(.title),
                 .expand = .horizontal,
             })) {}
 
