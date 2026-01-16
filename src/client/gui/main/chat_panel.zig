@@ -175,7 +175,7 @@ fn messageFrame(h: *awebo.Host, author_id: awebo.User.Id, idx: usize) MsgFrameRe
     });
 
     dvui.labelNoFmt(@src(), author.display_name, .{}, .{
-        .font_style = .caption_heading,
+        .font_style = dvui.Font.theme(.heading).larger(-2),
         .id_extra = idx,
         // x left, y top, w right, h bottom
         .padding = dvui.Rect.all(0),

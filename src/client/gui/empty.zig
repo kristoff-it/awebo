@@ -25,7 +25,7 @@ pub fn draw(core_state: *core.State) !void {
     dvui.labelNoFmt(@src(), "Welcome", .{}, .{
         .gravity_x = 0.5,
         // .expand = .horizontal,
-        .font_style = .title,
+        .font = .theme(.title),
     });
 
     if (state.in_progress_host_join) |*status| {

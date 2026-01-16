@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.16.0-dev.1484+d0ba6642b",
     .dependencies = .{
         .dvui = .{
-            .url = "git+https://github.com/david-vanderson/dvui?ref=zig16-dev#9ae8d224eb35e337fd8372fb6b3b2c4415216767",
-            .hash = "dvui-0.4.0-dev-AQFJmcME2gArIJl8ARlpxg_5A-ePF4aHuQPuQs1EnUlS",
+            .url = "git+https://github.com/david-vanderson/dvui?ref=zig16-dev#74a3e1d2c4d15ab4ef095ae0f211040bf53eac7e",
+            .hash = "dvui-0.4.0-dev-AQFJmRKc2gCiB0lDwaE5MmfhZ63RP_5M2ru8pigHeaDj",
         },
         .portaudio = .{
             .url = "git+https://github.com/allyourcodebase/portaudio.git#9ebdee1dbcbb02e4f65c57f67028ee23e84b1ea2",

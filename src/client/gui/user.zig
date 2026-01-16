@@ -27,7 +27,7 @@ pub fn sidebar() void {
 
     dvui.labelNoFmt(@src(), "Settings", .{}, .{
         .gravity_x = 0.5,
-        .font_style = .title_2,
+        .font = .theme(.title).larger(4),
     });
     _ = dvui.separator(@src(), .{ .expand = .horizontal });
 
@@ -69,7 +69,7 @@ pub fn sidebar() void {
 
         const page = @field(Pages, p.name);
         dvui.labelNoFmt(@src(), page.menu_name, .{}, .{
-            .font_style = .title_3,
+            .font = .theme(.title).larger(2),
             .id_extra = idx,
         });
     }

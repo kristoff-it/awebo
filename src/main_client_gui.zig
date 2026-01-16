@@ -117,7 +117,7 @@ fn loadingFrame() !dvui.App.Result {
     dvui.labelNoFmt(@src(), "LOADING>>>", .{}, .{
         .gravity_x = 0.5,
         .expand = .both,
-        .font_style = .title,
+        .font = .theme(.title),
     });
     return .ok;
 }
