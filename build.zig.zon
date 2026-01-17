@@ -13,16 +13,16 @@
             .hash = "portaudio-19.7.0-2-Wv4wbwYsAAAgoohFPsrTjPe5NWZeyQ7A3ZrhkXejxJFv",
         },
         .opus = .{
-            .url = "git+https://github.com/allyourcodebase/opus#bed8ddac78788ef32dbffb9e5a71084c2a6bdac8",
-            .hash = "opus-0.0.1-vuF-cNQkAABW1_Zjs2ABDmfbhNGSsK2JeQsjjxp6xvgb",
+            .url = "git+https://github.com/allyourcodebase/opus#4fb42992aed6d8184873dec7ee38607cbc4e2601",
+            .hash = "opus-0.0.2-vuF-cMAkAADVsm707MYCtPmqmRs0gzg84Sz0qGbb5E3w",
         },
         .folders = .{
             .url = "git+https://github.com/ziglibs/known-folders#bafef170a73c064dc706fcfbdc2e406a35681a9c",
             .hash = "known_folders-0.0.0-Fy-PJovNAAAtqbaXgBhV6G-Z4-WNo7P0Rov-x-npZq21",
         },
         .opus_tools = .{
-            .url = "git+https://github.com/allyourcodebase/opus-tools#3dd8b35416b2554dfbee7109bdb2f35ff4c6159f",
-            .hash = "opus_tools-0.0.1-ERo7OssyAAAN9CWsY1_J-RpkcnlXkMo46VWYfMIhxh3P",
+            .url = "git+https://github.com/allyourcodebase/opus-tools#40dc7cc3632c5b76b53c79455f0aa1b9b795f749",
+            .hash = "opus_tools-0.0.2-ERo7OrcyAABTrIDA_Er6oZ0S5OzxXN0N3bLw4mtftHnA",
         },
         .zqlite = .{
             .url = "git+https://github.com/karlseguin/zqlite.zig.git#b44ed5cdc64859b08446c246f307e65ebe2b2d9c",
