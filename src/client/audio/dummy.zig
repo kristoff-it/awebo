@@ -1,9 +1,11 @@
 const builtin = @import("builtin");
 const std = @import("std");
-const app = @import("root").app;
-const audio = app.audio;
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
+const core = @import("root").core;
+const audio = core.audio;
 
-pub const kind: app.audio.Kind = .new_hotness;
+pub const kind: core.audio.Kind = .new_hotness;
 
 pub fn processInit() !void {}
 pub fn threadInit() void {}
@@ -11,18 +13,23 @@ pub fn threadDeinit() void {}
 
 const device_count = 5;
 
-pub const DeviceIteratorError = struct {};
+pub const DeviceIteratorError = struct {
+    pub fn format(self: DeviceIteratorError, writer: *Io.Writer) !void {
+        _ = self;
+        try writer.print("DeviceIteratorError", .{});
+    }
+};
 pub const DeviceIterator = struct {
-    direction: app.audio.Direction,
+    direction: core.audio.Direction,
     next_index: u8 = 0,
-    pub fn init(direction: app.audio.Direction, err: *DeviceIteratorError) error{DeviceIterator}!DeviceIterator {
+    pub fn init(direction: core.audio.Direction, err: *DeviceIteratorError) error{DeviceIterator}!DeviceIterator {
         _ = err;
         return .{ .direction = direction };
     }
     pub fn deinit(self: *DeviceIterator) void {
         _ = self;
     }
-    pub fn next(self: *DeviceIterator, err: *DeviceIteratorError) error{DeviceIterator}!?app.Device {
+    pub fn next(self: *DeviceIterator, gpa: Allocator, err: *DeviceIteratorError) error{DeviceIterator}!?core.Device {
         _ = err;
         if (self.next_index == device_count) return null;
         defer self.next_index += 1;
@@ -30,12 +37,12 @@ pub const DeviceIterator = struct {
         var name_buf: [100]u8 = undefined;
         const name = std.fmt.bufPrint(
             &name_buf,
-            "Dummy {s} Device {}",
-            .{ @tagName(self.direction), self.next_index },
+            "Dummy {t} Device {}",
+            .{ self.direction, self.next_index },
         ) catch unreachable;
         return .{
-            .name = app.PoolString.getOrCreate(name) catch @panic("OOM"),
-            .token = app.PoolString.getOrCreate(&[_]u8{self.next_index}) catch @panic("OOM"),
+            .name = core.PoolString.getOrCreate(gpa, name) catch @panic("OOM"),
+            .token = core.PoolString.getOrCreate(gpa, &[_]u8{self.next_index}) catch @panic("OOM"),
         };
     }
 };
@@ -58,14 +65,7 @@ pub const Stream = struct {
             self.* = .{ .msg = msg };
             return error.Stream;
         }
-        pub fn format(
-            self: Error,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: Error, writer: *Io.Writer) !void {
             try writer.writeAll(self.msg);
         }
     };
@@ -74,8 +74,8 @@ pub const Stream = struct {
         out_stream: *Stream,
         direction: audio.Direction,
         err: *Error,
-        device: ?app.Device,
-        callback_fn: *const app.audio.CallbackFn,
+        device: ?core.Device,
+        callback_fn: *const core.audio.CallbackFn,
         callback_data: *anyopaque,
     ) error{Stream}!void {
         _ = err;
@@ -98,10 +98,11 @@ pub const Stream = struct {
             },
         };
     }
-    pub fn close(self: *Stream) void {
+    pub fn close(self: *Stream, gpa: Allocator) void {
+        _ = gpa;
         _ = self;
     }
-    pub fn getBuffer(self: *Stream, err: *Error) error{Stream}!app.audio.Buffer {
+    pub fn getBuffer(self: *Stream, err: *Error) error{Stream}!core.audio.Buffer {
         _ = err;
         // just do something dumb/simple for now
         const now = std.time.milliTimestamp();
@@ -112,7 +113,7 @@ pub const Stream = struct {
         self.last_get_buffer_timestamp = now;
         return .{ .frame_count = self.max_buffer_frame_count, .ptr = &self.buffer };
     }
-    pub fn releaseBuffer(self: *Stream, buffer: app.audio.Buffer) void {
+    pub fn releaseBuffer(self: *Stream, buffer: core.audio.Buffer) void {
         _ = self;
         _ = buffer;
     }
