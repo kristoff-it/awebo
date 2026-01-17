@@ -1,0 +1,34 @@
+name: Build and Test
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: codeberg-medium
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      - name: Setup Zig
+        uses: https://codeberg.org/mlugg/setup-zig@v2
+
+      - name: Install System Dependencies
+        run: sudo apt-get update && sudo apt-get -yq install build-essential pkg-config libasound-dev libpulse-dev libglfw3-dev
+        # if: runner.os == 'Linux'
+
+      # - name: Build dummy audio
+      #   run: zig build ci -Daudio=dummy
+        
+      - name: Build Linux
+        run: zig build ci --summary all
+        
+      # - name: Build MacOS
+      #   run: zig build ci -Dtarget=aarch64-macos
+        
+      # - name: Build Windows
+      #   run: zig build ci -Dtarget=x86_64-windows
+        
