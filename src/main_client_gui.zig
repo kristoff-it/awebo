@@ -62,7 +62,6 @@ fn init(win: *dvui.Window) !void {
     window = win;
     global.main_thread_id = std.Thread.getCurrentId();
 
-    try maybeClearData(core.io, core.gpa);
     core_future = win.io.concurrent(core.run, .{}) catch |err| {
         std.process.fatal("unable to start awebo client core: {t}", .{err});
     };
@@ -144,35 +143,6 @@ fn guiFrame(core_state: *core.State) !void {
         .user_settings => gui.user.draw(core_state),
         else => @panic("TODO"),
     }
-}
-
-fn maybeClearData(io: Io, gpa: Allocator) !void {
-    log.debug("clearing cfg / cache dirs", .{});
-
-    var it = try std.process.argsWithAllocator(gpa);
-    _ = it.skip();
-
-    if (it.next()) |arg| {
-        if (std.mem.eql(u8, arg, "clear")) {
-            const cfg_dir = folders.open(io, gpa, .local_configuration, .{}) catch
-                @panic("unexpected error") orelse @panic("could not find a cfg path");
-
-            {
-                var fs_dir: std.fs.Dir = .{ .fd = cfg_dir.handle };
-                fs_dir.deleteTree("awebo-gui") catch @panic("error while clearing cfg path");
-            }
-
-            const cache_dir = folders.open(io, gpa, .cache, .{}) catch
-                @panic("unexpected error") orelse @panic("could not find a cache path");
-
-            {
-                var fs_dir: std.fs.Dir = .{ .fd = cache_dir.handle };
-                fs_dir.deleteTree("awebo-gui") catch @panic("error while clearing cache path");
-            }
-        } else @panic("unexpected subcommand");
-    }
-
-    log.debug("done clearing", .{});
 }
 
 fn deinit() void {}

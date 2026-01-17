@@ -123,7 +123,7 @@ pub fn runHostManager(
                 }
                 return;
             },
-            error.Canceled => {
+            error.Canceled, error.Closed => {
                 log.debug("canceled", .{});
                 switch (mode) {
                     .join => |fcs| fcs.update(@src(), .canceled),
@@ -386,7 +386,6 @@ pub fn runHostMediaSender(sock: Io.net.Socket, server: *const Io.net.IpAddress) 
                     log.debug("capture buffer not ready to send", .{});
                     continue;
                 },
-                else => return err,
             };
 
             break :blk message;

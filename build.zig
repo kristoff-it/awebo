@@ -15,7 +15,7 @@ pub fn build(b: *std.Build) void {
 
     const check = b.step("check", "check everything");
 
-    const folders = b.dependency("folders", .{
+    const known_folders = b.dependency("known_folders", .{
         .target = target,
         .optimize = optimize,
     });
@@ -26,8 +26,8 @@ pub fn build(b: *std.Build) void {
     });
 
     const audio_backend = configureAudioBackend(b, target, optimize);
-    setupServer(b, target, optimize, check, zqlite, folders);
-    setupClientGui(b, target, optimize, check, folders, audio_backend);
+    setupServer(b, target, optimize, check, zqlite, known_folders);
+    setupClientGui(b, target, optimize, check, known_folders, audio_backend);
 
     const ci = b.step("ci", "Run all the steps for the CI");
     ci.dependOn(b.getInstallStep());

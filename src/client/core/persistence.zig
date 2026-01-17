@@ -7,8 +7,8 @@ const core = @import("../core.zig");
 
 const log = std.log.scoped(.persistence);
 
-var cfg_dir: ?std.fs.Dir = null;
-var cache_dir: ?std.fs.Dir = null;
+var cfg_dir: ?std.Io.Dir = null;
+var cache_dir: ?std.Io.Dir = null;
 
 pub var cfg: std.StringHashMapUnmanaged([]const u8) = .{};
 
@@ -26,13 +26,18 @@ pub fn load(io: Io, gpa: Allocator, state: *core.State) !void {
 
 pub fn loadImpl(io: Io, gpa: Allocator, state: *core.State) error{OutOfMemory}!void {
     const cfg_path = try std.fs.path.join(gpa, &.{
-        folders.getPath(io, gpa, .local_configuration) catch @panic("oom") orelse @panic("unexpected"),
+        folders.getPath(io, gpa, .init(gpa), .local_configuration) catch @panic("oom") orelse blk: {
+            log.err("known-folders failed to find the local config dir, defaulting to '.config/'", .{});
+            break :blk ".config/";
+        },
         "awebo-gui",
     });
 
     log.debug("config path: '{s}'", .{cfg_path});
 
-    const dir = std.fs.cwd().makeOpenPath(cfg_path, .{ .iterate = true }) catch |err| {
+    const dir = std.Io.Dir.cwd().createDirPathOpen(io, cfg_path, .{
+        .open_options = .{ .iterate = true },
+    }) catch |err| {
         log.err("could not open the system's local configuration dir, reverting to using defaults: {s}", .{
             @errorName(err),
         });
@@ -52,12 +57,12 @@ pub fn loadImpl(io: Io, gpa: Allocator, state: *core.State) error{OutOfMemory}!v
     cfg_dir = dir;
 
     var dir_it = dir.iterateAssumeFirstIteration();
-    while (dir_it.next() catch @panic("unexpected")) |entry| {
+    while (dir_it.next(io) catch @panic("unexpected")) |entry| {
         switch (entry.kind) {
             else => continue,
             .file => {
                 if (!std.mem.endsWith(u8, entry.name, ".awebo")) continue;
-                const value = dir.readFileAlloc(entry.name, gpa, .limited(1024 * 1024)) catch |err| {
+                const value = dir.readFileAlloc(io, entry.name, gpa, .limited(1024 * 1024)) catch |err| {
                     log.debug("error accessing cfg file '{s}', ignoring: {s}", .{
                         entry.name, @errorName(err),
                     });
@@ -71,13 +76,18 @@ pub fn loadImpl(io: Io, gpa: Allocator, state: *core.State) error{OutOfMemory}!v
     }
 
     const cache_path = try std.fs.path.join(gpa, &.{
-        folders.getPath(io, gpa, .cache) catch @panic("oom") orelse @panic("unexpected"),
+        folders.getPath(io, gpa, .init(gpa), .cache) catch @panic("oom") orelse blk: {
+            log.err("known-folders failed to find the local cache dir, defaulting to '.cache/'", .{});
+            break :blk ".cache/";
+        },
         "awebo-gui",
     });
 
     log.debug("cache path: '{s}'", .{cache_path});
 
-    const cache = std.fs.cwd().makeOpenPath(cache_path, .{ .iterate = true }) catch |err| {
+    const cache = std.Io.Dir.cwd().createDirPathOpen(io, cache_path, .{
+        .open_options = .{ .iterate = true },
+    }) catch |err| {
         log.err("could not open the system's cache dir: {s}", .{
             @errorName(err),
         });
@@ -125,7 +135,7 @@ pub fn loadImpl(io: Io, gpa: Allocator, state: *core.State) error{OutOfMemory}!v
     }
 
     for (state.hosts.items.values()) |*h| {
-        const data = cache.readFileAlloc(h.client.identity, gpa, .limited(10 * 1024 * 1024)) catch |err| {
+        const data = cache.readFileAlloc(io, h.client.identity, gpa, .limited(10 * 1024 * 1024)) catch |err| {
             log.info("could not load the cache for host '{s}': {s}", .{
                 h.client.identity,
                 @errorName(err),
@@ -152,34 +162,36 @@ pub fn loadImpl(io: Io, gpa: Allocator, state: *core.State) error{OutOfMemory}!v
     //TODO: load messages separately
 }
 
-pub fn updateHosts(hosts: []const awebo.Host) !void {
+pub fn updateHosts(io: Io, hosts: []const awebo.Host) !void {
     log.debug("updating hosts...", .{});
     const dir = cfg_dir orelse {
         log.debug("no cfg path, giving up", .{});
         return;
     };
 
-    var wbuf: [4096]u8 = undefined;
-    var af = dir.atomicFile("hosts.awebo", .{
-        .write_buffer = &wbuf,
-    }) catch |err| {
-        log.info("failed to create an atomic file for hosts.awebo: {s}", .{
+    var af = dir.createFileAtomic(io, "hosts.awebo", .{ .replace = true }) catch |err| {
+        log.info("failed to create hosts.awebo: {s}", .{
             @errorName(err),
         });
         return;
     };
-    defer af.deinit();
+    defer af.deinit(io);
 
-    const w = &af.file_writer.interface;
+    var bufw: [4096]u8 = undefined;
+    var writer_state = af.file.writer(io, &bufw);
+    const w = &writer_state.interface;
+
     for (hosts) |h| {
         try w.print("{s}\n{s}\n{s}\n", .{ h.client.identity, h.client.username, h.client.password });
     }
 
-    af.finish() catch |err| {
-        log.info("failed to update hosts.awebo atomically: {s}", .{
+    try w.flush();
+    af.replace(io) catch |err| {
+        log.info("failed to update atomically hosts.awebo: {s}", .{
             @errorName(err),
         });
         return;
     };
+
     log.debug("updated hosts.awebo", .{});
 }

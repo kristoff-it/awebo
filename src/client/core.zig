@@ -326,7 +326,7 @@ var ___state: struct { // ___ = no touchy
             });
 
             // We gained a new server, let's update our persisted data.
-            persistence.updateHosts(hosts.items.values()) catch |err| {
+            persistence.updateHosts(io, hosts.items.values()) catch |err| {
                 log.err("error while saving config: {t}", .{err});
             };
             return gop.value_ptr;

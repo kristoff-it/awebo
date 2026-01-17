@@ -269,7 +269,7 @@ const CaptureBuffer = struct {
     samples: RingBuffer,
 
     // used to wake up the thread that writes to the network
-    condition: Io.Condition = .{},
+    condition: Io.Condition = .init,
     mutex: Io.Mutex = .init,
 
     pub fn deinit(cb: *CaptureBuffer, allocator: std.mem.Allocator) void {

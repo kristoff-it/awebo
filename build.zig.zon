@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.16.0-dev.2213+9d1a39c50",
     .dependencies = .{
         .dvui = .{
-            .url = "git+https://github.com/david-vanderson/dvui?ref=zig16-dev#74a3e1d2c4d15ab4ef095ae0f211040bf53eac7e",
-            .hash = "dvui-0.4.0-dev-AQFJmRKc2gCiB0lDwaE5MmfhZ63RP_5M2ru8pigHeaDj",
+            .url = "git+https://github.com/david-vanderson/dvui?ref=zig16-dev#4b9d2f6027ca2e57fe78364661aa6c076c2afbd7",
+            .hash = "dvui-0.4.0-dev-AQFJmaOb2gDvvi1BIbOAdjsik0rJgKWvXhwBtgTOQiPV",
         },
         .portaudio = .{
             .url = "git+https://github.com/allyourcodebase/portaudio.git#d62f02220cc1250e13ade607d365a824999bbfdb",
@@ -15,10 +15,6 @@
         .opus = .{
             .url = "git+https://github.com/allyourcodebase/opus#bed8ddac78788ef32dbffb9e5a71084c2a6bdac8",
             .hash = "opus-0.0.1-vuF-cNQkAABW1_Zjs2ABDmfbhNGSsK2JeQsjjxp6xvgb",
-        },
-        .folders = .{
-            .url = "git+https://github.com/ziglibs/known-folders#bafef170a73c064dc706fcfbdc2e406a35681a9c",
-            .hash = "known_folders-0.0.0-Fy-PJovNAAAtqbaXgBhV6G-Z4-WNo7P0Rov-x-npZq21",
         },
         .opus_tools = .{
             .url = "git+https://github.com/allyourcodebase/opus-tools#3dd8b35416b2554dfbee7109bdb2f35ff4c6159f",
@@ -32,6 +28,10 @@
             .url = "git+https://github.com/marlersoft/zigwin32#5587b16fa040573846a6bf531301f6206d31a6bf",
             .hash = "zigwin32-25.0.28-preview-AAAAAICM5AMResOGQnQ85mfe60TTOQeMtt7GRATUOKoP",
             .lazy = true,
+        },
+        .known_folders = .{
+            .url = "git+https://github.com/ziglibs/known-folders#8465ba6cfc49fe941f95c75b3ae48c03aa6125b5",
+            .hash = "known_folders-0.0.0-Fy-PJqrJAACSvJM3Ux3aJi3wu5hOUYBRvcTM-9NTelui",
         },
     },
     .paths = .{

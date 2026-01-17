@@ -413,14 +413,14 @@ fn joined_voice(state: *core.State) !void {
             defer vbox.deinit();
 
             dvui.labelNoFmt(@src(), "Voice Connected", .{}, .{
-                .font = .theme(.heading).larger(-2),
+                .font = dvui.Font.theme(.heading).larger(-2),
             });
 
             const h = state.hosts.get(call.host_id).?;
             const v = h.voices.get(call.voice_id).?;
 
             dvui.label(@src(), "{s} / {s}", .{ v.name, h.name }, .{
-                .font = .theme(.body).larger(-2),
+                .font = dvui.Font.theme(.body).larger(-2),
             });
         }
 
@@ -460,7 +460,7 @@ fn userbox(state: *core.State, h: *awebo.Host) !void {
         defer text_box.deinit();
 
         dvui.labelNoFmt(@src(), user.display_name, .{}, .{
-            .font = .theme(.heading).larger(-2),
+            .font = dvui.Font.theme(.heading).larger(-2),
             // x left, y top, w right, h bottom
             .padding = dvui.Rect.all(0),
             .margin = dvui.Rect.all(0),

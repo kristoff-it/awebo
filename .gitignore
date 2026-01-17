@@ -8,3 +8,5 @@ docgen_tmp/
 
 # Awebo
 awebo.db*
+.config/
+.cache/

@@ -21,8 +21,8 @@ const global = struct {
     var mutex = std.Thread.Mutex{};
 };
 
-pub fn main() !void {
-    const cmd_args = (try std.process.argsAlloc(global.arena))[1..];
+pub fn main(init: std.process.Init) !void {
+    const cmd_args = (try init.minimal.args.toSlice(global.arena))[1..];
 
     var opt: struct {
         list: bool = false,
@@ -152,7 +152,7 @@ pub fn main() !void {
 
     std.log.info("press enter to stop...", .{});
     var buf: [10]u8 = undefined;
-    _ = try std.fs.File.stdin().read(&buf);
+    _ = try std.Io.File.stdin().readStreaming(init.io, &.{&buf});
     std.log.info("stopping...", .{});
 }
 

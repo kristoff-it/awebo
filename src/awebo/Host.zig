@@ -64,7 +64,7 @@ pub const ClientOnly = struct {
         proto.client.OriginId,
         struct {
             cms: proto.client.ChatMessageSend,
-            push_future: Io.Future(error{Canceled}!void),
+            push_future: Io.Future(error{ Closed, Canceled }!void),
         },
     ) = .{},
     pending_requests: std.AutoArrayHashMapUnmanaged(u64, *u8) = .{},
