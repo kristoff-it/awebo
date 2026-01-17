@@ -47,7 +47,7 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
                 fn handler(crtl_type: win.DWORD) callconv(.winapi) win.BOOL {
                     switch (crtl_type) {
                         win.CTRL_C_EVENT => {
-                            shutdown_event.set();
+                            shutdown_event.set(shutdown_event_io);
                             return win.TRUE;
                         },
                         else => return win.FALSE,

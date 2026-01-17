@@ -46,7 +46,7 @@ pub fn activate(_io: Io, _gpa: Allocator, state: *core.State) !void {
         log.err("open playout failed: {f}", .{stream_error});
         return error.AudioPlayout;
     };
-    errdefer playout.close();
+    errdefer playout.close(gpa);
 
     log.debug("opening capture stream", .{});
     audio.Stream.open(
@@ -60,7 +60,7 @@ pub fn activate(_io: Io, _gpa: Allocator, state: *core.State) !void {
         log.err("open capture failed: {f}", .{stream_error});
         return error.AudioCapture;
     };
-    errdefer capture.close();
+    errdefer capture.close(gpa);
 
     capture_encoder = try awebo.opus.Encoder.create();
     errdefer capture_encoder.destroy();
@@ -98,9 +98,9 @@ pub fn activate(_io: Io, _gpa: Allocator, state: *core.State) !void {
 
 pub fn stop() void {
     capture.stop();
-    capture.close();
+    capture.close(gpa);
     playout.stop();
-    playout.close();
+    playout.close(gpa);
     audio.threadDeinit();
 }
 

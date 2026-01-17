@@ -4,7 +4,6 @@ const Io = std.Io;
 const win32 = @import("win32").everything;
 pub const core = @import("client/core.zig");
 const audio = core.audio;
-const gpa = core.gpa;
 
 fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.log.err(fmt, args);
@@ -23,6 +22,8 @@ const global = struct {
 
 pub fn main(init: std.process.Init) !void {
     const cmd_args = (try init.minimal.args.toSlice(global.arena))[1..];
+
+    const gpa = init.gpa;
 
     var opt: struct {
         list: bool = false,
@@ -105,7 +106,7 @@ pub fn main(init: std.process.Init) !void {
         streamCallback,
         @constCast(&{}), // callback data
     ) catch std.debug.panic("open capture failed: {f}", .{stream_err});
-    defer capture.close();
+    defer capture.close(gpa);
     std.log.info("Input Format: {}", .{capture.format});
 
     var renderer: Renderer = .{};
@@ -118,7 +119,7 @@ pub fn main(init: std.process.Init) !void {
         streamCallback,
         &renderer,
     ) catch std.debug.panic("open playout failed: {f}", .{stream_err});
-    defer playout.close();
+    defer playout.close(gpa);
     std.log.info("Output Format: {}", .{playout.format});
 
     if (!global.play_sin) {

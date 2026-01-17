@@ -29,6 +29,6 @@ jobs:
       # - name: Build MacOS
       #   run: zig build ci -Dtarget=aarch64-macos
         
-      # - name: Build Windows
-      #   run: zig build ci -Dtarget=x86_64-windows
+      - name: Build Windows
+        run: zig build ci -Dtarget=x86_64-windows --summary all
         

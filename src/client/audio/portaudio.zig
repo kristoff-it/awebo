@@ -279,7 +279,8 @@ pub const Stream = struct {
 
         log.debug("portaudio open stream: {any}", .{out_stream});
     }
-    pub fn close(self: *Stream) void {
+    pub fn close(self: *Stream, gpa: Allocator) void {
+        _ = gpa;
         const e = c.Pa_CloseStream(self.stream);
         if (e != c.paNoError) std.debug.panic(
             "Pa_CloseStream failed with {} ({s})",

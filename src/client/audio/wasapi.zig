@@ -5,7 +5,6 @@ const win32 = @import("win32").everything;
 const core = @import("root").core;
 const audio = core.audio;
 const PoolString = core.PoolString;
-const gpa = core.gpa;
 
 fn u32FromHr(hr: i32) u32 {
     return @bitCast(hr);
@@ -125,18 +124,19 @@ pub const DeviceIterator = struct {
         self.* = undefined;
     }
 
-    pub fn next(self: *DeviceIterator, _: Allocator, err: *HResultError) error{DeviceIterator}!?core.Device {
+    pub fn next(self: *DeviceIterator, gpa: Allocator, err: *HResultError) error{DeviceIterator}!?core.Device {
         if (self.next_index == self.count)
             return null;
         const index = self.next_index;
         self.next_index += 1;
-        return try nextDevice(self.collection, index, err);
+        return try nextDevice(gpa, self.collection, index, err);
     }
 };
 
 const max_device_token_bytes = 400;
 
 fn nextDevice(
+    gpa: Allocator,
     collection: *win32.IMMDeviceCollection,
     device_index: u32,
     err: *HResultError,
@@ -172,7 +172,7 @@ fn nextDevice(
             error.OutOfMemory => return err.deviceIterator(win32.E_OUTOFMEMORY, "GetDeviceIdPoolString"),
         };
     };
-    errdefer token.removeReference();
+    errdefer token.removeReference(gpa);
 
     const props: *win32.IPropertyStore = blk: {
         var props: *win32.IPropertyStore = undefined;
@@ -194,7 +194,7 @@ fn nextDevice(
     }
 
     return core.Device{
-        .name = PoolString.getOrCreateWtf16Le(max_device_token_bytes, std.mem.span(friendly_name.Anonymous.Anonymous.Anonymous.pwszVal.?)) catch |e| switch (e) {
+        .name = PoolString.getOrCreateWtf16Le(gpa, max_device_token_bytes, std.mem.span(friendly_name.Anonymous.Anonymous.Anonymous.pwszVal.?)) catch |e| switch (e) {
             error.TooBig => return err.deviceIterator(win32.STATUS_NAME_TOO_LONG, "GetDeviceIdPoolString"),
             error.OutOfMemory => return err.deviceIterator(win32.E_OUTOFMEMORY, "GetNamePoolString"),
         },
@@ -429,7 +429,7 @@ pub const Stream = struct {
         };
         if (device) |d| d.addReference();
     }
-    pub fn close(self: *Stream) void {
+    pub fn close(self: *Stream, gpa: Allocator) void {
         std.debug.assert(self.thread == null);
         if (self.device) |d| d.removeReference(gpa);
         _ = self.stream_client.release(self.direction);
