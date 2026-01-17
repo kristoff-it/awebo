@@ -24,9 +24,11 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
 }
 
 // Map table/index names to sql string
-const TableMap = std.StringArrayHashMapUnmanaged([:0]const u8);
-const TableSet = std.StringArrayHashMapUnmanaged(void);
-const TableInfo = std.StringArrayHashMapUnmanaged(TableInfoEntry);
+const StringMap = std.StringArrayHashMapUnmanaged;
+const StringSet = std.StringArrayHashMapUnmanaged(void);
+const TableMap = StringMap([:0]const u8);
+const IndexMap = StringMap([:0]const u8);
+const TableInfo = StringMap(TableInfoEntry);
 
 const TableInfoEntry = struct {
     cid: i64,
@@ -35,6 +37,33 @@ const TableInfoEntry = struct {
     default_value: ?[]const u8,
     primary_key: bool,
 };
+
+fn tableInfoEntryEql(lhs: *const TableInfoEntry, rhs: *const TableInfoEntry) bool {
+    if (lhs.cid != rhs.cid)
+        return false;
+
+    if (!std.mem.eql(u8, lhs.type, rhs.type))
+        return false;
+
+    if (lhs.not_null != rhs.not_null)
+        return false;
+
+    if (lhs.primary_key != rhs.primary_key)
+        return false;
+
+    const lhs_default_value = lhs.default_value orelse {
+        if (rhs.default_value != null)
+            return false
+        else
+            return true;
+    };
+
+    const rhs_default_value = rhs.default_value orelse return false;
+    if (!std.mem.eql(u8, lhs_default_value, rhs_default_value))
+        return false;
+
+    return true;
+}
 
 fn tableInfoEql(lhs: *const TableInfo, rhs: *const TableInfo) bool {
     if (lhs.count() != rhs.count())
@@ -45,29 +74,9 @@ fn tableInfoEql(lhs: *const TableInfo, rhs: *const TableInfo) bool {
         if (!rhs.contains(column_name))
             return false;
 
-        const lhs_info = lhs.get(column_name).?;
-        const rhs_info = rhs.get(column_name).?;
-        if (lhs_info.cid != rhs_info.cid)
-            return false;
-
-        if (!std.mem.eql(u8, lhs_info.type, rhs_info.type))
-            return false;
-
-        if (lhs_info.not_null != rhs_info.not_null)
-            return false;
-
-        if (lhs_info.primary_key != rhs_info.primary_key)
-            return false;
-
-        const lhs_default_value = lhs_info.default_value orelse {
-            if (rhs_info.default_value != null)
-                return false
-            else
-                continue;
-        };
-
-        const rhs_default_value = rhs_info.default_value orelse return false;
-        if (!std.mem.eql(u8, lhs_default_value, rhs_default_value))
+        const lhs_info = lhs.getPtr(column_name).?;
+        const rhs_info = rhs.getPtr(column_name).?;
+        if (!tableInfoEntryEql(lhs_info, rhs_info))
             return false;
     }
 
@@ -169,8 +178,8 @@ fn getDependents(gpa: Allocator, conn: zqlite.Conn, table_name: []const u8) ![]D
 }
 
 // Subtract one set from another, gives you the keys that are in lhs but not rhs
-fn setDiff(gpa: Allocator, lhs: *const TableMap, rhs: *const TableMap) !TableSet {
-    var ret: TableSet = .{};
+fn setDiff(comptime Map: type, comptime Set: type, gpa: Allocator, lhs: *const Map, rhs: *const Map) !Set {
+    var ret: Set = .{};
 
     for (lhs.keys()) |name|
         if (!rhs.contains(name))
@@ -179,8 +188,8 @@ fn setDiff(gpa: Allocator, lhs: *const TableMap, rhs: *const TableMap) !TableSet
     return ret;
 }
 
-fn setUnion(gpa: Allocator, lhs: *const TableMap, rhs: *const TableMap) !TableSet {
-    var ret: TableSet = .{};
+fn setUnion(comptime Map: type, comptime Set: type, gpa: Allocator, lhs: *const Map, rhs: *const Map) !Set {
+    var ret: Set = .{};
 
     for (lhs.keys()) |name|
         if (rhs.contains(name))
@@ -218,22 +227,26 @@ pub fn migrateSchema(gpa: Allocator, conn: zqlite.Conn) !void {
     log.debug("pristine init schema", .{});
     try initSchema(pristine);
 
+    var changes_made = false;
+
     // ====================================
     // TABLES
     // ====================================
     const pristine_tables = try getTables(arena, pristine);
     const db_tables = try getTables(arena, conn);
 
-    const new_tables = try setDiff(arena, &pristine_tables, &db_tables);
-    const removed_tables = try setDiff(arena, &db_tables, &pristine_tables);
-    const same_tables = try setUnion(arena, &pristine_tables, &db_tables);
+    const new_tables = try setDiff(TableMap, StringSet, arena, &pristine_tables, &db_tables);
+    const removed_tables = try setDiff(TableMap, StringSet, arena, &db_tables, &pristine_tables);
+    const same_tables = try setUnion(TableMap, StringSet, arena, &pristine_tables, &db_tables);
 
     for (new_tables.keys()) |name| {
+        changes_made = true;
         log.info("Creating new table '{s}'", .{name});
         try conn.execNoArgs(pristine_tables.get(name).?);
     }
 
     for (removed_tables.keys()) |name| {
+        changes_made = true;
         log.info("Dropping table '{s}'", .{name});
         try dropTable(conn, name);
     }
@@ -245,7 +258,7 @@ pub fn migrateSchema(gpa: Allocator, conn: zqlite.Conn) !void {
         if (tableInfoEql(&pristine_info, &db_info))
             continue;
 
-        log.info("detected change in table {s}", .{table_name});
+        changes_made = true;
 
         // If foreign key constraints are enabled, disable them using PRAGMA
         // foreign_keys=OFF.
@@ -257,7 +270,6 @@ pub fn migrateSchema(gpa: Allocator, conn: zqlite.Conn) !void {
         try conn.transaction();
         {
             errdefer conn.rollback();
-            errdefer std.log.err("sqlite last error: {s}", .{conn.lastError()});
 
             // Remember the format of all indexes, triggers, and views associated
             // with table X. This information will be needed in step 8 below. One
@@ -269,7 +281,7 @@ pub fn migrateSchema(gpa: Allocator, conn: zqlite.Conn) !void {
             // desired revised format of table X. Make sure that the name "new_X"
             // does not collide with any existing table name, of course.
             const sql = pristine_tables.get(table_name).?;
-            const idx = std.mem.find(u8, sql, table_name) orelse fatal("table name not found in sql: name={s}, sql={s}", .{
+            const idx = std.mem.find(u8, sql, table_name) orelse fatal("Table name not found in sql: name={s}, sql={s}", .{
                 table_name,
                 sql,
             });
@@ -280,27 +292,48 @@ pub fn migrateSchema(gpa: Allocator, conn: zqlite.Conn) !void {
                 sql[idx + table_name.len ..],
             });
 
-            std.log.info("table_x_query: {s}", .{table_x_query});
             try conn.execNoArgs(table_x_query);
+
+            const new_columns = try setDiff(TableInfo, StringSet, arena, &pristine_info, &db_info);
+            const removed_columns = try setDiff(TableInfo, StringSet, arena, &db_info, &pristine_info);
+            const same_columns = try setUnion(TableInfo, StringSet, arena, &pristine_info, &db_info);
+            for (new_columns.keys()) |column_name| {
+                const info = pristine_info.get(column_name).?;
+                const default_value: []const u8 = if (info.not_null)
+                    if (info.default_value) |dv| dv else {
+                        log.err("When creating a new column, if it is NOT NULL, you must give it a default value: table={s} column={s}", .{
+                            table_name,
+                            column_name,
+                        });
+
+                        return error.InvalidSchema;
+                    }
+                else
+                    "NULL";
+                log.info("Adding new column to table '{s}': '{s}', default_value={s}", .{ table_name, column_name, default_value });
+            }
+
+            for (removed_columns.keys()) |column_name|
+                log.info("Dropping column from table '{s}': '{s}'", .{ table_name, column_name });
+
+            for (same_columns.keys()) |column_name| {
+                const original_col = db_info.getPtr(column_name).?;
+                const pristine_col = pristine_info.getPtr(column_name).?;
+                if (!tableInfoEntryEql(original_col, pristine_col)) {
+                    log.info("Column modified in table '{s}': '{s}'", .{ table_name, column_name });
+                }
+            }
 
             // Transfer content from X into new_X using a statement like: INSERT
             // INTO new_X SELECT ... FROM X.
-
-            // TODO: we have to get the union of fields between pristine and db, and get the default for new columns
-            var column_names: std.ArrayList([]const u8) = .{};
-            for (pristine_info.keys()) |column_name| {
-                if (db_info.contains(column_name))
-                    try column_names.append(gpa, column_name);
-            }
-
+            const column_list = try std.mem.join(arena, ", ", same_columns.keys());
             const transfer_query = try std.fmt.allocPrintSentinel(arena, "INSERT INTO {s}_X ({s}) SELECT {s} FROM {s}", .{
                 table_name,
-                try std.mem.join(arena, ", ", column_names.items),
-                try std.mem.join(arena, ", ", column_names.items),
+                column_list,
+                column_list,
                 table_name,
             }, 0);
 
-            std.log.info("transfer query: {s}", .{transfer_query});
             try conn.execNoArgs(transfer_query);
 
             // Drop the old table X: DROP TABLE X.
@@ -317,10 +350,8 @@ pub fn migrateSchema(gpa: Allocator, conn: zqlite.Conn) !void {
             // indexes, triggers, and views associated with table X. Perhaps use
             // the old format of the triggers, indexes, and views saved from step 3
             // above as a guide, making changes as appropriate for the alteration.
-            for (dependents) |dependent| {
-                log.debug("running dependent: {s}", .{dependent.sql});
+            for (dependents) |dependent|
                 try conn.execNoArgs(dependent.sql);
-            }
 
             // If any views refer to table X in a way that is affected by the
             // schema change, then drop those views using DROP VIEW and recreate
@@ -332,7 +363,7 @@ pub fn migrateSchema(gpa: Allocator, conn: zqlite.Conn) !void {
             // If foreign key constraints were originally enabled then run PRAGMA
             // foreign_key_check to verify that the schema change did not break any
             // foreign key constraints.
-
+            try conn.execNoArgs("PRAGMA foreign_key_check");
         }
 
         // Commit the transaction started in step 2.
@@ -348,18 +379,23 @@ pub fn migrateSchema(gpa: Allocator, conn: zqlite.Conn) !void {
     const pristine_indexes = try getIndexes(arena, pristine);
     const db_indexes = try getIndexes(arena, conn);
 
-    const new_indexes = try setDiff(arena, &pristine_indexes, &db_indexes);
-    const removed_indexes = try setDiff(arena, &db_indexes, &pristine_indexes);
+    const new_indexes = try setDiff(IndexMap, StringSet, arena, &pristine_indexes, &db_indexes);
+    const removed_indexes = try setDiff(IndexMap, StringSet, arena, &db_indexes, &pristine_indexes);
 
     for (new_indexes.keys()) |name| {
+        changes_made = true;
         log.debug("Creating new index '{s}'", .{name});
         try conn.execNoArgs(pristine_indexes.get(name).?);
     }
 
     for (removed_indexes.keys()) |name| {
+        changes_made = true;
         log.debug("Dropping index '{s}'", .{name});
         try dropIndex(conn, name);
     }
+
+    if (!changes_made)
+        log.info("No changes made to DB schema", .{});
 }
 
 fn initSchema(conn: zqlite.Conn) !void {
