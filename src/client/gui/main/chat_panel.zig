@@ -26,7 +26,9 @@ pub fn draw(state: *core.State, frozen: bool) !void {
 }
 
 fn sendBar(state: *core.State, h: *awebo.Host, c: *Chat, frozen: bool) !void {
-    const gpa = dvui.currentWindow().gpa;
+    const win = dvui.currentWindow();
+    const io = win.io;
+    const gpa = win.gpa;
 
     var box = dvui.box(@src(), .{ .dir = .horizontal }, .{
         .gravity_y = 1,
@@ -70,7 +72,7 @@ fn sendBar(state: *core.State, h: *awebo.Host, c: *Chat, frozen: bool) !void {
         const raw = std.mem.trim(u8, in.textGet(), " \t\n\r");
         if (raw.len > 0) {
             const text = try gpa.dupe(u8, raw);
-            try state.messageSend(h, c, text);
+            try state.messageSend(io, gpa, h, c, text);
             in.textSet("", false);
         }
     }

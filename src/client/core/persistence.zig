@@ -117,7 +117,7 @@ pub fn loadImpl(io: Io, gpa: Allocator, state: *core.State) error{OutOfMemory}!v
             log.debug("missing password field from host file, abandoning", .{});
             break :blk;
         };
-        const h = state.hosts.add(ident, username, password) catch |err| switch (err) {
+        const h = state.hosts.add(io, gpa, ident, username, password) catch |err| switch (err) {
             // We never write duplicate data into the file, but
             // in case a user did this to themselves by editing the file
             // manually, we can be graceful about it, I guess.

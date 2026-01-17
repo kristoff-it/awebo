@@ -102,7 +102,7 @@ pub fn deviceDropdown(
 
     var new_selection: ?core.DeviceSelection = null;
     if (dd.dropped()) {
-        const devices = audio_state.selectInit();
+        const devices = audio_state.selectInit(dvui.currentWindow().gpa);
         defer audio_state.deinitSelect(new_selection);
 
         if (audio_state.device) |selected_device| {

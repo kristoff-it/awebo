@@ -11,9 +11,6 @@ const TcpMessage = awebo.protocol.TcpMessage;
 const ClientRequestReply = awebo.protocol.server.ClientRequestReply;
 const HostId = awebo.Host.ClientOnly.Id;
 
-const gpa = core.gpa;
-const io = core.io;
-
 const log = std.log.scoped(.net);
 
 pub const HostConnectMode = union(enum) {
@@ -22,11 +19,13 @@ pub const HostConnectMode = union(enum) {
 };
 
 pub fn runHostManager(
+    io: Io,
+    gpa: Allocator,
     mode: HostConnectMode,
     identity: []const u8,
     username: []const u8,
     password: []const u8,
-) void {
+) error{Canceled}!void {
     log.debug("{s} started", .{@src().fn_name});
     defer log.debug("{s} exited", .{@src().fn_name});
 
@@ -90,7 +89,7 @@ pub fn runHostManager(
         hc.tcp.reader_state = hc.tcp.stream.reader(io, &hc.tcp.rbuf);
         hc.tcp.writer_state = hc.tcp.stream.writer(io, &hc.tcp.wbuf);
 
-        runHostManagerFallible(mode, &hc) catch |err| switch (err) {
+        runHostManagerFallible(io, gpa, mode, &hc) catch |err| switch (err) {
             // error.SystemResources,
             // error.ProcessFdQuotaExceeded,
             // error.UnsupportedClock,
@@ -123,13 +122,21 @@ pub fn runHostManager(
                 }
                 return;
             },
-            error.Canceled, error.Closed => {
-                log.debug("canceled", .{});
+            error.Closed => {
+                log.debug("channel closed", .{});
                 switch (mode) {
                     .join => |fcs| fcs.update(@src(), .canceled),
                     .connect => {},
                 }
                 return;
+            },
+            error.Canceled => {
+                log.debug("canceled", .{});
+                switch (mode) {
+                    .join => |fcs| fcs.update(@src(), .canceled),
+                    .connect => {},
+                }
+                return error.Canceled;
             },
             error.AweboProtocol => {
                 log.debug("protocol error", .{});
@@ -160,7 +167,12 @@ pub fn runHostManager(
     }
 }
 
-fn runHostManagerFallible(mode: HostConnectMode, hc: *HostConnection) !void {
+fn runHostManagerFallible(
+    io: Io,
+    gpa: Allocator,
+    mode: HostConnectMode,
+    hc: *HostConnection,
+) !void {
     log.debug("connected", .{});
     switch (mode) {
         .join => |fcs| fcs.update(@src(), .connected),
@@ -207,9 +219,9 @@ fn runHostManagerFallible(mode: HostConnectMode, hc: *HostConnection) !void {
         .connect => |host_id| host_id,
         .join => |fcs| blk: {
             const host_id = lock: {
-                var locked = core.lockState();
-                defer locked.unlock();
-                const host = try locked.state.hosts.add(identity, username, password);
+                var locked = core.lockState(io);
+                defer locked.unlock(io);
+                const host = try locked.state.hosts.add(io, gpa, identity, username, password);
                 break :lock host.client.host_id;
             };
 
@@ -219,22 +231,27 @@ fn runHostManagerFallible(mode: HostConnectMode, hc: *HostConnection) !void {
         },
     };
 
-    var receive_future = try io.concurrent(runHostReceive, .{ hc, host_id });
+    var receive_future = try io.concurrent(runHostReceive, .{ io, gpa, hc, host_id });
     defer receive_future.cancel(io) catch {};
 
-    var send_future = try io.concurrent(runHostSend, .{hc});
+    var send_future = try io.concurrent(runHostSend, .{ io, gpa, hc });
     defer send_future.cancel(io) catch {};
 
     log.debug("notifying core we connected successfully", .{});
     try core.command_queue.putOne(io, .{ .host_id = host_id, .cmd = .{ .host_connection_update = .{ .connected = hc } } });
 
-    _ = io.select(.{ &receive_future, &send_future }) catch return;
+    _ = io.select(.{ &receive_future, &send_future }) catch return error.Canceled;
 
     //hc.tcp.manager_future =
 
 }
 
-fn runHostReceive(hc: *HostConnection, id: awebo.Host.ClientOnly.Id) !void {
+fn runHostReceive(
+    io: Io,
+    gpa: Allocator,
+    hc: *HostConnection,
+    id: awebo.Host.ClientOnly.Id,
+) !void {
     log.debug("{s} started", .{@src().fn_name});
     defer log.debug("{s} exited", .{@src().fn_name});
 
@@ -268,25 +285,34 @@ fn runHostReceive(hc: *HostConnection, id: awebo.Host.ClientOnly.Id) !void {
     }
 }
 
-fn runHostSend(hc: *HostConnection) !void {
+fn runHostSend(
+    io: Io,
+    gpa: Allocator,
+    hc: *HostConnection,
+) !void {
     log.debug("{s} started", .{@src().fn_name});
     defer log.debug("{s} exited", .{@src().fn_name});
 
     const writer = &hc.tcp.writer_state.interface;
     while (true) {
-        // TODO: set to 64 when stdlib fixes this
-        var msgbuf: [1][]const u8 = undefined;
+        var msgbuf: [64][]const u8 = undefined;
         const messages = msgbuf[0..try hc.tcp.queue.get(io, &msgbuf, 1)];
         log.debug("tcp write got {} messages to send", .{messages.len});
         try writer.writeVecAll(messages);
-        _ = gpa;
-        // for (messages) |msg| gpa.free(msg);
+        for (messages) |msg| gpa.free(msg);
         try writer.flush();
     }
 }
 
 // There should be only one of these tasks active at a time
-pub fn runHostMediaManager(host_id: HostId, hc: *HostConnection, tcp_client: u64, nonce: u64) !void {
+pub fn runHostMediaManager(
+    io: Io,
+    gpa: Allocator,
+    host_id: HostId,
+    hc: *HostConnection,
+    tcp_client: u64,
+    nonce: u64,
+) !void {
     log.debug("{s} started", .{@src().fn_name});
     defer log.debug("{s} exited", .{@src().fn_name});
 
@@ -295,10 +321,10 @@ pub fn runHostMediaManager(host_id: HostId, hc: *HostConnection, tcp_client: u64
     const sock: Io.net.Socket = try addr.bind(io, .{ .mode = .dgram, .protocol = .udp });
     defer sock.close(io);
 
-    var receiver_future = io.concurrent(runHostMediaReceiver, .{ sock, &server, host_id }) catch return;
+    var receiver_future = io.concurrent(runHostMediaReceiver, .{ io, gpa, sock, &server, host_id }) catch return;
     defer receiver_future.cancel(io) catch {};
 
-    var sender_future = io.concurrent(runHostMediaSender, .{ sock, &server }) catch return;
+    var sender_future = io.concurrent(runHostMediaSender, .{ io, sock, &server }) catch return;
     defer sender_future.cancel(io) catch {};
 
     const open: awebo.protocol.media.OpenStream = .{
@@ -315,6 +341,8 @@ pub fn runHostMediaManager(host_id: HostId, hc: *HostConnection, tcp_client: u64
 }
 
 pub fn runHostMediaReceiver(
+    io: Io,
+    gpa: Allocator,
     sock: Io.net.Socket,
     server: *const Io.net.IpAddress,
     host_id: HostId,
@@ -371,7 +399,11 @@ pub fn runHostMediaReceiver(
         //     }
     }
 }
-pub fn runHostMediaSender(sock: Io.net.Socket, server: *const Io.net.IpAddress) !void {
+pub fn runHostMediaSender(
+    io: Io,
+    sock: Io.net.Socket,
+    server: *const Io.net.IpAddress,
+) !void {
     log.debug("{s} started", .{@src().fn_name});
     defer log.debug("{s} exited", .{@src().fn_name});
 

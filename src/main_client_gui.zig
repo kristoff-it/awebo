@@ -29,7 +29,6 @@ pub const dvui_app: dvui.App = .{
                 // Could set a default theme here
                 // .theme = dvui.Theme.builtin.dracula,
             },
-            .gpa = core.gpa,
         },
     },
     .frameFn = frame,
@@ -62,21 +61,22 @@ fn init(win: *dvui.Window) !void {
     window = win;
     global.main_thread_id = std.Thread.getCurrentId();
 
-    core_future = win.io.concurrent(core.run, .{}) catch |err| {
+    core_future = win.io.concurrent(core.run, .{ win.io, win.gpa }) catch |err| {
         std.process.fatal("unable to start awebo client core: {t}", .{err});
     };
 }
 
 fn frame() !dvui.App.Result {
     if (checkClosing()) return .close;
+    const win = dvui.currentWindow();
 
-    var locked = core.lockState();
-    defer locked.unlock();
+    var locked = core.lockState(win.io);
+    defer locked.unlock(win.io);
     const core_state = locked.state;
 
     if (core_state.failure != null) return .close;
     if (!core_state.loaded) return loadingFrame();
-    try guiFrame(core_state);
+    try guiFrame(win.io, core_state);
     return .ok;
 }
 
@@ -121,7 +121,8 @@ fn loadingFrame() !dvui.App.Result {
     return .ok;
 }
 
-fn guiFrame(core_state: *core.State) !void {
+fn guiFrame(io: Io, core_state: *core.State) !void {
+    _ = io;
     var main_box = dvui.box(
         @src(),
         .{ .dir = .horizontal },

@@ -8,6 +8,10 @@ const core = @import("../../core.zig");
 const main = @import("../../gui.zig").main;
 
 pub fn draw(state: *core.State) !void {
+    const win = dvui.currentWindow();
+    const io = win.io;
+    const gpa = win.gpa;
+
     const h = state.hosts.get(main.state.active_host).?;
     var box = dvui.box(@src(), .{ .dir = .vertical }, .{
         .expand = .vertical,
@@ -15,16 +19,17 @@ pub fn draw(state: *core.State) !void {
     defer box.deinit();
 
     if (main.state.show_new_chat or main.state.pending_new_chat != null) {
-        try new_chat_floating_window(state, h);
+        try newChatFloatingWindow(io, gpa, state, h);
     }
-    host_name(h);
-    chat_list(h);
-    try voice_list(h, state);
-    try joined_voice(state);
+
+    hostName(h);
+    chatList(h);
+    try voiceList(io, gpa, h, state);
+    try joinedVoice(io, state);
     try userbox(state, h);
 }
 
-pub fn host_name(h: *awebo.Host) void {
+pub fn hostName(h: *awebo.Host) void {
     {
         var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{
             .expand = .horizontal,
@@ -65,9 +70,7 @@ pub fn host_name(h: *awebo.Host) void {
     _ = dvui.separator(@src(), .{ .expand = .horizontal });
 }
 
-pub fn new_chat_floating_window(state: *core.State, h: *awebo.Host) !void {
-    const gpa = dvui.currentWindow().gpa;
-
+pub fn newChatFloatingWindow(io: Io, gpa: Allocator, state: *core.State, h: *awebo.Host) !void {
     const fw = dvui.floatingWindow(@src(), .{ .modal = true }, .{
         .padding = dvui.Rect.all(10),
     });
@@ -172,14 +175,14 @@ pub fn new_chat_floating_window(state: *core.State, h: *awebo.Host) !void {
                 .name = name,
             };
             main.state.pending_new_chat = cmd;
-            try state.channelCreate(cmd);
+            try state.channelCreate(io, gpa, cmd);
 
             in.len = 0;
         }
     }
 }
 
-pub fn chat_list(h: *awebo.Host) void {
+pub fn chatList(h: *awebo.Host) void {
     var list_scroll = dvui.scrollArea(
         @src(),
         .{},
@@ -231,7 +234,7 @@ pub fn chat_list(h: *awebo.Host) void {
     }
 }
 
-fn voice_list(h: *awebo.Host, state: *core.State) !void {
+fn voiceList(io: Io, gpa: Allocator, h: *awebo.Host, state: *core.State) !void {
     _ = dvui.separator(@src(), .{ .expand = .horizontal });
 
     const opts: dvui.Options = .{
@@ -286,7 +289,7 @@ fn voice_list(h: *awebo.Host, state: *core.State) !void {
                         .gravity_x = 1,
                         .margin = dvui.Rect.all(4),
                     })) {
-                        try state.callJoin(h.client.host_id, v.id);
+                        try state.callJoin(io, gpa, h.client.host_id, v.id);
                     }
                 }
 
@@ -398,7 +401,7 @@ fn voice_list(h: *awebo.Host, state: *core.State) !void {
     }
 }
 
-fn joined_voice(state: *core.State) !void {
+fn joinedVoice(io: Io, state: *core.State) !void {
     if (state.active_call) |call| {
         const hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{
             .expand = .horizontal,
@@ -425,7 +428,7 @@ fn joined_voice(state: *core.State) !void {
         }
 
         if (dvui.button(@src(), "Leave", .{}, .{ .expand = .vertical })) {
-            try state.callLeave();
+            try state.callLeave(io);
         }
     }
 }

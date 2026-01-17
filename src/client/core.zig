@@ -23,27 +23,22 @@ const log = std.log.scoped(.core);
 pub const State = @TypeOf(___state);
 pub const RefreshFn = fn (src: std.builtin.SourceLocation, id: ?u64) void;
 
-pub const gpa = std.heap.smp_allocator;
-var threaded: Io.Threaded = undefined;
-pub const io = threaded.io();
-
 pub var refresh: *const RefreshFn = undefined;
 var start_time: std.time.Instant = undefined;
 
 pub fn init(_refresh: *const RefreshFn) void {
-    threaded = .init(gpa, .{ .environ = .empty });
     refresh = _refresh;
     start_time = std.time.Instant.now() catch @panic("need clock");
 }
 
-pub fn run() void {
+pub fn run(io: Io, gpa: Allocator) void {
     log.debug("started", .{});
     defer log.debug("goodbye", .{});
 
     log.debug("starting audio support", .{});
     audio.processInit() catch {
-        var locked = lockState();
-        defer locked.unlock();
+        var locked = lockState(io);
+        defer locked.unlock(io);
         const state = locked.state;
 
         state.failure = "error starting audio";
@@ -54,13 +49,13 @@ pub fn run() void {
     var first_connect_group: Io.Group = .init;
     defer first_connect_group.cancel(io);
     {
-        var locked = lockState();
-        defer locked.unlock();
+        var locked = lockState(io);
+        defer locked.unlock(io);
         const state = locked.state;
         persistence.load(io, gpa, state) catch return;
         const hosts = state.hosts.items.values();
         for (hosts) |h| first_connect_group.async(io, network.runHostManager, .{
-            .{ .connect = h.client.host_id }, h.client.identity, h.client.username, h.client.password,
+            io, gpa, .{ .connect = h.client.host_id }, h.client.identity, h.client.username, h.client.password,
         });
     }
 
@@ -68,10 +63,10 @@ pub fn run() void {
         const msg = command_queue.getOne(io) catch return;
         log.debug("from host {} got {any}", .{ msg.host_id, msg.cmd });
         switch (msg.cmd) {
-            .host_connection_update => |hcu| hostConnectionUpdate(msg.host_id, hcu),
+            .host_connection_update => |hcu| hostConnectionUpdate(io, msg.host_id, hcu),
             .caller_speaking => |cs| {
-                var locked = lockState();
-                defer locked.unlock();
+                var locked = lockState(io);
+                defer locked.unlock(io);
                 const state = locked.state;
 
                 const host = state.hosts.get(msg.host_id).?;
@@ -79,10 +74,10 @@ pub fn run() void {
                 caller.client.speaking_last_ms = cs.time_ms;
             },
 
-            .host_sync => |hs| hostSync(msg.host_id, hs),
-            .chat_message_new => |cms| chatMessageNew(msg.host_id, cms),
-            .media_connection_details => |mcd| mediaConnectionDetails(msg.host_id, mcd),
-            .callers_update => |cu| callersUpdate(msg.host_id, cu),
+            .host_sync => |hs| hostSync(io, gpa, msg.host_id, hs),
+            .chat_message_new => |cms| chatMessageNew(io, gpa, msg.host_id, cms),
+            .media_connection_details => |mcd| mediaConnectionDetails(io, gpa, msg.host_id, mcd),
+            .callers_update => |cu| callersUpdate(io, gpa, msg.host_id, cu),
             // .msg => |msg| switch (msg.bytes[0]) {
             //     else => std.debug.panic("unexpected marker: '{c}'", .{
             //         msg.bytes[0],
@@ -119,9 +114,9 @@ pub const NetworkCommand = struct {
     };
 };
 
-fn hostConnectionUpdate(id: HostId, hcu: awebo.Host.ClientOnly.ConnectionStatus) void {
-    var locked = lockState();
-    defer locked.unlock();
+fn hostConnectionUpdate(io: Io, id: HostId, hcu: awebo.Host.ClientOnly.ConnectionStatus) void {
+    var locked = lockState(io);
+    defer locked.unlock(io);
     const host = locked.state.hosts.get(id).?;
 
     host.client.connection_status = hcu;
@@ -133,21 +128,21 @@ fn hostConnectionUpdate(id: HostId, hcu: awebo.Host.ClientOnly.ConnectionStatus)
     refresh(@src(), 0);
 }
 
-fn hostSync(id: HostId, hs: awebo.protocol.server.HostSync) void {
-    var locked = lockState();
-    defer locked.unlock();
-    locked.state.hosts.sync(id, hs);
+fn hostSync(io: Io, gpa: Allocator, id: HostId, hs: awebo.protocol.server.HostSync) void {
+    var locked = lockState(io);
+    defer locked.unlock(io);
+    locked.state.hosts.sync(gpa, id, hs);
 }
 
-fn channelsUpdate(msg: NetworkCommand.Msg) !void {
+fn channelsUpdate(io: Io, gpa: Allocator, msg: NetworkCommand.Msg) !void {
     var fbs = std.io.fixedBufferStream(msg.bytes[1..]);
     const crr = try awebo.protocol.server.ChannelsUpdate.parseAlloc(gpa, fbs.reader());
     log.debug("CU: {any}", .{crr});
 
     std.debug.assert(crr.kind == .delta);
 
-    var locked = lockState();
-    defer locked.unlock();
+    var locked = lockState(io);
+    defer locked.unlock(io);
     const state = locked.state;
 
     const h = state.hosts.get(1).?;
@@ -155,7 +150,7 @@ fn channelsUpdate(msg: NetworkCommand.Msg) !void {
         try h.chats.set(gpa, chat);
     }
 }
-fn handleRequestReply(msg: NetworkCommand.Msg) !void {
+fn handleRequestReply(gpa: Allocator, msg: NetworkCommand.Msg) !void {
     var fbs = std.io.fixedBufferStream(msg.bytes[1..]);
     const crr = try awebo.protocol.server.ClientRequestReply.parseAlloc(gpa, fbs.reader());
     log.debug("CRR: {any}", .{crr});
@@ -184,9 +179,9 @@ fn handleRequestReply(msg: NetworkCommand.Msg) !void {
     }
 }
 
-fn chatMessageNew(host_id: HostId, cmn: awebo.protocol.server.ChatMessageNew) void {
-    var locked = lockState();
-    defer locked.unlock();
+fn chatMessageNew(io: Io, gpa: Allocator, host_id: HostId, cmn: awebo.protocol.server.ChatMessageNew) void {
+    var locked = lockState(io);
+    defer locked.unlock(io);
     const state = locked.state;
 
     const h = state.hosts.get(host_id).?;
@@ -200,9 +195,9 @@ fn chatMessageNew(host_id: HostId, cmn: awebo.protocol.server.ChatMessageNew) vo
     }
 }
 
-fn callersUpdate(host_id: HostId, cu: awebo.protocol.server.CallersUpdate) void {
-    var locked = lockState();
-    defer locked.unlock();
+fn callersUpdate(io: Io, gpa: Allocator, host_id: HostId, cu: awebo.protocol.server.CallersUpdate) void {
+    var locked = lockState(io);
+    defer locked.unlock(io);
     const state = locked.state;
 
     const h = state.hosts.get(host_id).?;
@@ -219,9 +214,14 @@ fn callersUpdate(host_id: HostId, cu: awebo.protocol.server.CallersUpdate) void 
     }
 }
 
-fn mediaConnectionDetails(host_id: HostId, mcd: awebo.protocol.server.MediaConnectionDetails) void {
-    var locked = lockState();
-    defer locked.unlock();
+fn mediaConnectionDetails(
+    io: Io,
+    gpa: Allocator,
+    host_id: HostId,
+    mcd: awebo.protocol.server.MediaConnectionDetails,
+) void {
+    var locked = lockState(io);
+    defer locked.unlock(io);
     const state = locked.state;
 
     if (state.active_call) |*ac| {
@@ -233,12 +233,14 @@ fn mediaConnectionDetails(host_id: HostId, mcd: awebo.protocol.server.MediaConne
                 }
 
                 // Activates audio streams
-                media.activate(io, state) catch |err| std.debug.panic("err staring audio: {t}", .{err});
+                media.activate(io, gpa, state) catch |err| std.debug.panic("err staring audio: {t}", .{err});
 
                 // Asks to the network layer to start the UDP data transfer
                 // for this call.
                 const host = state.hosts.get(host_id).?;
                 _ = io.concurrent(network.runHostMediaManager, .{
+                    io,
+                    gpa,
                     host_id,
                     host.client.connection.?,
                     mcd.tcp_client,
@@ -260,16 +262,14 @@ fn mediaConnectionDetails(host_id: HostId, mcd: awebo.protocol.server.MediaConne
 pub const Locked = struct {
     state: *State,
 
-    pub fn unlock(l: *Locked) void {
+    pub fn unlock(l: *Locked, io: Io) void {
+        _ = l;
         mutex.unlock(io);
-        if (std.debug.runtime_safety) {
-            l.state = undefined;
-        }
     }
 };
 
 pub var command_queue = Io.Queue(NetworkCommand).init(&qbuf);
-pub fn lockState() Locked {
+pub fn lockState(io: Io) Locked {
     mutex.lockUncancelable(io);
     return .{ .state = &___state };
 }
@@ -305,6 +305,8 @@ var ___state: struct { // ___ = no touchy
 
         pub fn add(
             hosts: *@This(),
+            io: Io,
+            gpa: Allocator,
             identity: []const u8,
             username: []const u8,
             password: []const u8,
@@ -334,6 +336,7 @@ var ___state: struct { // ___ = no touchy
 
         pub fn sync(
             hosts: *@This(),
+            gpa: Allocator,
             host_id: HostId,
             hs: awebo.protocol.server.HostSync,
         ) void {
@@ -406,7 +409,7 @@ var ___state: struct { // ___ = no touchy
         device: ?Device = null,
 
         selecting_devices: ?[]Device = null,
-        pub fn selectInit(self: *UserAudio) []Device {
+        pub fn selectInit(self: *UserAudio, gpa: Allocator) []Device {
             if (self.selecting_devices == null) {
                 const on_event = switch (self.direction) {
                     .capture => logAudioDeviceEvent(.capture),
@@ -460,7 +463,7 @@ var ___state: struct { // ___ = no touchy
             return state.hosts.get(ac.host_id).?.shared.voices.get(ac.voice_id).?;
         }
 
-        pub fn disconnect(ac: *ActiveCall, state: *State) void {
+        pub fn disconnect(ac: *ActiveCall, io: Io, state: *State) void {
             _ = ac;
             const call = &(state.active_call orelse return);
             if (call.push_future) |*push_future| push_future.cancel(io) catch {};
@@ -474,7 +477,7 @@ var ___state: struct { // ___ = no touchy
     /// On error return, the message was not scheduled for sending and should be
     /// left untouched in the UI text input element, letting the user know that
     /// more resources must be freed in order to be able to complete the operation.
-    pub fn messageSend(state: *State, h: *Host, c: *Chat, text: []const u8) !void {
+    pub fn messageSend(state: *State, io: Io, gpa: Allocator, h: *Host, c: *Chat, text: []const u8) !void {
         const ChatMessageSend = awebo.protocol.client.ChatMessageSend;
         _ = state;
         const cms: ChatMessageSend = .{
@@ -510,7 +513,7 @@ var ___state: struct { // ___ = no touchy
         };
     }
 
-    pub fn channelCreate(state: *State, cmd: *ui.ChannelCreate) !void {
+    pub fn channelCreate(state: *State, io: Io, gpa: Allocator, cmd: *ui.ChannelCreate) !void {
         _ = state;
         std.debug.panic("unimplemented", .{});
         try network.command_queue.putOne(io, .{
@@ -529,16 +532,24 @@ var ___state: struct { // ___ = no touchy
     /// Returns a future representing the frist connection attempt.
     pub fn hostJoin(
         state: *State,
+        io: Io,
+        gpa: Allocator,
         identity: []const u8,
         username: []const u8,
         password: []const u8,
         fcs: *ui.FirstConnectionStatus,
-    ) !Io.Future(void) {
+    ) !Io.Future(error{Canceled}!void) {
         if (state.hosts.identities.contains(identity)) return error.Duplicate;
-        return io.concurrent(network.runHostManager, .{ .{ .join = fcs }, identity, username, password });
+        return io.concurrent(network.runHostManager, .{ io, gpa, .{ .join = fcs }, identity, username, password });
     }
 
-    pub fn callJoin(state: *State, host_id: HostId, voice_id: Voice.Id) !void {
+    pub fn callJoin(
+        state: *State,
+        io: Io,
+        gpa: Allocator,
+        host_id: HostId,
+        voice_id: Voice.Id,
+    ) !void {
         const host = state.hosts.get(host_id).?;
         switch (host.client.connection_status) {
             .connecting, .connected, .disconnected, .reconnecting, .deleting => unreachable, // UI should have prevented this attempt
@@ -566,7 +577,7 @@ var ___state: struct { // ___ = no touchy
             });
         }
 
-        if (state.active_call) |*ac| ac.disconnect(state);
+        if (state.active_call) |*ac| ac.disconnect(io, state);
         state.active_call = call;
     }
 
@@ -575,9 +586,9 @@ var ___state: struct { // ___ = no touchy
         state.screenshare_intent = true;
     }
 
-    pub fn callLeave(state: *State) !void {
+    pub fn callLeave(state: *State, io: Io) !void {
         const ac = &(state.active_call orelse return);
-        ac.disconnect(state);
+        ac.disconnect(io, state);
     }
 } = .{};
 

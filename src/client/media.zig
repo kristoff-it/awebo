@@ -1,11 +1,11 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const builtin = @import("builtin");
 const awebo = @import("../awebo.zig");
 const audio = @import("audio.zig");
 const network = @import("core/network.zig");
 const core = @import("core.zig");
-const gpa = core.gpa;
 
 const RingBuffer = @import("RingBuffer.zig");
 
@@ -18,15 +18,18 @@ var capture_encoder: *awebo.opus.Encoder = undefined;
 
 // These buffers are accessed by both the network thread
 // and the audio thread.
-var playout_buffers = std.AutoArrayHashMap(u16, PlayoutBuffer).init(gpa);
+var playout_buffers: std.AutoArrayHashMapUnmanaged(u16, PlayoutBuffer) = .empty;
 pub var capture_buffer: CaptureBuffer = undefined;
+
+var gpa: Allocator = undefined;
 var io: Io = undefined;
 
 // end of media streaming state
 
 // Called by the core app thread
-pub fn activate(_io: Io, state: *core.State) !void {
+pub fn activate(_io: Io, _gpa: Allocator, state: *core.State) !void {
     io = _io;
+    gpa = _gpa;
     audio.threadInit();
     errdefer audio.threadDeinit();
 
@@ -126,6 +129,7 @@ pub fn receive(message: []const u8) struct { f32, u16 } {
     // log.debug("UDP SEQ: {}", .{message_header.sequence});
 
     const gop = playout_buffers.getOrPut(
+        gpa,
         message_header.streamId(),
     ) catch unreachable;
 

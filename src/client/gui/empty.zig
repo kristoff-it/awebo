@@ -52,12 +52,14 @@ pub fn draw(core_state: *core.State) !void {
     }
 
     if (state.show_add_host) {
-        try new_host_floating_window(core_state);
+        try newHostFloatingWindow(core_state);
     }
 }
 
-fn new_host_floating_window(app_state: *core.State) !void {
-    const gpa = dvui.currentWindow().gpa;
+fn newHostFloatingWindow(app_state: *core.State) !void {
+    const win = dvui.currentWindow();
+    const io = win.io;
+    const gpa = win.gpa;
 
     const fw = dvui.floatingWindow(@src(), .{ .modal = true }, .{
         .padding = dvui.Rect.all(10),
@@ -144,6 +146,6 @@ fn new_host_floating_window(app_state: *core.State) !void {
 
         // TODO: we should not be discarding this.
         state.in_progress_host_join = .{};
-        _ = try app_state.hostJoin(address_trimmed, username_trimmed, password, &state.in_progress_host_join.?);
+        _ = try app_state.hostJoin(io, gpa, address_trimmed, username_trimmed, password, &state.in_progress_host_join.?);
     }
 }
