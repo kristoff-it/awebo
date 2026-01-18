@@ -10,8 +10,6 @@ const log = std.log.scoped(.persistence);
 var cfg_dir: ?std.Io.Dir = null;
 var cache_dir: ?std.Io.Dir = null;
 
-pub var cfg: std.StringHashMapUnmanaged([]const u8) = .{};
-
 pub fn load(core: *Core) !void {
     log.debug("begin loading state from disk", .{});
     defer log.debug("done loading state from disk", .{});
@@ -75,7 +73,7 @@ pub fn loadImpl(core: *Core) error{OutOfMemory}!void {
                 };
 
                 const key = try gpa.dupe(u8, entry.name[0 .. entry.name.len - ".awebo".len]);
-                try cfg.putNoClobber(gpa, key, value);
+                try core.cfg.putNoClobber(gpa, key, value);
             },
         }
     }
@@ -110,7 +108,7 @@ pub fn loadImpl(core: *Core) error{OutOfMemory}!void {
     };
     cache_dir = cache;
 
-    const kv = cfg.fetchRemove("hosts") orelse return;
+    const kv = core.cfg.fetchRemove("hosts") orelse return;
     var it = std.mem.tokenizeScalar(u8, kv.value, '\n');
     var idx: u32 = 1;
     blk: while (it.next()) |ident| : (idx += 1) {

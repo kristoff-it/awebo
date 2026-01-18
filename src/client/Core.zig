@@ -25,6 +25,7 @@ failure: ?[]const u8 = null,
 /// Set to true once data has been loaded from disk.
 loaded: bool = false,
 hosts: Hosts = .{},
+cfg: std.StringHashMapUnmanaged([]const u8) = .{},
 
 user_audio: struct {
     capture: UserAudio = .{ .direction = .capture, .volume = 0.5 },
@@ -146,6 +147,17 @@ pub fn init(
         .media = undefined,
         .string_pool = .{},
     };
+}
+
+pub fn deinit(core: *Core) void {
+    core.hosts.identities.deinit(core.gpa);
+    core.hosts.items.deinit(core.gpa);
+    var iter = core.cfg.iterator();
+    while (iter.next()) |entry| {
+        core.gpa.free(entry.key_ptr.*);
+        core.gpa.free(entry.value_ptr.*);
+    }
+    core.cfg.deinit(core.gpa);
 }
 
 pub fn run(core: *Core) void {
