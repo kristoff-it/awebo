@@ -34,8 +34,8 @@
             .hash = "known_folders-0.0.0-Fy-PJqrJAACSvJM3Ux3aJi3wu5hOUYBRvcTM-9NTelui",
         },
         .vaxis = .{
-            .url = "git+https://github.com/neurocyte/libvaxis?ref=awebo#515a74e1085fb7713f75a915bbb92b30ad5533d7",
-            .hash = "vaxis-0.5.1-BWNV_O0-CQA1AOyrbobQQUGIAB2_F0Y0s613aLluLjuZ",
+            .url = "git+https://github.com/neurocyte/libvaxis?ref=awebo#62f75158347d6640cdc9969c9d9490cdc9b1b574",
+            .hash = "vaxis-0.5.1-BWNV_BFECQBbXeTeFd48uTJRjD5a-KD6kPuKanzzVB01",
         },
     },
     .paths = .{
