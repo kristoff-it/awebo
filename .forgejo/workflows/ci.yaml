@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: codeberg-medium
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v2
         with:
@@ -16,19 +16,18 @@ jobs:
       - name: Setup Zig
         uses: https://codeberg.org/mlugg/setup-zig@v2
 
-      - name: Install System Dependencies
-        run: sudo apt-get update && sudo apt-get -yq install build-essential pkg-config libasound-dev libpulse-dev libglfw3-dev
-        # if: runner.os == 'Linux'
+      # - name: Install System Dependencies
+      #   run: sudo apt-get update && sudo apt-get -yq install build-essential pkg-config libasound-dev libpulse-dev libglfw3-dev
 
       # - name: Build dummy audio
       #   run: zig build ci -Daudio=dummy
         
       - name: Build Linux
-        run: zig build ci --summary all
+        run: zig build --summary all
         
       # - name: Build MacOS
       #   run: zig build ci -Dtarget=aarch64-macos
         
       - name: Build Windows
-        run: zig build ci -Dtarget=x86_64-windows --summary all
+        run: zig build -Dtarget=x86_64-windows --summary all
         

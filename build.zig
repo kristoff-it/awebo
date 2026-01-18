@@ -27,32 +27,6 @@ pub fn build(b: *std.Build) void {
 
     setupServer(b, target, optimize, check, zqlite, known_folders);
     setupClientGui(b, target, optimize, check, known_folders);
-
-    const ci = b.step("ci", "Run all the steps for the CI");
-    ci.dependOn(b.getInstallStep());
-
-    {
-        const exe = b.addExecutable(.{
-            .name = "audiotest",
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("src/audiotest.zig"),
-                .target = target,
-            }),
-        });
-        if (target.result.os.tag == .windows) {
-            if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
-                exe.root_module.addImport("win32", win32_dep.module("win32"));
-            }
-        }
-
-        const install = b.addInstallArtifact(exe, .{});
-        ci.dependOn(&install.step);
-        const run = b.addRunArtifact(exe);
-        run.step.dependOn(&install.step);
-        if (b.args) |args| run.addArgs(args);
-        b.step("audiotest", "Run the audio test application").dependOn(&run.step);
-        check.dependOn(&install.step);
-    }
 }
 
 pub fn setupServer(
