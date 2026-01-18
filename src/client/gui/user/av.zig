@@ -1,12 +1,14 @@
 const std = @import("std");
 const dvui = @import("dvui");
 const audio = @import("audio");
-const core = @import("../../core.zig");
+const Core = @import("../../Core.zig");
+const App = @import("../../../main_client_gui.zig").App;
 
 pub const menu_name = "Audio / Video";
 pub const tab_name = "Audio / Video";
 
-pub fn draw(state: *core.State) !void {
+pub fn draw(app: *App) !void {
+    const core = &app.core;
     var vbox = dvui.box(@src(), .{ .dir = .vertical }, .{
         .expand = .both,
         .background = true,
@@ -40,13 +42,13 @@ pub fn draw(state: *core.State) !void {
                 .font = dvui.Font.theme(.title).larger(2),
                 .expand = .horizontal,
             });
-            if (try deviceDropdown(@src(), &state.audio.user.capture, .{
+            if (try deviceDropdown(core, @src(), &core.user_audio.capture, .{
                 .gravity_x = 0.5,
                 .font = dvui.Font.theme(.title),
                 .expand = .horizontal,
             })) {}
 
-            const in_volume = &state.audio.user.capture.volume;
+            const in_volume = &core.user_audio.capture.volume;
             _ = dvui.slider(@src(), .{
                 .dir = .horizontal,
                 .fraction = in_volume,
@@ -68,13 +70,13 @@ pub fn draw(state: *core.State) !void {
                 .expand = .horizontal,
             });
 
-            if (try deviceDropdown(@src(), &state.audio.user.playout, .{
+            if (try deviceDropdown(core, @src(), &core.user_audio.playout, .{
                 .gravity_x = 0.5,
                 .font = dvui.Font.theme(.title),
                 .expand = .horizontal,
             })) {}
 
-            const out_volume = &state.audio.user.playout.volume;
+            const out_volume = &core.user_audio.playout.volume;
             _ = dvui.slider(@src(), .{
                 .dir = .horizontal,
                 .fraction = out_volume,
@@ -86,8 +88,9 @@ pub fn draw(state: *core.State) !void {
 }
 
 pub fn deviceDropdown(
+    core: *Core,
     src: std.builtin.SourceLocation,
-    audio_state: *core.State.UserAudio,
+    audio_state: *Core.UserAudio,
     opts: dvui.Options,
 ) !bool {
     var dd: dvui.DropdownWidget = undefined;
@@ -100,10 +103,10 @@ pub fn deviceDropdown(
     );
     // try dd.install();
 
-    var new_selection: ?core.DeviceSelection = null;
+    var new_selection: ?Core.DeviceSelection = null;
     if (dd.dropped()) {
-        const devices = audio_state.selectInit(dvui.currentWindow().gpa);
-        defer audio_state.deinitSelect(new_selection);
+        const devices = audio_state.selectInit(core);
+        defer audio_state.deinitSelect(core, new_selection);
 
         if (audio_state.device) |selected_device| {
             for (devices, 1..) |d, i| {

@@ -4,17 +4,11 @@ const Io = std.Io;
 const dvui = @import("dvui");
 const awebo = @import("../../awebo.zig");
 const Host = awebo.Host;
-const core = @import("../core.zig");
+const Core = @import("../Core.zig");
 const main = @import("main.zig");
-const client = @import("../../main_client_gui.zig");
+const App = @import("../../main_client_gui.zig").App;
 
-pub var state: struct {
-    in_progress_host_join: ?core.ui.FirstConnectionStatus = null,
-    show_add_host: bool = false,
-    err_msg: ?[]const u8 = null,
-} = .{};
-
-pub fn draw(core_state: *core.State) !void {
+pub fn draw(app: *App) !void {
     var box = dvui.box(@src(), .{ .dir = .vertical }, .{
         .gravity_x = 0.5,
         .gravity_y = 0.5,
@@ -28,11 +22,11 @@ pub fn draw(core_state: *core.State) !void {
         .font = .theme(.title),
     });
 
-    if (state.in_progress_host_join) |*status| {
+    if (app.in_progress_host_join) |*status| {
         if (status.get() == .success) {
-            main.state.show_new_chat = false;
-            state.show_add_host = false;
-            state.in_progress_host_join = null;
+            app.show_new_chat = false;
+            app.show_add_host = false;
+            app.in_progress_host_join = null;
         }
     }
 
@@ -44,29 +38,28 @@ pub fn draw(core_state: *core.State) !void {
         defer hbox.deinit();
 
         if (dvui.button(@src(), "Join Existing", .{}, .{})) {
-            state.show_add_host = true;
+            app.show_add_host = true;
         }
         if (dvui.button(@src(), "Create Server", .{}, .{})) {
             dvui.toggleDebugWindow();
         }
     }
 
-    if (state.show_add_host) {
-        try newHostFloatingWindow(core_state);
+    if (app.show_add_host) {
+        try newHostFloatingWindow(app);
     }
 }
 
-fn newHostFloatingWindow(app_state: *core.State) !void {
-    const win = dvui.currentWindow();
-    const io = win.io;
-    const gpa = win.gpa;
+fn newHostFloatingWindow(app: *App) !void {
+    const core = &app.core;
+    const gpa = core.gpa;
 
     const fw = dvui.floatingWindow(@src(), .{ .modal = true }, .{
         .padding = dvui.Rect.all(10),
     });
     defer fw.deinit();
 
-    fw.dragAreaSet(dvui.windowHeader("Add new server", "", &state.show_add_host));
+    fw.dragAreaSet(dvui.windowHeader("Add new server", "", &app.show_add_host));
 
     _ = dvui.spacer(@src(), .{ .min_size_content = dvui.Size.all(10) });
 
@@ -99,15 +92,15 @@ fn newHostFloatingWindow(app_state: *core.State) !void {
     password = try gpa.dupe(u8, password_input.getText());
     password_input.deinit();
 
-    if (state.in_progress_host_join) |*status| {
+    if (app.in_progress_host_join) |*status| {
         const msg = switch (status.get()) {
             else => |v| @tagName(v),
         };
 
-        state.err_msg = msg;
+        app.err_msg = msg;
     }
 
-    dvui.labelNoFmt(@src(), state.err_msg orelse "", .{}, .{
+    dvui.labelNoFmt(@src(), app.err_msg orelse "", .{}, .{
         .gravity_x = 0.5,
         .expand = .horizontal,
     });
@@ -120,7 +113,7 @@ fn newHostFloatingWindow(app_state: *core.State) !void {
     });
 
     if (clicked) blk: {
-        if (main.state.pending_new_chat) |p| {
+        if (app.pending_new_chat) |p| {
             if (p.status.get() == .ok) {
                 p.destroy(gpa);
             } else break :blk;
@@ -128,24 +121,24 @@ fn newHostFloatingWindow(app_state: *core.State) !void {
 
         const address_trimmed = std.mem.trim(u8, address, " \t\n\r");
         if (address_trimmed.len == 0) {
-            state.err_msg = "Missing IP Address!";
+            app.err_msg = "Missing IP Address!";
             return;
         }
 
         const username_trimmed = std.mem.trim(u8, username, " \t\n\r");
         if (username_trimmed.len == 0) {
-            state.err_msg = "Missing Username!";
+            app.err_msg = "Missing Username!";
             return;
         }
 
-        state.err_msg = null;
+        app.err_msg = null;
         _ = Io.net.IpAddress.parse(address_trimmed, 1991) catch |err| {
-            state.err_msg = @errorName(err);
+            app.err_msg = @errorName(err);
             break :blk;
         };
 
         // TODO: we should not be discarding this.
-        state.in_progress_host_join = .{};
-        _ = try app_state.hostJoin(io, gpa, address_trimmed, username_trimmed, password, &state.in_progress_host_join.?);
+        app.in_progress_host_join = .{};
+        _ = try core.hostJoin(address_trimmed, username_trimmed, password, &app.in_progress_host_join.?);
     }
 }

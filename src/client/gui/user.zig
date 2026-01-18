@@ -1,7 +1,6 @@
 const std = @import("std");
 const dvui = @import("dvui");
-const client = @import("../../main_client_gui.zig");
-const core = @import("../core.zig");
+const App = @import("../../main_client_gui.zig").App;
 
 const Pages = struct {
     pub const av = @import("user/av.zig");
@@ -11,11 +10,11 @@ pub var state: struct {
     active_page: std.meta.DeclEnum(Pages) = .av,
 } = .{};
 
-pub fn draw(core_state: *core.State) void {
+pub fn draw(app: *App) void {
     sidebar();
-    settings_page(core_state);
+    settings_page(app);
     if (dvui.button(@src(), "Exit", .{}, .{})) {
-        client.state.active_screen = .main;
+        app.active_screen = .main;
     }
 }
 
@@ -75,11 +74,11 @@ pub fn sidebar() void {
     }
 }
 
-fn settings_page(app_state: *core.State) void {
+fn settings_page(app: *App) void {
     switch (state.active_page) {
         inline else => |tag| {
             const page = @field(Pages, @tagName(tag));
-            try page.draw(app_state);
+            try page.draw(app);
         },
     }
 }

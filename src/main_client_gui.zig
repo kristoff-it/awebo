@@ -6,10 +6,6 @@ const folders = @import("folders");
 const dvui = @import("dvui");
 const awebo = @import("awebo.zig");
 const gui = @import("client/gui.zig");
-pub const core = @import("client/core.zig");
-const ui = @import("client/core/ui.zig");
-const global = @import("client/global.zig");
-pub const PoolString = @import("client/PoolString.zig");
 const Host = awebo.Host;
 const Voice = awebo.VoiceChannel;
 
@@ -17,6 +13,9 @@ const log = std.log.scoped(.client);
 
 const window_icon_png = @embedFile("client/data/zig-favicon.png");
 const vsync = true;
+
+pub const Core = @import("client/Core.zig");
+pub const StringPool = @import("client/StringPool.zig");
 
 pub const dvui_app: dvui.App = .{
     .config = .{
@@ -41,60 +40,114 @@ pub const std_options: std.Options = .{
     .logFn = dvui.App.logFn,
 };
 
-pub var state: struct {
+var global_app_singleton: App = undefined;
+
+fn frame() !dvui.App.Result {
+    return global_app_singleton.frame();
+}
+
+fn init(window: *dvui.Window) !void {
+    return global_app_singleton.init(window);
+}
+
+fn deinit() void {}
+
+pub const App = struct {
     active_screen: union(enum) {
         loading,
         main,
         user_settings,
         server_settings,
-    } = .main,
-} = .{};
+    },
+    window: *dvui.Window,
+    core_future: Io.Future(void),
+    core: Core,
+    command_queue_buffer: [1024]Core.NetworkCommand,
 
-var window: *dvui.Window = undefined;
-fn refresh(src: std.builtin.SourceLocation, id: ?u64) void {
-    dvui.refresh(window, src, if (id) |i| @enumFromInt(i) else null);
-}
+    // main
+    active_host: Host.ClientOnly.Id = 0,
+    show_new_chat: bool = false,
+    pending_new_chat: ?*Core.ui.ChannelCreate = null,
 
-var core_future: Io.Future(void) = undefined;
-fn init(win: *dvui.Window) !void {
-    core.init(refresh);
-    window = win;
-    global.main_thread_id = std.Thread.getCurrentId();
+    // empty
+    in_progress_host_join: ?Core.ui.FirstConnectionStatus = null,
+    show_add_host: bool = false,
+    err_msg: ?[]const u8 = null,
 
-    core_future = win.io.concurrent(core.run, .{ win.io, win.gpa }) catch |err| {
-        std.process.fatal("unable to start awebo client core: {t}", .{err});
-    };
-}
+    fn init(app: *App, window: *dvui.Window) void {
+        const io = window.io;
+        const gpa = window.gpa;
+        app.* = .{
+            .active_screen = .main,
+            .window = window,
+            .command_queue_buffer = undefined,
+            .core = .init(gpa, io, refresh, &app.command_queue_buffer),
+            .core_future = io.concurrent(Core.run, .{&app.core}) catch |err| {
+                std.process.fatal("unable to start awebo client core: {t}", .{err});
+            },
+        };
+    }
 
-fn frame() !dvui.App.Result {
-    if (checkClosing()) return .close;
-    const win = dvui.currentWindow();
+    fn frame(app: *App) !dvui.App.Result {
+        if (checkClosing(app)) return .close;
 
-    var locked = core.lockState(win.io);
-    defer locked.unlock(win.io);
-    const core_state = locked.state;
+        var locked = app.core.lockState();
+        defer locked.unlock();
 
-    if (core_state.failure != null) return .close;
-    if (!core_state.loaded) return loadingFrame();
-    try guiFrame(win.io, core_state);
-    return .ok;
-}
+        const core = &app.core;
 
-fn checkClosing() bool {
-    const win = dvui.currentWindow();
-    const wd = win.data();
-    for (dvui.events()) |*e| {
-        if (!dvui.eventMatchSimple(e, wd)) continue;
-        if ((e.evt == .window and e.evt.window.action == .close) or (e.evt == .app and e.evt.app.action == .quit)) {
-            e.handle(@src(), wd);
-            log.debug("shutting down core from ui", .{});
-            core_future.cancel(win.io);
-            return true;
+        if (core.failure != null) return .close;
+        if (!core.loaded) return loadingFrame();
+        try guiFrame(app);
+        return .ok;
+    }
+
+    fn guiFrame(app: *App) !void {
+        const core = &app.core;
+        var main_box = dvui.box(
+            @src(),
+            .{ .dir = .horizontal },
+            .{
+                .expand = .both,
+                .background = true,
+            },
+        );
+        defer main_box.deinit();
+
+        if (core.hosts.last_id == 0) {
+            try gui.empty.draw(app);
+            return;
+        }
+
+        switch (app.active_screen) {
+            .loading => gui.loading.draw(),
+            .main => try gui.main.draw(app),
+            .user_settings => gui.user.draw(app),
+            else => @panic("TODO"),
         }
     }
 
-    return false;
-}
+    fn checkClosing(app: *App) bool {
+        const win = dvui.currentWindow();
+        const wd = win.data();
+        for (dvui.events()) |*e| {
+            if (!dvui.eventMatchSimple(e, wd)) continue;
+            if ((e.evt == .window and e.evt.window.action == .close) or (e.evt == .app and e.evt.app.action == .quit)) {
+                e.handle(@src(), wd);
+                log.debug("shutting down core from ui", .{});
+                app.core_future.cancel(win.io);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    fn refresh(core: *Core, src: std.builtin.SourceLocation, id: ?u64) void {
+        const app: *App = @fieldParentPtr("core", core);
+        dvui.refresh(app.window, src, if (id) |i| @enumFromInt(i) else null);
+    }
+};
 
 fn loadingFrame() !dvui.App.Result {
     var main_box = dvui.box(
@@ -120,30 +173,3 @@ fn loadingFrame() !dvui.App.Result {
     });
     return .ok;
 }
-
-fn guiFrame(io: Io, core_state: *core.State) !void {
-    _ = io;
-    var main_box = dvui.box(
-        @src(),
-        .{ .dir = .horizontal },
-        .{
-            .expand = .both,
-            .background = true,
-        },
-    );
-    defer main_box.deinit();
-
-    if (core_state.hosts.last_id == 0) {
-        try gui.empty.draw(core_state);
-        return;
-    }
-
-    switch (state.active_screen) {
-        .loading => gui.loading.draw(),
-        .main => try gui.main.draw(core_state),
-        .user_settings => gui.user.draw(core_state),
-        else => @panic("TODO"),
-    }
-}
-
-fn deinit() void {}

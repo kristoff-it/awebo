@@ -1,10 +1,9 @@
 const dvui = @import("dvui");
 const awebo = @import("awebo");
-const core = @import("../../core.zig");
-const main = @import("../../gui.zig").main;
+const App = @import("../../../main_client_gui.zig").App;
 const Host = awebo.Host;
 
-pub fn draw(state: *core.State) void {
+pub fn draw(app: *App) void {
     var bar = dvui.scrollArea(
         @src(),
         .{},
@@ -28,7 +27,7 @@ pub fn draw(state: *core.State) void {
     );
     defer box.deinit();
 
-    for (state.hosts.items.values(), 0..) |h, idx| {
+    for (app.core.hosts.items.values(), 0..) |h, idx| {
         var item = dvui.menuItem(@src(), .{}, .{
             .expand = .horizontal,
             .min_size_content = .{ .w = 40, .h = 40 },
@@ -41,10 +40,10 @@ pub fn draw(state: *core.State) void {
         defer item.deinit();
 
         if (item.activated) {
-            main.state.active_host = h.client.host_id;
+            app.active_host = h.client.host_id;
         }
 
-        if (main.state.active_host == h.client.host_id) {
+        if (app.active_host == h.client.host_id) {
             item.wd.options.corner_radius = dvui.Rect.all(10);
             // item.wd.options.color_border = .{ .name = .text_press };
             item.wd.borderAndBackground(.{});

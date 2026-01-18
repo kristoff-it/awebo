@@ -6,25 +6,21 @@ const channel_list = @import("main/channel_list.zig");
 const chat_panel = @import("main/chat_panel.zig");
 const home_panel = @import("main/home_panel.zig");
 const screenshare_box = @import("main/screenshare_box.zig");
-const core = @import("../core.zig");
+const App = @import("../../main_client_gui.zig").App;
+const Core = @import("../Core.zig");
 const Host = awebo.Host;
 const Voice = awebo.channels.Voice;
 
-pub var state: struct {
-    active_host: Host.ClientOnly.Id = 0,
-    show_new_chat: bool = false,
-    pending_new_chat: ?*core.ui.ChannelCreate = null,
-} = .{};
-
-pub fn draw(core_state: *core.State) !void {
-    if (state.active_host == 0) {
-        state.active_host = core_state.hosts.items.keys()[0];
+pub fn draw(app: *App) !void {
+    const core = &app.core;
+    if (app.active_host == 0) {
+        app.active_host = core.hosts.items.keys()[0];
     }
 
-    const h = core_state.hosts.get(state.active_host).?;
+    const h = core.hosts.get(app.active_host).?;
     const frozen = h.client.connection_status != .synced;
 
-    host_bar.draw(core_state);
+    host_bar.draw(app);
 
     {
         var vbox = dvui.box(@src(), .{ .dir = .vertical }, .{
@@ -69,15 +65,15 @@ pub fn draw(core_state: *core.State) !void {
             .background = true,
         });
         defer hbox.deinit();
-        try channel_list.draw(core_state);
+        try channel_list.draw(app);
         switch (h.client.active_channel) {
-            .home => home_panel.draw(core_state),
-            .chat => try chat_panel.draw(core_state, frozen),
+            .home => home_panel.draw(),
+            .chat => try chat_panel.draw(app, frozen),
             .voice => @panic("TODO"),
         }
     }
 
-    if (core_state.screenshare_intent) {
-        try screenshare_box.draw(core_state);
+    if (core.screenshare_intent) {
+        try screenshare_box.draw();
     }
 }

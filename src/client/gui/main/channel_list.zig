@@ -3,30 +3,26 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const dvui = @import("dvui");
 const awebo = @import("../../../awebo.zig");
-const client = @import("../../../main_client_gui.zig");
-const core = @import("../../core.zig");
-const main = @import("../../gui.zig").main;
+const App = @import("../../../main_client_gui.zig").App;
+const Core = @import("../../Core.zig");
 
-pub fn draw(state: *core.State) !void {
-    const win = dvui.currentWindow();
-    const io = win.io;
-    const gpa = win.gpa;
-
-    const h = state.hosts.get(main.state.active_host).?;
+pub fn draw(app: *App) !void {
+    const core = &app.core;
+    const h = core.hosts.get(app.active_host).?;
     var box = dvui.box(@src(), .{ .dir = .vertical }, .{
         .expand = .vertical,
     });
     defer box.deinit();
 
-    if (main.state.show_new_chat or main.state.pending_new_chat != null) {
-        try newChatFloatingWindow(io, gpa, state, h);
+    if (app.show_new_chat or app.pending_new_chat != null) {
+        try newChatFloatingWindow(app, h);
     }
 
     hostName(h);
     chatList(h);
-    try voiceList(io, gpa, h, state);
-    try joinedVoice(io, state);
-    try userbox(state, h);
+    try voiceList(h, core);
+    try joinedVoice(core);
+    try userbox(app, h);
 }
 
 pub fn hostName(h: *awebo.Host) void {
@@ -70,7 +66,9 @@ pub fn hostName(h: *awebo.Host) void {
     _ = dvui.separator(@src(), .{ .expand = .horizontal });
 }
 
-pub fn newChatFloatingWindow(io: Io, gpa: Allocator, state: *core.State, h: *awebo.Host) !void {
+pub fn newChatFloatingWindow(app: *App, h: *awebo.Host) !void {
+    const core = &app.core;
+    const gpa = core.gpa;
     const fw = dvui.floatingWindow(@src(), .{ .modal = true }, .{
         .padding = dvui.Rect.all(10),
     });
@@ -84,7 +82,7 @@ pub fn newChatFloatingWindow(io: Io, gpa: Allocator, state: *core.State, h: *awe
         if (dvui.button(@src(), "X", .{}, .{
             .expand = .vertical,
         })) {
-            main.state.show_new_chat = false;
+            app.show_new_chat = false;
         }
         dvui.labelNoFmt(@src(), "Create new Chat", .{}, .{
             .gravity_x = 0.5,
@@ -98,14 +96,14 @@ pub fn newChatFloatingWindow(io: Io, gpa: Allocator, state: *core.State, h: *awe
         .expand = .horizontal,
     });
 
-    if (main.state.pending_new_chat) |nc| blk: {
+    if (app.pending_new_chat) |nc| blk: {
         const msg = switch (nc.status.get()) {
             .pending => "pending...",
             .connection_failure => "connection failure",
             .name_taken => "name already taken",
             .ok => {
-                main.state.pending_new_chat = null;
-                main.state.show_new_chat = false;
+                app.pending_new_chat = null;
+                app.show_new_chat = false;
                 break :blk;
             },
             // .fail => "missing permissions",
@@ -159,23 +157,23 @@ pub fn newChatFloatingWindow(io: Io, gpa: Allocator, state: *core.State, h: *awe
 
     if (clicked or enter_pressed) blk: {
         const raw = std.mem.trim(u8, in.getText(), " \t\n\r");
-        if (main.state.pending_new_chat) |p| {
+        if (app.pending_new_chat) |p| {
             if (p.status.get() == .ok) {
                 p.destroy(gpa);
             } else break :blk;
         }
         if (raw.len > 0) {
-            main.state.show_new_chat = false;
+            app.show_new_chat = false;
             const name = try gpa.dupe(u8, raw);
-            const cmd = try gpa.create(core.ui.ChannelCreate);
+            const cmd = try gpa.create(Core.ui.ChannelCreate);
             cmd.* = .{
                 .origin = 0, //@intCast(std.time.timestamp()),
                 .host = h,
                 .kind = .chat,
                 .name = name,
             };
-            main.state.pending_new_chat = cmd;
-            try state.channelCreate(io, gpa, cmd);
+            app.pending_new_chat = cmd;
+            try core.channelCreate(cmd);
 
             in.len = 0;
         }
@@ -234,7 +232,7 @@ pub fn chatList(h: *awebo.Host) void {
     }
 }
 
-fn voiceList(io: Io, gpa: Allocator, h: *awebo.Host, state: *core.State) !void {
+fn voiceList(h: *awebo.Host, core: *Core) !void {
     _ = dvui.separator(@src(), .{ .expand = .horizontal });
 
     const opts: dvui.Options = .{
@@ -281,7 +279,7 @@ fn voiceList(io: Io, gpa: Allocator, h: *awebo.Host, state: *core.State) !void {
                 });
                 defer box.deinit();
 
-                const maybe_call = state.active_call;
+                const maybe_call = core.active_call;
                 if (maybe_call == null or maybe_call.?.voice_id != v.id) {
                     if (dvui.button(@src(), "Join", .{}, .{
                         .id_extra = idx,
@@ -289,7 +287,7 @@ fn voiceList(io: Io, gpa: Allocator, h: *awebo.Host, state: *core.State) !void {
                         .gravity_x = 1,
                         .margin = dvui.Rect.all(4),
                     })) {
-                        try state.callJoin(io, gpa, h.client.host_id, v.id);
+                        try core.callJoin(h.client.host_id, v.id);
                     }
                 }
 
@@ -301,7 +299,7 @@ fn voiceList(io: Io, gpa: Allocator, h: *awebo.Host, state: *core.State) !void {
                     });
                     defer item.deinit();
 
-                    if (state.active_call) |call| {
+                    if (core.active_call) |call| {
                         const active = call.voice_id == v.id;
                         if (active) {
                             // item.wd.options.color_fill = .{ .name = .fill };
@@ -326,7 +324,7 @@ fn voiceList(io: Io, gpa: Allocator, h: *awebo.Host, state: *core.State) !void {
                 const caller = h.client.callers.get(cid).?;
 
                 if (caller.user == h.client.user_id and
-                    state.active_call == null) continue;
+                    core.active_call == null) continue;
 
                 const m = h.users.get(caller.user).?;
                 const item = dvui.menuItem(@src(), .{}, .{
@@ -380,7 +378,7 @@ fn voiceList(io: Io, gpa: Allocator, h: *awebo.Host, state: *core.State) !void {
                 //     .id_extra = idx,
                 // });
 
-                const pending = if (state.active_call) |ac| switch (ac.status.get()) {
+                const pending = if (core.active_call) |ac| switch (ac.status.get()) {
                     .intent, .connecting => true,
                     else => false,
                 } else false;
@@ -401,8 +399,8 @@ fn voiceList(io: Io, gpa: Allocator, h: *awebo.Host, state: *core.State) !void {
     }
 }
 
-fn joinedVoice(io: Io, state: *core.State) !void {
-    if (state.active_call) |call| {
+fn joinedVoice(core: *Core) !void {
+    if (core.active_call) |call| {
         const hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{
             .expand = .horizontal,
             .margin = .{ .x = 8, .w = 8 },
@@ -419,7 +417,7 @@ fn joinedVoice(io: Io, state: *core.State) !void {
                 .font = dvui.Font.theme(.heading).larger(-2),
             });
 
-            const h = state.hosts.get(call.host_id).?;
+            const h = core.hosts.get(call.host_id).?;
             const v = h.voices.get(call.voice_id).?;
 
             dvui.label(@src(), "{s} / {s}", .{ v.name, h.name }, .{
@@ -428,12 +426,14 @@ fn joinedVoice(io: Io, state: *core.State) !void {
         }
 
         if (dvui.button(@src(), "Leave", .{}, .{ .expand = .vertical })) {
-            try state.callLeave(io);
+            try core.callLeave();
         }
     }
 }
 
-fn userbox(state: *core.State, h: *awebo.Host) !void {
+fn userbox(app: *App, h: *awebo.Host) !void {
+    const core = &app.core;
+
     var user_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
         .expand = .horizontal,
         // x left, y top, w right, h bottom
@@ -477,10 +477,10 @@ fn userbox(state: *core.State, h: *awebo.Host) !void {
     }
 
     if (dvui.button(@src(), "Share", .{}, .{ .expand = .vertical })) {
-        try state.callBeginScreenShare();
+        try core.callBeginScreenShare();
     }
 
     if (dvui.button(@src(), "Settings", .{}, .{})) {
-        client.state.active_screen = .user_settings;
+        app.active_screen = .user_settings;
     }
 }

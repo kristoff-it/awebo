@@ -2,10 +2,11 @@ const builtin = @import("builtin");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
-const core = @import("root").core;
-const audio = core.audio;
+const audio = @import("../audio.zig");
+const StringPool = @import("../StringPool.zig");
+const Device = @import("../Device.zig");
 
-pub const kind: core.audio.Kind = .new_hotness;
+pub const kind: audio.Kind = .new_hotness;
 
 pub fn processInit() !void {}
 pub fn threadInit() void {}
@@ -20,16 +21,16 @@ pub const DeviceIteratorError = struct {
     }
 };
 pub const DeviceIterator = struct {
-    direction: core.audio.Direction,
+    direction: audio.Direction,
     next_index: u8 = 0,
-    pub fn init(direction: core.audio.Direction, err: *DeviceIteratorError) error{DeviceIterator}!DeviceIterator {
+    pub fn init(direction: audio.Direction, err: *DeviceIteratorError) error{DeviceIterator}!DeviceIterator {
         _ = err;
         return .{ .direction = direction };
     }
     pub fn deinit(self: *DeviceIterator) void {
         _ = self;
     }
-    pub fn next(self: *DeviceIterator, gpa: Allocator, err: *DeviceIteratorError) error{DeviceIterator}!?core.Device {
+    pub fn next(self: *DeviceIterator, sp: *StringPool, gpa: Allocator, err: *DeviceIteratorError) error{DeviceIterator}!?Device {
         _ = err;
         if (self.next_index == device_count) return null;
         defer self.next_index += 1;
@@ -40,9 +41,10 @@ pub const DeviceIterator = struct {
             "Dummy {t} Device {}",
             .{ self.direction, self.next_index },
         ) catch unreachable;
+
         return .{
-            .name = core.PoolString.getOrCreate(gpa, name) catch @panic("OOM"),
-            .token = core.PoolString.getOrCreate(gpa, &[_]u8{self.next_index}) catch @panic("OOM"),
+            .name = sp.getOrCreate(gpa, name) catch @panic("OOM"),
+            .token = sp.getOrCreate(gpa, &[_]u8{self.next_index}) catch @panic("OOM"),
         };
     }
 };
@@ -74,10 +76,12 @@ pub const Stream = struct {
         out_stream: *Stream,
         direction: audio.Direction,
         err: *Error,
-        device: ?core.Device,
-        callback_fn: *const core.audio.CallbackFn,
+        device: ?Device,
+        string_pool: *StringPool,
+        callback_fn: *const audio.CallbackFn,
         callback_data: *anyopaque,
     ) error{Stream}!void {
+        _ = string_pool;
         _ = err;
         const device_index: ?u8 = blk: {
             const d = device orelse break :blk null;
@@ -98,11 +102,12 @@ pub const Stream = struct {
             },
         };
     }
-    pub fn close(self: *Stream, gpa: Allocator) void {
-        _ = gpa;
+    pub fn close(self: *Stream, sp: *StringPool, gpa: Allocator) void {
         _ = self;
+        _ = sp;
+        _ = gpa;
     }
-    pub fn getBuffer(self: *Stream, err: *Error) error{Stream}!core.audio.Buffer {
+    pub fn getBuffer(self: *Stream, err: *Error) error{Stream}!audio.Buffer {
         _ = err;
         // just do something dumb/simple for now
         const now = std.time.milliTimestamp();
@@ -113,7 +118,7 @@ pub const Stream = struct {
         self.last_get_buffer_timestamp = now;
         return .{ .frame_count = self.max_buffer_frame_count, .ptr = &self.buffer };
     }
-    pub fn releaseBuffer(self: *Stream, buffer: core.audio.Buffer) void {
+    pub fn releaseBuffer(self: *Stream, buffer: audio.Buffer) void {
         _ = self;
         _ = buffer;
     }

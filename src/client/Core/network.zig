@@ -4,28 +4,28 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const awebo = @import("../../awebo.zig");
-const core = @import("../core.zig");
-const media = @import("../media.zig");
-const HostView = core.HostView;
+const Core = @import("../Core.zig");
+const Media = @import("../Media.zig");
+const HostView = Core.HostView;
 const TcpMessage = awebo.protocol.TcpMessage;
 const ClientRequestReply = awebo.protocol.server.ClientRequestReply;
 const HostId = awebo.Host.ClientOnly.Id;
-
 const log = std.log.scoped(.net);
 
 pub const HostConnectMode = union(enum) {
-    join: *core.ui.FirstConnectionStatus,
+    join: *Core.ui.FirstConnectionStatus,
     connect: HostId,
 };
 
 pub fn runHostManager(
-    io: Io,
-    gpa: Allocator,
+    core: *Core,
     mode: HostConnectMode,
     identity: []const u8,
     username: []const u8,
     password: []const u8,
 ) error{Canceled}!void {
+    const io = core.io;
+
     log.debug("{s} started", .{@src().fn_name});
     defer log.debug("{s} exited", .{@src().fn_name});
 
@@ -89,7 +89,7 @@ pub fn runHostManager(
         hc.tcp.reader_state = hc.tcp.stream.reader(io, &hc.tcp.rbuf);
         hc.tcp.writer_state = hc.tcp.stream.writer(io, &hc.tcp.wbuf);
 
-        runHostManagerFallible(io, gpa, mode, &hc) catch |err| switch (err) {
+        runHostManagerFallible(core, mode, &hc) catch |err| switch (err) {
             // error.SystemResources,
             // error.ProcessFdQuotaExceeded,
             // error.UnsupportedClock,
@@ -117,7 +117,7 @@ pub fn runHostManager(
             => {
                 log.debug("network error: {t}", .{err});
                 switch (mode) {
-                    .join => |fcs| fcs.update(@src(), .network_error),
+                    .join => |fcs| fcs.update(core, @src(), .network_error),
                     .connect => {},
                 }
                 return;
@@ -125,7 +125,7 @@ pub fn runHostManager(
             error.Closed => {
                 log.debug("channel closed", .{});
                 switch (mode) {
-                    .join => |fcs| fcs.update(@src(), .canceled),
+                    .join => |fcs| fcs.update(core, @src(), .canceled),
                     .connect => {},
                 }
                 return;
@@ -133,7 +133,7 @@ pub fn runHostManager(
             error.Canceled => {
                 log.debug("canceled", .{});
                 switch (mode) {
-                    .join => |fcs| fcs.update(@src(), .canceled),
+                    .join => |fcs| fcs.update(core, @src(), .canceled),
                     .connect => {},
                 }
                 return error.Canceled;
@@ -141,7 +141,7 @@ pub fn runHostManager(
             error.AweboProtocol => {
                 log.debug("protocol error", .{});
                 switch (mode) {
-                    .join => |fcs| fcs.update(@src(), .network_error),
+                    .join => |fcs| fcs.update(core, @src(), .network_error),
                     .connect => {},
                 }
                 return;
@@ -149,7 +149,7 @@ pub fn runHostManager(
             error.AuthenticationFailed => {
                 log.debug("authentication failure", .{});
                 switch (mode) {
-                    .join => |fcs| fcs.update(@src(), .authentication_failure),
+                    .join => |fcs| fcs.update(core, @src(), .authentication_failure),
                     .connect => {},
                 }
                 return;
@@ -157,7 +157,7 @@ pub fn runHostManager(
             error.DuplicateHost => {
                 log.debug("duplicate host", .{});
                 switch (mode) {
-                    .join => |fcs| fcs.update(@src(), .duplicate),
+                    .join => |fcs| fcs.update(core, @src(), .duplicate),
                     .connect => {},
                 }
                 return;
@@ -168,14 +168,16 @@ pub fn runHostManager(
 }
 
 fn runHostManagerFallible(
-    io: Io,
-    gpa: Allocator,
+    core: *Core,
     mode: HostConnectMode,
     hc: *HostConnection,
 ) !void {
+    const gpa = core.gpa;
+    const io = core.io;
+
     log.debug("connected", .{});
     switch (mode) {
-        .join => |fcs| fcs.update(@src(), .connected),
+        .join => |fcs| fcs.update(core, @src(), .connected),
         .connect => {},
     }
 
@@ -211,7 +213,7 @@ fn runHostManagerFallible(
 
     log.debug("authenticated successfully", .{});
     switch (mode) {
-        .join => |fcs| fcs.update(@src(), .authenticated),
+        .join => |fcs| fcs.update(core, @src(), .authenticated),
         .connect => {},
     }
 
@@ -219,22 +221,22 @@ fn runHostManagerFallible(
         .connect => |host_id| host_id,
         .join => |fcs| blk: {
             const host_id = lock: {
-                var locked = core.lockState(io);
-                defer locked.unlock(io);
-                const host = try locked.state.hosts.add(io, gpa, identity, username, password);
+                var locked = core.lockState();
+                defer locked.unlock();
+                const host = try core.hosts.add(core, identity, username, password);
                 break :lock host.client.host_id;
             };
 
             log.debug("host added successfully", .{});
-            fcs.update(@src(), .success);
+            fcs.update(core, @src(), .success);
             break :blk host_id;
         },
     };
 
-    var receive_future = try io.concurrent(runHostReceive, .{ io, gpa, hc, host_id });
+    var receive_future = try io.concurrent(runHostReceive, .{ core, hc, host_id });
     defer receive_future.cancel(io) catch {};
 
-    var send_future = try io.concurrent(runHostSend, .{ io, gpa, hc });
+    var send_future = try io.concurrent(runHostSend, .{ core, hc });
     defer send_future.cancel(io) catch {};
 
     log.debug("notifying core we connected successfully", .{});
@@ -247,11 +249,13 @@ fn runHostManagerFallible(
 }
 
 fn runHostReceive(
-    io: Io,
-    gpa: Allocator,
+    core: *Core,
     hc: *HostConnection,
     id: awebo.Host.ClientOnly.Id,
 ) !void {
+    const gpa = core.gpa;
+    const io = core.io;
+
     log.debug("{s} started", .{@src().fn_name});
     defer log.debug("{s} exited", .{@src().fn_name});
 
@@ -286,10 +290,12 @@ fn runHostReceive(
 }
 
 fn runHostSend(
-    io: Io,
-    gpa: Allocator,
+    core: *Core,
     hc: *HostConnection,
 ) !void {
+    const gpa = core.gpa;
+    const io = core.io;
+
     log.debug("{s} started", .{@src().fn_name});
     defer log.debug("{s} exited", .{@src().fn_name});
 
@@ -306,13 +312,15 @@ fn runHostSend(
 
 // There should be only one of these tasks active at a time
 pub fn runHostMediaManager(
-    io: Io,
-    gpa: Allocator,
+    core: *Core,
     host_id: HostId,
     hc: *HostConnection,
     tcp_client: u64,
     nonce: u64,
 ) !void {
+    const gpa = core.gpa;
+    const io = core.io;
+
     log.debug("{s} started", .{@src().fn_name});
     defer log.debug("{s} exited", .{@src().fn_name});
 
@@ -321,10 +329,10 @@ pub fn runHostMediaManager(
     const sock: Io.net.Socket = try addr.bind(io, .{ .mode = .dgram, .protocol = .udp });
     defer sock.close(io);
 
-    var receiver_future = io.concurrent(runHostMediaReceiver, .{ io, gpa, sock, &server, host_id }) catch return;
+    var receiver_future = io.concurrent(runHostMediaReceiver, .{ core, sock, &server, host_id }) catch return;
     defer receiver_future.cancel(io) catch {};
 
-    var sender_future = io.concurrent(runHostMediaSender, .{ io, sock, &server }) catch return;
+    var sender_future = io.concurrent(runHostMediaSender, .{ core, sock, &server }) catch return;
     defer sender_future.cancel(io) catch {};
 
     const open: awebo.protocol.media.OpenStream = .{
@@ -341,23 +349,25 @@ pub fn runHostMediaManager(
 }
 
 pub fn runHostMediaReceiver(
-    io: Io,
-    gpa: Allocator,
+    core: *Core,
     sock: Io.net.Socket,
     server: *const Io.net.IpAddress,
     host_id: HostId,
 ) !void {
+    const gpa = core.gpa;
+    const io = core.io;
+
     log.debug("{s} started", .{@src().fn_name});
     defer log.debug("{s} exited", .{@src().fn_name});
 
     var imbuf: [64]Io.net.IncomingMessage = undefined;
-    var csbuf: [64]core.NetworkCommand = undefined;
+    var csbuf: [64]Core.NetworkCommand = undefined;
     var csbuf_idx: usize = 0;
     const dbuf = gpa.alloc(u8, imbuf.len * 1280) catch oom();
     while (true) {
         const m = try sock.receive(io, dbuf);
         if (!m.from.eql(server)) continue;
-        const power, const cid = media.receive(m.data);
+        const power, const cid = core.media.receive(gpa, m.data);
         // log.debug("cid: {} pow: {}", .{ cid, power });
         if (power > 200) {
             try core.command_queue.putOne(io, .{
@@ -378,7 +388,7 @@ pub fn runHostMediaReceiver(
 
         //     const messages = imbuf[0..n];
         //     for (messages) |m| {
-        //         const power, const cid = media.receive(m.data);
+        //         const power, const cid = core.media.receive(m.data);
         //         if (power > 200) {
         //             csbuf[csbuf_idx] = .{
         //                 .host_id = 0,
@@ -400,10 +410,13 @@ pub fn runHostMediaReceiver(
     }
 }
 pub fn runHostMediaSender(
-    io: Io,
+    core: *Core,
     sock: Io.net.Socket,
     server: *const Io.net.IpAddress,
 ) !void {
+    const io = core.io;
+    const media = &core.media;
+
     log.debug("{s} started", .{@src().fn_name});
     defer log.debug("{s} exited", .{@src().fn_name});
 

@@ -3,7 +3,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const folders = @import("folders");
 const awebo = @import("../../awebo.zig");
-const core = @import("../core.zig");
+const Core = @import("../Core.zig");
 
 const log = std.log.scoped(.persistence);
 
@@ -12,19 +12,21 @@ var cache_dir: ?std.Io.Dir = null;
 
 pub var cfg: std.StringHashMapUnmanaged([]const u8) = .{};
 
-pub fn load(io: Io, gpa: Allocator, state: *core.State) !void {
+pub fn load(core: *Core) !void {
     log.debug("begin loading state from disk", .{});
     defer log.debug("done loading state from disk", .{});
 
-    loadImpl(io, gpa, state) catch |err| {
+    loadImpl(core) catch |err| {
         log.debug("encountered a fatal error when loading data from disk: {t}", .{err});
-        state.failure = "failed to load data from disk";
+        core.failure = "failed to load data from disk";
         return err;
     };
-    state.loaded = true;
+    core.loaded = true;
 }
 
-pub fn loadImpl(io: Io, gpa: Allocator, state: *core.State) error{OutOfMemory}!void {
+pub fn loadImpl(core: *Core) error{OutOfMemory}!void {
+    const io = core.io;
+    const gpa = core.gpa;
     const cfg_path = try std.fs.path.join(gpa, &.{
         folders.getPath(io, gpa, .init(gpa), .local_configuration) catch @panic("oom") orelse blk: {
             log.err("known-folders failed to find the local config dir, defaulting to '.config/'", .{});
@@ -117,7 +119,7 @@ pub fn loadImpl(io: Io, gpa: Allocator, state: *core.State) error{OutOfMemory}!v
             log.debug("missing password field from host file, abandoning", .{});
             break :blk;
         };
-        const h = state.hosts.add(io, gpa, ident, username, password) catch |err| switch (err) {
+        const h = core.hosts.add(core, ident, username, password) catch |err| switch (err) {
             // We never write duplicate data into the file, but
             // in case a user did this to themselves by editing the file
             // manually, we can be graceful about it, I guess.
@@ -134,7 +136,7 @@ pub fn loadImpl(io: Io, gpa: Allocator, state: *core.State) error{OutOfMemory}!v
         };
     }
 
-    for (state.hosts.items.values()) |*h| {
+    for (core.hosts.items.values()) |*h| {
         const data = cache.readFileAlloc(io, h.client.identity, gpa, .limited(10 * 1024 * 1024)) catch |err| {
             log.info("could not load the cache for host '{s}': {s}", .{
                 h.client.identity,

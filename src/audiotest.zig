@@ -1,8 +1,8 @@
 const builtin = @import("builtin");
+
 const std = @import("std");
 const Io = std.Io;
-const win32 = @import("win32").everything;
-pub const core = @import("client/core.zig");
+const core = @import("client/core.zig");
 const audio = core.audio;
 
 fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
@@ -10,25 +10,24 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(0xff);
 }
 
-const global = struct {
-    var play_sin = false;
-    var capture_format: audio.Format = undefined;
-    var captured_frame_count: usize = 0;
-    var captured_samples: std.ArrayListAlignedUnmanaged(u8, .fromByteUnits(audio.buffer_align)) = .{};
-    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    const arena = arena_instance.allocator();
-    var mutex = std.Thread.Mutex{};
+const Context = struct {
+    play_sin: bool = false,
+    capture_format: audio.Format,
+    captured_frame_count: usize = 0,
+    captured_samples: std.ArrayListAligned(u8, .fromByteUnits(audio.buffer_align)) = .empty,
+    mutex: std.Thread.Mutex = .{},
 };
 
 pub fn main(init: std.process.Init) !void {
-    const cmd_args = (try init.minimal.args.toSlice(global.arena))[1..];
-
-    const gpa = init.gpa;
+    const arena = init.arena.allocator();
+    const args = init.minimal.args.toSlice(arena);
+    const cmd_args = args[1..];
 
     var opt: struct {
         list: bool = false,
         playout_device_str: ?[]const u8 = null,
         capture_device_str: ?[]const u8 = null,
+        play_sin: bool = false,
     } = .{};
 
     {
@@ -44,7 +43,7 @@ pub fn main(init: std.process.Init) !void {
             } else if (std.mem.eql(u8, arg, "--list")) {
                 opt.list = true;
             } else if (std.mem.eql(u8, arg, "--sin")) {
-                global.play_sin = true;
+                opt.play_sin = true;
             } else if (std.mem.eql(u8, arg, "--input")) {
                 i += 1;
                 if (i >= cmd_args.len) fatal("--input requires an argument", .{});
@@ -63,11 +62,11 @@ pub fn main(init: std.process.Init) !void {
     defer audio.threadDeinit();
 
     if (opt.list) {
-        switch (core.global.audio_playout.updateDevices(global.arena, onUpdateDeviceEvent)) {
+        switch (core.global.audio_playout.updateDevices(arena, onUpdateDeviceEvent)) {
             .locked => unreachable,
             .result => |maybe_err| if (maybe_err) |err| fatal("failed to update output devices with {f}", .{err}),
         }
-        switch (core.global.audio_capture.updateDevices(global.arena, onUpdateDeviceEvent)) {
+        switch (core.global.audio_capture.updateDevices(arena, onUpdateDeviceEvent)) {
             .locked => unreachable,
             .result => |maybe_err| if (maybe_err) |err| fatal("failed to update input devices with {f}", .{err}),
         }
@@ -122,8 +121,8 @@ pub fn main(init: std.process.Init) !void {
     defer playout.close(gpa);
     std.log.info("Output Format: {}", .{playout.format});
 
-    if (!global.play_sin) {
-        global.capture_format = capture.format;
+    if (!opt.play_sin) {
+        capture_format = capture.format;
         if (capture.format.sample_rate != playout.format.sample_rate) {
             std.log.err("todo: implement sample conversion", .{});
             std.log.err("   input : {}", .{capture.format.sample_rate});
@@ -164,7 +163,7 @@ fn printDevices(devices: []const core.Device) !void {
 }
 
 fn findDevice(direction: audio.Direction, device_str: []const u8) !core.Device {
-    switch (core.global.directional(direction).updateDevices(global.arena, onUpdateDeviceEvent)) {
+    switch (global.directional(direction).updateDevices(global.arena, onUpdateDeviceEvent)) {
         .locked => unreachable,
         .result => |maybe_err| if (maybe_err) |err| fatal("failed to update output devices with {f}", .{err}),
     }
