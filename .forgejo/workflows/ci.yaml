@@ -16,8 +16,8 @@ jobs:
       - name: Setup Zig
         uses: https://codeberg.org/mlugg/setup-zig@v2
 
-      # - name: Install System Dependencies
-      #   run: sudo apt-get update && sudo apt-get -yq install build-essential pkg-config libasound-dev libpulse-dev libglfw3-dev
+      - name: Install System Dependencies
+        run: sudo apt-get update && sudo apt-get -yq install build-essential pkg-config libasound-dev libpulse-dev libglfw3-dev
 
       # - name: Build dummy audio
       #   run: zig build ci -Daudio=dummy
