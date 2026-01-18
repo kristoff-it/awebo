@@ -35,7 +35,7 @@ pub fn loadImpl(core: *Core) error{OutOfMemory}!void {
             log.err("known-folders failed to find the local config dir, defaulting to '.config/'", .{});
             break :blk ".config/";
         },
-        "awebo-gui",
+        "awebo",
     });
 
     log.debug("config path: '{s}'", .{cfg_path});
@@ -85,7 +85,7 @@ pub fn loadImpl(core: *Core) error{OutOfMemory}!void {
             log.err("known-folders failed to find the local cache dir, defaulting to '.cache/'", .{});
             break :blk ".cache/";
         },
-        "awebo-gui",
+        "awebo",
     });
 
     log.debug("cache path: '{s}'", .{cache_path});
