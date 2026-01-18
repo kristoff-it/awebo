@@ -17,6 +17,7 @@ const persistence = @import("Core/persistence.zig");
 
 gpa: Allocator,
 io: Io,
+environ: *std.process.Environ.Map,
 mutex: Io.Mutex = .init,
 /// Set to an error message when the core logic encounters an unrecoverable error.
 /// The application should show an error dialog and shutdown when this happens.
@@ -131,12 +132,14 @@ pub const Hosts = struct {
 pub fn init(
     gpa: Allocator,
     io: Io,
+    environ: *std.process.Environ.Map,
     refreshFn: *const RefreshFn,
     command_queue_buffer: []NetworkCommand,
 ) Core {
     return .{
         .gpa = gpa,
         .io = io,
+        .environ = environ,
         .start_time = std.time.Instant.now() catch @panic("need clock"),
         .refresh = refreshFn,
         .command_queue = .init(command_queue_buffer),
