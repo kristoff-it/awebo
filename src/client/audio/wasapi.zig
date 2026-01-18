@@ -1,10 +1,12 @@
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
+
 const win32 = @import("win32").everything;
-const core = @import("root").core;
-const audio = core.audio;
-const PoolString = core.PoolString;
+const audio = @import("../audio.zig");
+const StringPool = @import("../StringPool.zig");
+const Device = @import("../Device.zig");
 
 fn u32FromHr(hr: i32) u32 {
     return @bitCast(hr);
@@ -124,23 +126,24 @@ pub const DeviceIterator = struct {
         self.* = undefined;
     }
 
-    pub fn next(self: *DeviceIterator, gpa: Allocator, err: *HResultError) error{DeviceIterator}!?core.Device {
+    pub fn next(self: *DeviceIterator, sp: *StringPool, gpa: Allocator, err: *HResultError) error{DeviceIterator}!?Device {
         if (self.next_index == self.count)
             return null;
         const index = self.next_index;
         self.next_index += 1;
-        return try nextDevice(gpa, self.collection, index, err);
+        return try nextDevice(sp, gpa, self.collection, index, err);
     }
 };
 
 const max_device_token_bytes = 400;
 
 fn nextDevice(
+    string_pool: *StringPool,
     gpa: Allocator,
     collection: *win32.IMMDeviceCollection,
     device_index: u32,
     err: *HResultError,
-) error{DeviceIterator}!core.Device {
+) error{DeviceIterator}!Device {
     const device: *win32.IMMDevice = blk: {
         var device: *win32.IMMDevice = undefined;
         const hr = collection.Item(device_index, @ptrCast(&device));
@@ -158,12 +161,12 @@ fn nextDevice(
     defer _ = endpoint.IUnknown.Release();
 
     // The ID uniquely identifies the device among all audio endpoint devices
-    const token: PoolString = blk: {
+    const token: StringPool.String = blk: {
         var id: [*:0]u16 = undefined;
         const hr = device.GetId(@ptrCast(&id));
         if (hr < 0) return err.deviceIterator(hr, "GetDeviceId");
         defer win32.CoTaskMemFree(id);
-        break :blk PoolString.getOrCreateWtf16Le(
+        break :blk string_pool.getOrCreateWtf16Le(
             gpa,
             max_device_token_bytes,
             std.mem.span(id),
@@ -172,7 +175,7 @@ fn nextDevice(
             error.OutOfMemory => return err.deviceIterator(win32.E_OUTOFMEMORY, "GetDeviceIdPoolString"),
         };
     };
-    errdefer token.removeReference(gpa);
+    errdefer string_pool.removeReference(token, gpa);
 
     const props: *win32.IPropertyStore = blk: {
         var props: *win32.IPropertyStore = undefined;
@@ -193,8 +196,8 @@ fn nextDevice(
         if (hr < 0) return err.deviceIterator(hr, "GetDeviceName");
     }
 
-    return core.Device{
-        .name = PoolString.getOrCreateWtf16Le(gpa, max_device_token_bytes, std.mem.span(friendly_name.Anonymous.Anonymous.Anonymous.pwszVal.?)) catch |e| switch (e) {
+    return Device{
+        .name = string_pool.getOrCreateWtf16Le(gpa, max_device_token_bytes, std.mem.span(friendly_name.Anonymous.Anonymous.Anonymous.pwszVal.?)) catch |e| switch (e) {
             error.TooBig => return err.deviceIterator(win32.STATUS_NAME_TOO_LONG, "GetDeviceIdPoolString"),
             error.OutOfMemory => return err.deviceIterator(win32.E_OUTOFMEMORY, "GetNamePoolString"),
         },
@@ -257,7 +260,7 @@ pub const Stream = struct {
     format: audio.Format,
     max_buffer_frame_count: u32,
 
-    device: ?core.Device,
+    device: ?Device,
     callback_fn: *const audio.CallbackFn,
     event: win32.HANDLE,
     enumerator: *win32.IMMDeviceEnumerator,
@@ -299,7 +302,8 @@ pub const Stream = struct {
         out_stream: *Stream,
         direction: audio.Direction,
         err: *Error,
-        device: ?core.Device,
+        device: ?Device,
+        string_pool: *StringPool,
         callback_fn: *const audio.CallbackFn,
         callback_data: *anyopaque,
     ) error{Stream}!void {
@@ -427,11 +431,11 @@ pub const Stream = struct {
             .audio_client = audio_client,
             .stream_client = stream_client,
         };
-        if (device) |d| d.addReference();
+        if (device) |d| d.addReference(string_pool);
     }
-    pub fn close(self: *Stream, gpa: Allocator) void {
-        std.debug.assert(self.thread == null);
-        if (self.device) |d| d.removeReference(gpa);
+    pub fn close(self: *Stream, string_pool: *StringPool, gpa: Allocator) void {
+        assert(self.thread == null);
+        if (self.device) |d| d.removeReference(string_pool, gpa);
         _ = self.stream_client.release(self.direction);
         _ = self.audio_client.IUnknown.Release();
         _ = self.mm_device.IUnknown.Release();
@@ -439,7 +443,7 @@ pub const Stream = struct {
         closeHandle(self.event);
     }
     pub fn start(self: *Stream, err: *Error) error{Stream}!void {
-        std.debug.assert(self.thread == null);
+        assert(self.thread == null);
         self.thread_data = ThreadData{ .stream = self };
         self.thread = win32.CreateThread(
             null,
@@ -469,7 +473,7 @@ pub const Stream = struct {
                 .{ result, win32.GetLastError() },
             ),
         }
-        std.debug.assert(self.thread_data.exited.load(.seq_cst));
+        assert(self.thread_data.exited.load(.seq_cst));
         closeHandle(thread);
         self.thread_data = undefined;
         self.thread = null;
@@ -565,7 +569,7 @@ fn getPlayout(
         break :blk padding;
     };
 
-    std.debug.assert(padding <= stream.max_buffer_frame_count);
+    assert(padding <= stream.max_buffer_frame_count);
     const available = stream.max_buffer_frame_count - padding;
     if (available > 0) {
         const buffer = blk: {
@@ -598,8 +602,8 @@ fn giveCapture(
                 // TODO: handle flag DATA_DISCONTINUITY
                 // TODO: handle flag SILENT
                 // TODO: handle flag TIMESTAMP_ERROR
-                std.debug.assert(frame_count != 0);
-                std.debug.assert(frame_count <= stream.max_buffer_frame_count);
+                assert(frame_count != 0);
+                assert(frame_count <= stream.max_buffer_frame_count);
 
                 stream.callback_fn(stream, @ptrCast(@alignCast(buffer)), frame_count);
 

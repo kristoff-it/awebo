@@ -1,124 +1,139 @@
+const Media = @This();
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const builtin = @import("builtin");
 const awebo = @import("../awebo.zig");
 const audio = @import("audio.zig");
-const network = @import("core/network.zig");
-const core = @import("core.zig");
+const network = @import("Core/network.zig");
+const Core = @import("Core.zig");
+const StringPool = @import("StringPool.zig");
 
 const RingBuffer = @import("RingBuffer.zig");
 
 const log = std.log.scoped(.media);
 
 // Media streaming state
-var playout: audio.Stream = undefined;
-var capture: audio.Stream = undefined;
-var capture_encoder: *awebo.opus.Encoder = undefined;
+playout: audio.Stream,
+capture: audio.Stream,
+capture_encoder: *awebo.opus.Encoder,
 
 // These buffers are accessed by both the network thread
 // and the audio thread.
-var playout_buffers: std.AutoArrayHashMapUnmanaged(u16, PlayoutBuffer) = .empty;
-pub var capture_buffer: CaptureBuffer = undefined;
+playout_buffers: std.AutoArrayHashMapUnmanaged(u16, PlayoutBuffer) = .empty,
+capture_buffer: CaptureBuffer,
+seq: u32 = 0,
 
-var gpa: Allocator = undefined;
-var io: Io = undefined;
+io: Io,
 
 // end of media streaming state
 
 // Called by the core app thread
-pub fn activate(_io: Io, _gpa: Allocator, state: *core.State) !void {
-    io = _io;
-    gpa = _gpa;
+pub fn init(m: *Media, core: *Core) !void {
+    const io = core.io;
+    const gpa = core.gpa;
+
+    m.* = .{
+        .playout = undefined,
+        .capture = undefined,
+        .capture_encoder = undefined,
+        .capture_buffer = undefined,
+        .io = io,
+    };
+
     audio.threadInit();
     errdefer audio.threadDeinit();
 
     log.debug("opening playout stream", .{});
     var stream_error: audio.Stream.Error = undefined;
     audio.Stream.open(
-        &playout,
+        &m.playout,
         .playout,
         &stream_error,
-        state.audio.user.playout.device,
+        core.user_audio.playout.device,
+        &core.string_pool,
         audioCallbackPlayout,
-        &playout_buffers,
+        &m.playout_buffers,
     ) catch {
         log.err("open playout failed: {f}", .{stream_error});
         return error.AudioPlayout;
     };
-    errdefer playout.close(gpa);
+    errdefer m.playout.close(&core.string_pool, gpa);
 
     log.debug("opening capture stream", .{});
     audio.Stream.open(
-        &capture,
+        &m.capture,
         .capture,
         &stream_error,
-        state.audio.user.capture.device,
+        core.user_audio.capture.device,
+        &core.string_pool,
         audioCallbackCapture,
-        &capture_buffer,
+        &m.capture_buffer,
     ) catch {
         log.err("open capture failed: {f}", .{stream_error});
         return error.AudioCapture;
     };
-    errdefer capture.close(gpa);
+    errdefer m.capture.close(&core.string_pool, gpa);
 
-    capture_encoder = try awebo.opus.Encoder.create();
-    errdefer capture_encoder.destroy();
+    m.capture_encoder = try awebo.opus.Encoder.create();
+    errdefer m.capture_encoder.destroy();
 
-    capture_buffer = .{
-        .format = capture.format,
+    m.capture_buffer = .{
+        .format = m.capture.format,
         .resampler = try awebo.opus.Resampler.create(
             // We convert to opus preferred channel count before resampling
             opus_format.channel_count,
-            capture.format.sample_rate,
+            m.capture.format.sample_rate,
             opus_format.sample_rate,
             8,
         ),
         .samples = try RingBuffer.init(
             gpa,
-            capture.format.getFrameLen() * capture.max_buffer_frame_count * 10,
+            m.capture.format.getFrameLen() * m.capture.max_buffer_frame_count * 10,
         ),
     };
-    errdefer capture_buffer.deinit(gpa);
+    errdefer m.capture_buffer.deinit(gpa);
 
     log.debug("starting playout stream", .{});
-    playout.start(&stream_error) catch {
+    m.playout.start(&stream_error) catch {
         log.err("start playout failed: {f}", .{stream_error});
         return error.AudioPlayout;
     };
-    errdefer playout.stop();
+    errdefer m.playout.stop();
 
     log.debug("starting capture stream", .{});
-    capture.start(&stream_error) catch {
+    m.capture.start(&stream_error) catch {
         log.err("start capture failed: {f}", .{stream_error});
         return error.AudioCapture;
     };
-    errdefer capture.stop();
+    errdefer m.capture.stop();
 }
 
-pub fn stop() void {
-    capture.stop();
-    capture.close(gpa);
-    playout.stop();
-    playout.close(gpa);
+pub fn stop(m: *Media, string_pool: *StringPool, gpa: Allocator) void {
+    m.capture.stop();
+    m.capture.close(string_pool, gpa);
+    m.playout.stop();
+    m.playout.close(string_pool, gpa);
     audio.threadDeinit();
 }
 
-pub fn deactivate() void {
-    capture_buffer.deinit(gpa);
-    capture_encoder.destroy();
+pub fn deinit(m: *Media, gpa: Allocator) void {
+    m.capture_buffer.deinit(gpa);
+    m.capture_encoder.destroy();
 
-    for (playout_buffers.values()) |*v| {
+    for (m.playout_buffers.values()) |*v| {
         v.deinit(gpa);
     }
 
-    playout_buffers.clearRetainingCapacity();
+    m.playout_buffers.clearRetainingCapacity();
+    m.* = undefined;
 }
 
 /// Media data has been received and must be processed.
 /// Called by the network thread, returns the power of
 /// the decoded audio buffer computed as the root mean square.
-pub fn receive(message: []const u8) struct { f32, u16 } {
+pub fn receive(m: *Media, gpa: Allocator, message: []const u8) struct { f32, u16 } {
     const data = message[@sizeOf(awebo.protocol.media.Header)..];
     const message_header = std.mem.bytesAsValue(
         awebo.protocol.media.Header,
@@ -128,7 +143,7 @@ pub fn receive(message: []const u8) struct { f32, u16 } {
     // log.debug("read {} bytes!", .{message.len});
     // log.debug("UDP SEQ: {}", .{message_header.sequence});
 
-    const gop = playout_buffers.getOrPut(
+    const gop = m.playout_buffers.getOrPut(
         gpa,
         message_header.streamId(),
     ) catch unreachable;
@@ -136,12 +151,12 @@ pub fn receive(message: []const u8) struct { f32, u16 } {
     if (!gop.found_existing) {
         log.debug("new stream found: {}", .{message_header.streamId()});
         gop.value_ptr.* = .{
-            .out_format = playout.format,
+            .out_format = m.playout.format,
             .decoder = awebo.opus.Decoder.create() catch unreachable,
             .resampler = awebo.opus.Resampler.create(
                 awebo.opus.CHANNELS,
                 awebo.opus.FREQ,
-                playout.format.sample_rate,
+                m.playout.format.sample_rate,
                 8,
             ) catch unreachable,
             .samples = RingBuffer.init(
@@ -171,18 +186,17 @@ pub fn receive(message: []const u8) struct { f32, u16 } {
     return .{ rms * 100000, @intCast(message_header.id.client_id) };
 }
 
-var seq: u32 = 0;
 /// Media data is ready to be sent to the server.
 /// Called by the network thread.
-pub fn send(outbuf: *[1280]u8) ![]const u8 {
-    seq += 1;
+pub fn send(m: *Media, outbuf: *[1280]u8) ![]const u8 {
+    m.seq += 1;
 
     const header: awebo.protocol.media.Header = .{
         .id = .{
             .client_id = 0,
             .source = .mic,
         },
-        .sequence = seq,
+        .sequence = m.seq,
         .timestamp = 0,
     };
 
@@ -190,12 +204,12 @@ pub fn send(outbuf: *[1280]u8) ![]const u8 {
 
     w.writeAll(std.mem.asBytes(&header)) catch unreachable;
 
-    if (capture_buffer.samples.len() < awebo.opus.SAMPLE_BUF_SIZE * awebo.opus.SAMPLE_SIZE) {
+    if (m.capture_buffer.samples.len() < awebo.opus.SAMPLE_BUF_SIZE * awebo.opus.SAMPLE_SIZE) {
         return error.NotReady;
     }
 
     var buf: [awebo.opus.SAMPLE_BUF_SIZE]f32 = undefined;
-    capture_buffer.samples.readFirstAssumeLength(
+    m.capture_buffer.samples.readFirstAssumeLength(
         std.mem.sliceAsBytes(&buf),
         awebo.opus.SAMPLE_BUF_SIZE * awebo.opus.SAMPLE_SIZE,
     );
@@ -203,7 +217,7 @@ pub fn send(outbuf: *[1280]u8) ![]const u8 {
     const hlen = @sizeOf(awebo.protocol.media.Header);
     const data = outbuf[hlen..];
 
-    const len = capture_encoder.encodeFloat(&buf, data) catch |err| {
+    const len = m.capture_encoder.encodeFloat(&buf, data) catch |err| {
         log.debug("opus encoder error: {t}", .{err});
         return error.EncodingFailure;
     };
@@ -219,6 +233,8 @@ fn audioCallbackCapture(
 ) void {
     const stream: *audio.Stream = @ptrCast(@alignCast(userdata));
     std.debug.assert(stream.direction == .capture);
+    const m: *Media = @fieldParentPtr("capture", stream);
+    const io = m.io;
 
     const buffer_u8: [*]align(audio.buffer_align) u8 = @ptrCast(buffer);
     const frame_len = stream.format.getFrameLen();
@@ -226,8 +242,7 @@ fn audioCallbackCapture(
     const byte_len = frame_count * frame_len;
     // log.info("captured {} frames ({} bytes) of audio", .{ frame_count, byte_len });
 
-    // const capture_buffer: *CaptureBuffer = @alignCast(@ptrCast(stream.callback_data));
-    capture_buffer.write(buffer_u8[0..byte_len]);
+    m.capture_buffer.write(io, buffer_u8[0..byte_len]);
 }
 
 // TODO: stream has callback_data but we don't care about it
@@ -243,17 +258,16 @@ fn audioCallbackPlayout(
     // log.debug("playout callback took {}ns", .{t});
     // }
     std.debug.assert(stream.direction == .playout);
+    const m: *Media = @fieldParentPtr("playout", stream);
 
     const buffer_u8: [*]align(audio.buffer_align) u8 = @ptrCast(buffer);
     const frame_len = stream.format.getFrameLen();
 
     const out_pcm = buffer_u8[0 .. frame_len * frames_needed];
 
-    // const playout_buffers: *std.AutoArrayHashMap(u8, PlayoutBuffer) = @alignCast(@ptrCast(stream.callback_data));
-
     @memset(out_pcm, 0);
 
-    for (playout_buffers.values(), playout_buffers.keys()) |*playbuf, id| {
+    for (m.playout_buffers.values(), m.playout_buffers.keys()) |*playbuf, id| {
         const n = playbuf.read(out_pcm);
         _ = n;
         _ = id;
@@ -282,7 +296,7 @@ const CaptureBuffer = struct {
         cb.* = undefined;
     }
 
-    fn write(cb: *CaptureBuffer, data: []align(4) const u8) void {
+    fn write(cb: *CaptureBuffer, io: Io, data: []align(4) const u8) void {
         // NOTE(loris): if the sample type used in opus changes, some things here
         //              might need to change past just swapping the types around
         //              which is why I didn't bother being precise with hardcoded

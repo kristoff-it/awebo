@@ -8,20 +8,20 @@ const Device = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const core = @import("core.zig");
-const PoolString = @import("PoolString.zig");
+const Core = @import("Core.zig");
+const StringPool = @import("StringPool.zig");
 
-name: PoolString,
-token: PoolString,
+name: StringPool.String,
+token: StringPool.String,
 
-pub fn removeReference(self: Device, gpa: Allocator) void {
-    self.name.removeReference(gpa);
-    self.token.removeReference(gpa);
+pub fn removeReference(self: Device, sp: *StringPool, gpa: Allocator) void {
+    sp.removeReference(self.name, gpa);
+    sp.removeReference(self.token, gpa);
 }
 
-pub fn addReference(self: Device) void {
-    self.name.addReference();
-    self.token.addReference();
+pub fn addReference(self: Device, sp: *StringPool) void {
+    sp.addReference(self.name);
+    sp.addReference(self.token);
 }
 
 /// updateArrayList takes an array list of devices and updates it based on
@@ -38,7 +38,8 @@ pub fn updateArrayList(
     comptime iteration: anytype,
     gpa: std.mem.Allocator,
     devices: *std.ArrayListUnmanaged(Device),
-    on_event: *const fn (core.UpdateDevicesEvent) void,
+    on_event: *const fn (Core.UpdateDevicesEvent) void,
+    sp: *StringPool,
 ) ?iteration.DeviceIteratorError {
     var new_device_count: usize = 0;
 
@@ -48,8 +49,8 @@ pub fn updateArrayList(
         var it = iteration.DeviceIterator.init(&err) catch break :blk err;
         defer it.deinit();
 
-        while (it.next(gpa, &err) catch break :blk err) |next_device| : (new_device_count += 1) {
-            defer next_device.removeReference(gpa);
+        while (it.next(sp, gpa, &err) catch break :blk err) |next_device| : (new_device_count += 1) {
+            defer next_device.removeReference(sp, gpa);
 
             // sanity check
             for (devices.items[0..new_device_count]) |other| {
@@ -67,9 +68,9 @@ pub fn updateArrayList(
                                 .new_name = next_device.name,
                                 .token = next_device.name,
                             } });
-                            existing.name.removeReference(gpa);
+                            sp.removeReference(existing.name, gpa);
                             existing.name = next_device.name;
-                            existing.name.addReference();
+                            sp.addReference(existing.name);
                         }
                         break :found index;
                     }
@@ -84,7 +85,7 @@ pub fn updateArrayList(
                 }
             } else {
                 devices.insert(gpa, new_device_count, next_device) catch @panic("OOM");
-                next_device.addReference();
+                next_device.addReference(sp);
                 on_event(.{ .device_added = next_device });
             }
         }
@@ -93,7 +94,7 @@ pub fn updateArrayList(
 
     for (new_device_count..devices.items.len) |i| {
         on_event(.{ .device_removed = devices.items[i] });
-        devices.items[i].removeReference(gpa);
+        devices.items[i].removeReference(sp, gpa);
     }
     devices.shrinkAndFree(gpa, new_device_count);
 

@@ -5,7 +5,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const assert = std.debug.assert();
 const Allocator = std.mem.Allocator;
-const core = @import("../core.zig");
+const Core = @import("../Core.zig");
 const awebo = @import("../../awebo.zig");
 const Host = awebo.Host;
 const Chat = awebo.channels.Chat;
@@ -58,10 +58,10 @@ pub fn AtomicEnum(
         pub const Enum = @Enum(u8, .exhaustive, &const_field_names, &const_field_values);
 
         const Self = @This();
-        pub fn update(s: *Self, src: std.builtin.SourceLocation, new: Enum) void {
+        pub fn update(s: *Self, core: *Core, src: std.builtin.SourceLocation, new: Enum) void {
             updateSafety(s, new);
             s.impl.store(new, .release);
-            if (refresh_window) core.refresh(src, null);
+            if (refresh_window) core.refresh(core, src, null);
         }
 
         pub fn get(s: *const Self) Enum {
@@ -74,23 +74,23 @@ pub fn AtomicEnum(
         }
 
         /// Updates a status value and returns its previous value.
-        pub fn updateSwap(s: *Self, src: std.builtin.SourceLocation, new: Enum) Enum {
+        pub fn updateSwap(s: *Self, core: *Core, src: std.builtin.SourceLocation, new: Enum) Enum {
             updateSafety(s, new);
             const old = s.impl.swap(new, .acq_rel);
-            if (refresh_window and old != new) core.refresh(src, null);
+            if (refresh_window and old != new) core.refresh(core, src, null);
             return old;
         }
 
         /// Updates a status only if the previous value is the expected one.
         /// Returns the old value.
-        pub fn updateCompare(s: *Self, src: std.builtin.SourceLocation, comptime expected: Enum, new: Enum) Enum {
+        pub fn updateCompare(s: *Self, core: *Core, src: std.builtin.SourceLocation, comptime expected: Enum, new: Enum) Enum {
             if (@intFromEnum(expected) > progress.len) {
                 @compileError("'expected' cannot be a done state");
             }
 
             updateSafety(s, new);
             const unexpected = s.impl.cmpxchgStrong(expected, new, .acq_rel, .acquire) orelse {
-                if (refresh_window) core.refresh(src, null);
+                if (refresh_window) core.refresh(core, src, null);
                 return expected;
             };
             return unexpected;

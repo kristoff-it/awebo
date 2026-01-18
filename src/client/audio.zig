@@ -1,10 +1,17 @@
+const builtin = @import("builtin");
+const native_os = builtin.os.tag;
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-pub const backend = @import("audio_backend");
 
-const core = @import("core.zig");
+const Core = @import("Core.zig");
 const Device = @import("Device.zig");
+const StringPool = @import("StringPool.zig");
 
+pub const backend = switch (native_os) {
+    .windows => @import("audio/wasapi.zig"),
+    else => @import("audio/dummy.zig"),
+};
 pub const Direction = enum { capture, playout };
 
 pub const Stream = backend.Stream;
@@ -22,7 +29,6 @@ pub const buffer_align = blk: {
     break :blk a;
 };
 
-// TODO: move this to awebo since the server will need this info as well
 pub const SampleType = enum {
     i16,
     i32,
@@ -65,7 +71,7 @@ pub const SampleType = enum {
         };
     }
 };
-// TODO: move this to awebo since the server will need this info as well
+
 pub const Format = struct {
     sample_type: SampleType,
     channel_count: u16,
@@ -100,7 +106,7 @@ pub const threadInit = backend.threadInit;
 /// Always call once for every call to threadInit
 pub const threadDeinit = backend.threadDeinit;
 
-fn iteration(comptime direction: core.audio.Direction) type {
+fn iteration(comptime direction: Core.audio.Direction) type {
     return struct {
         pub const DeviceIteratorError = backend.DeviceIteratorError;
         pub const DeviceIterator = struct {
@@ -111,8 +117,8 @@ fn iteration(comptime direction: core.audio.Direction) type {
             pub fn deinit(self: *DeviceIterator) void {
                 self.it.deinit();
             }
-            pub fn next(self: *DeviceIterator, gpa: Allocator, err: *DeviceIteratorError) error{DeviceIterator}!?core.Device {
-                return self.it.next(gpa, err);
+            pub fn next(self: *DeviceIterator, sp: *StringPool, gpa: Allocator, err: *DeviceIteratorError) error{DeviceIterator}!?Core.Device {
+                return self.it.next(sp, gpa, err);
             }
         };
     };
@@ -130,7 +136,8 @@ pub const Directional = struct {
     pub fn updateDevices(
         self: *Directional,
         gpa: Allocator,
-        on_event: *const fn (core.UpdateDevicesEvent) void,
+        on_event: *const fn (Core.UpdateDevicesEvent) void,
+        sp: *StringPool,
     ) UpdateDevicesResult {
         if (self.update_lock_count != 0)
             return .locked;
@@ -141,12 +148,14 @@ pub const Directional = struct {
                 gpa,
                 &self.devices,
                 on_event,
+                sp,
             ),
             .playout => Device.updateArrayList(
                 iteration(.playout),
                 gpa,
                 &self.devices,
                 on_event,
+                sp,
             ),
         };
         return .{ .result = result };

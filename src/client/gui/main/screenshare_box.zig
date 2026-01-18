@@ -1,10 +1,8 @@
 const std = @import("std");
 const dvui = @import("dvui");
-const core = @import("../../core.zig");
 const Backend = @import("SDLBackend");
 
-pub fn draw(app_state: *core.State) !void {
-    _ = app_state;
+pub fn draw() !void {
     const w = dvui.floatingWindow(@src(), .{}, .{
         .gravity_x = 1,
         .gravity_y = 1,

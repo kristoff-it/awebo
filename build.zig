@@ -25,9 +25,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const audio_backend = configureAudioBackend(b, target, optimize);
     setupServer(b, target, optimize, check, zqlite, known_folders);
-    setupClientGui(b, target, optimize, check, known_folders, audio_backend);
+    setupClientGui(b, target, optimize, check, known_folders);
 
     const ci = b.step("ci", "Run all the steps for the CI");
     ci.dependOn(b.getInstallStep());
@@ -45,8 +44,6 @@ pub fn build(b: *std.Build) void {
                 exe.root_module.addImport("win32", win32_dep.module("win32"));
             }
         }
-
-        exe.root_module.addImport("audio_backend", audio_backend);
 
         const install = b.addInstallArtifact(exe, .{});
         ci.dependOn(&install.step);
@@ -144,7 +141,6 @@ pub fn setupClientGui(
     optimize: std.builtin.OptimizeMode,
     check: *std.Build.Step,
     folders: *std.Build.Dependency,
-    audio_backend: *std.Build.Module,
 ) void {
     const dvui = b.dependency("dvui", .{
         .target = target,
@@ -183,7 +179,6 @@ pub fn setupClientGui(
             client.root_module.addImport("win32", win32_dep.module("win32"));
         }
     }
-    client.root_module.addImport("audio_backend", audio_backend);
 
     const install = b.addInstallArtifact(client, .{});
     b.getInstallStep().dependOn(&install.step);
@@ -199,54 +194,4 @@ pub fn setupClientGui(
     run_step.dependOn(&run_cmd.step);
 
     check.dependOn(&client.step);
-}
-
-fn configureAudioBackend(
-    b: *std.Build,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-) *std.Build.Module {
-    const audio_default: Audio = switch (target.result.os.tag) {
-        .windows => .wasapi,
-        else => .portaudio,
-    };
-    const audio_desc = b.fmt(
-        "The audio implementation (defaults to {s})",
-        .{@tagName(audio_default)},
-    );
-    const audio_backend = blk: {
-        switch (b.option(Audio, "audio", audio_desc) orelse audio_default) {
-            .portaudio => {
-                const audio_backend = b.createModule(.{
-                    .root_source_file = b.path("src/client/audio/portaudio.zig"),
-                });
-                if (target.result.os.tag == .windows) {
-                    if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
-                        audio_backend.addImport("win32", win32_dep.module("win32"));
-                    }
-                }
-                if (b.lazyDependency("portaudio", .{
-                    .target = target,
-                    .optimize = optimize,
-                })) |portaudio| {
-                    audio_backend.linkLibrary(portaudio.artifact("portaudio"));
-                }
-                break :blk audio_backend;
-            },
-            .wasapi => {
-                const audio_backend = b.createModule(.{
-                    .root_source_file = b.path("src/client/audio/wasapi.zig"),
-                });
-                if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
-                    audio_backend.addImport("win32", win32_dep.module("win32"));
-                }
-                break :blk audio_backend;
-            },
-            .dummy => break :blk b.createModule(.{
-                .root_source_file = b.path("src/client/audio/dummy.zig"),
-            }),
-        }
-    };
-
-    return audio_backend;
 }

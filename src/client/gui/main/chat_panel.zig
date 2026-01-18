@@ -1,13 +1,14 @@
 const std = @import("std");
 const dvui = @import("dvui");
 const awebo = @import("../../../awebo.zig");
-const core = @import("../../core.zig");
-const main = @import("../../gui.zig").main;
+const Core = @import("../../Core.zig");
+const App = @import("../../../main_client_gui.zig").App;
 const Host = awebo.Host;
 const Chat = awebo.channels.Chat;
 
-pub fn draw(state: *core.State, frozen: bool) !void {
-    const h = state.hosts.get(main.state.active_host).?;
+pub fn draw(app: *App, frozen: bool) !void {
+    const core = &app.core;
+    const h = core.hosts.get(app.active_host).?;
     const c = h.chats.get(h.client.active_channel.chat).?;
 
     var box = dvui.box(
@@ -21,14 +22,12 @@ pub fn draw(state: *core.State, frozen: bool) !void {
     );
     defer box.deinit();
 
-    try sendBar(state, h, c, frozen);
+    try sendBar(core, h, c, frozen);
     try messageList(h, c);
 }
 
-fn sendBar(state: *core.State, h: *awebo.Host, c: *Chat, frozen: bool) !void {
-    const win = dvui.currentWindow();
-    const io = win.io;
-    const gpa = win.gpa;
+fn sendBar(core: *Core, h: *awebo.Host, c: *Chat, frozen: bool) !void {
+    const gpa = core.gpa;
 
     var box = dvui.box(@src(), .{ .dir = .horizontal }, .{
         .gravity_y = 1,
@@ -72,7 +71,7 @@ fn sendBar(state: *core.State, h: *awebo.Host, c: *Chat, frozen: bool) !void {
         const raw = std.mem.trim(u8, in.textGet(), " \t\n\r");
         if (raw.len > 0) {
             const text = try gpa.dupe(u8, raw);
-            try state.messageSend(io, gpa, h, c, text);
+            try core.messageSend(h, c, text);
             in.textSet("", false);
         }
     }

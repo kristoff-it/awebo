@@ -36,8 +36,8 @@ pub const protocol = struct {
 };
 
 pub const ClientOnly = struct {
-    const network = @import("../client/core/network.zig");
-    const ui = @import("../client/core/ui.zig");
+    const network = @import("../client/Core/network.zig");
+    const ui = @import("../client/Core/ui.zig");
 
     pub const Id = u32;
 

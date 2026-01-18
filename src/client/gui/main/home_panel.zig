@@ -1,7 +1,5 @@
 const dvui = @import("dvui");
-const core = @import("../../core.zig");
 
-pub fn draw(state: *core.State) void {
-    _ = state;
+pub fn draw() void {
     dvui.labelNoFmt(@src(), "home", .{}, .{});
 }
