@@ -22,7 +22,7 @@ pub fn run(io: Io, gpa: Allocator, environ: *std.process.Environ.Map, it: *std.p
     };
 
     switch (subcmd) {
-        .add => return @import("server/add.zig").run(io, gpa, it),
+        .add => return @import("server/add.zig").run(io, gpa, environ, it),
         .remove => @panic("not implemented"), //return @import("server/add.zig").run(io, gpa, it),
         .list => return @import("server/list.zig").run(io, gpa, environ, it),
         .show => return @import("server/show.zig").run(io, gpa, environ, it),
