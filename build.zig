@@ -27,6 +27,7 @@ pub fn build(b: *std.Build) void {
 
     setupServer(b, target, optimize, check, zqlite, known_folders);
     setupClientGui(b, target, optimize, check, known_folders);
+    setupClientTui(b, target, optimize, check, known_folders);
 }
 
 pub fn setupServer(
@@ -165,6 +166,66 @@ pub fn setupClientGui(
     }
 
     const run_step = b.step("gui", "Launch the GUI client");
+    run_step.dependOn(&run_cmd.step);
+
+    check.dependOn(&client.step);
+}
+
+pub fn setupClientTui(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    check: *std.Build.Step,
+    folders: *std.Build.Dependency,
+) void {
+    const vaxis = b.dependency("vaxis", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const client = b.addExecutable(.{
+        .name = "awebo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main_client_tui.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const opus = b.dependency("opus", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const opus_tools = b.dependency("opus_tools", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const options = b.addOptions();
+    options.addOption(Context, "context", .client);
+    client.root_module.addOptions("options", options);
+    client.root_module.addImport("vaxis", vaxis.module("vaxis"));
+    client.root_module.addImport("folders", folders.module("known-folders"));
+    client.root_module.linkLibrary(opus.artifact("opus"));
+    client.root_module.linkLibrary(opus_tools.artifact("opus-tools"));
+    if (target.result.os.tag == .windows) {
+        if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
+            client.root_module.addImport("win32", win32_dep.module("win32"));
+        }
+    }
+
+    const install = b.addInstallArtifact(client, .{});
+    b.getInstallStep().dependOn(&install.step);
+
+    const run_cmd = b.addRunArtifact(client);
+    run_cmd.step.dependOn(&install.step);
+
+    if (b.args) |args| {
+        run_cmd.addArgs(args);
+    }
+
+    const run_step = b.step("tui", "Launch the TUI client");
     run_step.dependOn(&run_cmd.step);
 
     check.dependOn(&client.step);

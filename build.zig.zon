@@ -33,6 +33,10 @@
             .url = "git+https://github.com/ziglibs/known-folders#8465ba6cfc49fe941f95c75b3ae48c03aa6125b5",
             .hash = "known_folders-0.0.0-Fy-PJqrJAACSvJM3Ux3aJi3wu5hOUYBRvcTM-9NTelui",
         },
+        .vaxis = .{
+            .url = "git+https://github.com/neurocyte/libvaxis?ref=awebo#515a74e1085fb7713f75a915bbb92b30ad5533d7",
+            .hash = "vaxis-0.5.1-BWNV_O0-CQA1AOyrbobQQUGIAB2_F0Y0s613aLluLjuZ",
+        },
     },
     .paths = .{
         "build.zig",
