@@ -204,6 +204,11 @@ pub fn setupClientTui(
 
     const options = b.addOptions();
     options.addOption(Context, "context", .client);
+    options.addOption([]const u8, "version", b.option(
+        []const u8,
+        "override-client-version",
+        "Overrides the client version of awebo",
+    ) orelse zon.version);
     client.root_module.addOptions("options", options);
     client.root_module.addImport("vaxis", vaxis.module("vaxis"));
     client.root_module.addImport("folders", folders.module("known-folders"));
