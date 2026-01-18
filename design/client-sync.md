@@ -16,13 +16,12 @@ A client keeps track of the following server-generated timestamps:
 
 And so forth for all resources the client is aware of.
 
-On reconnection the client communicates these timestamps to the server the full set
-of timestamps, which then the server will use to select all unseen changes to communicate
-to the client.
+On reconnection the client communicates these timestamps to the server, which then
+the server will use to select all unseen changes to communicate to the client.
 
 ## Synchronizing Messages
 
-When it comes to resources such as users, roles, and channels, the clients must always
+When it comes to resources such as users, roles, and channels, clients must always
 be updated fully. With regards to messages, there are a few different scenarios to be
 aware of:
 
