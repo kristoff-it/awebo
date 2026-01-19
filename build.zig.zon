@@ -8,10 +8,6 @@
             .url = "git+https://github.com/david-vanderson/dvui?ref=zig16-dev#4b9d2f6027ca2e57fe78364661aa6c076c2afbd7",
             .hash = "dvui-0.4.0-dev-AQFJmaOb2gDvvi1BIbOAdjsik0rJgKWvXhwBtgTOQiPV",
         },
-        .portaudio = .{
-            .url = "git+https://github.com/allyourcodebase/portaudio.git#d62f02220cc1250e13ade607d365a824999bbfdb",
-            .hash = "portaudio-19.7.0-2-Wv4wbwYsAAAgoohFPsrTjPe5NWZeyQ7A3ZrhkXejxJFv",
-        },
         .opus = .{
             .url = "git+https://github.com/allyourcodebase/opus#4fb42992aed6d8184873dec7ee38607cbc4e2601",
             .hash = "opus-0.0.2-vuF-cMAkAADVsm707MYCtPmqmRs0gzg84Sz0qGbb5E3w",
