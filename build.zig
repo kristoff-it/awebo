@@ -27,6 +27,7 @@ pub fn build(b: *std.Build) void {
 
     setupServer(b, target, optimize, check, zqlite, known_folders);
     setupClientGui(b, target, optimize, check, known_folders);
+    setupClientTui(b, target, optimize, check, known_folders);
 
     // Here for CI, add dependencies on tests later
     _ = b.step("test", "");
