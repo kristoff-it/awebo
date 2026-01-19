@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: ${{ matrix.host }}
+    runs-on: linux-x86_64
     steps:
       - uses: actions/checkout@v2
         with:
