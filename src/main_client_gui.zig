@@ -73,6 +73,7 @@ pub const App = struct {
     in_progress_host_join: ?Core.ui.FirstConnectionStatus = null,
     show_add_host: bool = false,
     err_msg: ?[]const u8 = null,
+    environ: std.process.Environ.Map,
 
     fn init(app: *App, window: *dvui.Window) void {
         const io = window.io;
@@ -81,7 +82,8 @@ pub const App = struct {
             .active_screen = .main,
             .window = window,
             .command_queue_buffer = undefined,
-            .core = .init(gpa, io, refresh, &app.command_queue_buffer),
+            .environ = .init(gpa), // TODO: get from dvui
+            .core = .init(gpa, io, &app.environ, refresh, &app.command_queue_buffer),
             .core_future = io.concurrent(Core.run, .{&app.core}) catch |err| {
                 std.process.fatal("unable to start awebo client core: {t}", .{err});
             },

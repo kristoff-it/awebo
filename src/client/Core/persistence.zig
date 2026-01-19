@@ -10,8 +10,6 @@ const log = std.log.scoped(.persistence);
 var cfg_dir: ?std.Io.Dir = null;
 var cache_dir: ?std.Io.Dir = null;
 
-pub var cfg: std.StringHashMapUnmanaged([]const u8) = .{};
-
 pub fn load(core: *Core) !void {
     log.debug("begin loading state from disk", .{});
     defer log.debug("done loading state from disk", .{});
@@ -27,12 +25,15 @@ pub fn load(core: *Core) !void {
 pub fn loadImpl(core: *Core) error{OutOfMemory}!void {
     const io = core.io;
     const gpa = core.gpa;
-    const cfg_path = try std.fs.path.join(gpa, &.{
-        folders.getPath(io, gpa, .init(gpa), .local_configuration) catch @panic("oom") orelse blk: {
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const cfg_path = try std.fs.path.join(allocator, &.{
+        folders.getPath(io, allocator, core.environ.*, .local_configuration) catch @panic("oom") orelse blk: {
             log.err("known-folders failed to find the local config dir, defaulting to '.config/'", .{});
             break :blk ".config/";
         },
-        "awebo-gui",
+        "awebo",
     });
 
     log.debug("config path: '{s}'", .{cfg_path});
@@ -72,17 +73,17 @@ pub fn loadImpl(core: *Core) error{OutOfMemory}!void {
                 };
 
                 const key = try gpa.dupe(u8, entry.name[0 .. entry.name.len - ".awebo".len]);
-                try cfg.putNoClobber(gpa, key, value);
+                try core.cfg.putNoClobber(gpa, key, value);
             },
         }
     }
 
-    const cache_path = try std.fs.path.join(gpa, &.{
-        folders.getPath(io, gpa, .init(gpa), .cache) catch @panic("oom") orelse blk: {
+    const cache_path = try std.fs.path.join(allocator, &.{
+        folders.getPath(io, allocator, core.environ.*, .cache) catch @panic("oom") orelse blk: {
             log.err("known-folders failed to find the local cache dir, defaulting to '.cache/'", .{});
             break :blk ".cache/";
         },
-        "awebo-gui",
+        "awebo",
     });
 
     log.debug("cache path: '{s}'", .{cache_path});
@@ -107,7 +108,7 @@ pub fn loadImpl(core: *Core) error{OutOfMemory}!void {
     };
     cache_dir = cache;
 
-    const kv = cfg.fetchRemove("hosts") orelse return;
+    const kv = core.cfg.fetchRemove("hosts") orelse return;
     var it = std.mem.tokenizeScalar(u8, kv.value, '\n');
     var idx: u32 = 1;
     blk: while (it.next()) |ident| : (idx += 1) {

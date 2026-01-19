@@ -18,6 +18,7 @@ const persistence = @import("Core/persistence.zig");
 
 gpa: Allocator,
 io: Io,
+environ: *std.process.Environ.Map,
 mutex: Io.Mutex = .init,
 /// Set to an error message when the core logic encounters an unrecoverable error.
 /// The application should show an error dialog and shutdown when this happens.
@@ -25,6 +26,7 @@ failure: ?[]const u8 = null,
 /// Set to true once data has been loaded from disk.
 loaded: bool = false,
 hosts: Hosts = .{},
+cfg: std.StringHashMapUnmanaged([]const u8) = .{},
 
 user_audio: struct {
     capture: UserAudio = .{ .direction = .capture, .volume = 0.5 },
@@ -126,18 +128,31 @@ pub const Hosts = struct {
 pub fn init(
     gpa: Allocator,
     io: Io,
+    environ: *std.process.Environ.Map,
     refreshFn: *const RefreshFn,
     command_queue_buffer: []NetworkCommand,
 ) Core {
     return .{
         .gpa = gpa,
         .io = io,
+        .environ = environ,
         .start_time = std.time.Instant.now() catch @panic("need clock"),
         .refresh = refreshFn,
         .command_queue = .init(command_queue_buffer),
         .media = undefined,
         .string_pool = .{},
     };
+}
+
+pub fn deinit(core: *Core) void {
+    core.hosts.identities.deinit(core.gpa);
+    core.hosts.items.deinit(core.gpa);
+    var iter = core.cfg.iterator();
+    while (iter.next()) |entry| {
+        core.gpa.free(entry.key_ptr.*);
+        core.gpa.free(entry.value_ptr.*);
+    }
+    core.cfg.deinit(core.gpa);
 }
 
 pub fn run(core: *Core) void {
