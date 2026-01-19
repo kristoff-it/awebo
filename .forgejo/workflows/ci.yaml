@@ -7,7 +7,11 @@ on:
 
 jobs:
   build:
-    runs-on: self-hosted
+    runs-on: ${{ matrix.host }}
+    strategy:
+      matrix:
+        host: [x86_64-linux]
+        target: [x86_64-linux, aarch64-linux, x86_64-windows]
     steps:
       - uses: actions/checkout@v2
         with:
@@ -16,18 +20,9 @@ jobs:
       - name: Setup Zig
         uses: https://codeberg.org/mlugg/setup-zig@v2
 
-      - name: Install System Dependencies
-        run: sudo apt-get update && sudo apt-get -yq install build-essential pkg-config libasound-dev libpulse-dev libglfw3-dev
+      - name: Build
+        run: zig build ${{ matrix.host != matrix.target && format('-Dtarget={0}', matrix.target) || '' }} --summary all
 
-      # - name: Build dummy audio
-      #   run: zig build ci -Daudio=dummy
-        
-      - name: Build Linux
-        run: zig build --summary all
-        
-      # - name: Build MacOS
-      #   run: zig build ci -Dtarget=aarch64-macos
-        
-      - name: Build Windows
-        run: zig build -Dtarget=x86_64-windows --summary all
-        
+      - name: Test
+        if: ${{ matrix.host == matrix.target }}
+        run: zig build test
