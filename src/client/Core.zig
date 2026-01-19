@@ -309,7 +309,7 @@ fn chatMessageNew(core: *Core, host_id: HostId, cmn: awebo.protocol.server.ChatM
 
     const h = core.hosts.get(host_id).?;
     const c = &h.channels.get(cmn.channel).?.kind.chat;
-    c.messages.add(core.gpa, cmn.msg, .back) catch oom();
+    c.messages.add(core.gpa, cmn.msg) catch oom();
 
     if (cmn.origin != 0) {
         if (h.client.pending_messages.orderedRemove(cmn.origin)) {

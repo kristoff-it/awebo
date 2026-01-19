@@ -7,6 +7,8 @@ const Core = @import("../../Core.zig");
 const App = @import("../../../main_client_gui.zig").App;
 const Host = awebo.Host;
 
+const log = std.log.scoped(.chat_panel);
+
 pub fn draw(app: *App, frozen: bool) !void {
     const core = &app.core;
     const h = core.hosts.get(app.active_host).?;
@@ -84,19 +86,19 @@ fn messageList(h: *awebo.Host, c: *Chat) !void {
     });
     defer scroll.deinit();
 
-    const messages_len = c.messages.items.len;
+    const messages_len = c.messages.len;
 
     var idx: usize = 0;
     var last_author: awebo.User.Id = undefined;
     while (idx < messages_len) {
         var showing_pending = false;
-        const m = c.messages.items.at(idx);
+        const m = c.messages.at(idx);
         const mfr = messageFrame(h, m.author, idx);
         defer if (!showing_pending) mfr.deinit();
         last_author = mfr.author;
 
         while (idx < messages_len) : (idx += 1) {
-            const next_m = c.messages.items.at(idx);
+            const next_m = c.messages.at(idx);
             if (m.author != next_m.author) break;
 
             var tl = dvui.textLayout(@src(), .{}, .{

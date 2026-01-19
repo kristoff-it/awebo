@@ -15,7 +15,8 @@ kind: Kind,
 pub const Id = u32;
 
 /// Number of messages clients will keep in cache per channel
-pub const window_size = 50;
+pub const window_size: u32 = std.math.maxInt(WindowSize) + 1;
+pub const WindowSize = u6;
 
 pub const Kind = union(Enum) {
     chat: Chat,

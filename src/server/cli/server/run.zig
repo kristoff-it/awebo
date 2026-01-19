@@ -11,7 +11,6 @@ const awebo = @import("../../../awebo.zig");
 const Host = awebo.Host;
 const Header = awebo.protocol.media.Header;
 const OpenStream = awebo.protocol.media.OpenStream;
-const db_init = @import("init.zig");
 
 const server_log = std.log.scoped(.server);
 
@@ -74,12 +73,6 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     ___state.init(io, gpa) catch |err| {
         fatal("unable to load state from database: {t}", .{err});
     };
-
-    server_log.info("migrating DB schema", .{});
-    db_init.migrateSchema(gpa, db.conn) catch |err| {
-        fatal("unable to migrate DB: {t}", .{err});
-    };
-
     defer ___state.deinit(gpa);
 
     server_created = ___state.settings.created;
@@ -824,9 +817,9 @@ var ___state: struct {
                     if (channel.kind == .chat) {
                         var msgs = db.rows(
                             \\SELECT id, origin, author, body FROM messages
-                            \\WHERE channel = ? ORDER BY id DESC LIMIT 50;
+                            \\WHERE channel = ? ORDER BY id DESC LIMIT ?;
                         ,
-                            .{channel.id},
+                            .{ channel.id, awebo.Channel.window_size },
                         ) catch db.fatal(@src());
                         defer msgs.deinit();
 
@@ -838,7 +831,7 @@ var ___state: struct {
                                 .author = @intCast(m.int(.author)),
                                 .text = try m.text(gpa, .body),
                             };
-                            try channel.kind.chat.messages.add(gpa, msg, .back);
+                            try channel.kind.chat.messages.backfill(gpa, msg);
                             server_log.debug("loaded chat message: {f}", .{msg});
                         }
                     }
