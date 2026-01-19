@@ -11,6 +11,7 @@ const awebo = @import("../../../awebo.zig");
 const Host = awebo.Host;
 const Header = awebo.protocol.media.Header;
 const OpenStream = awebo.protocol.media.OpenStream;
+const db_init = @import("init.zig");
 
 const server_log = std.log.scoped(.server);
 
@@ -73,6 +74,12 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     ___state.init(io, gpa) catch |err| {
         fatal("unable to load state from database: {t}", .{err});
     };
+
+    server_log.info("migrating DB schema", .{});
+    db_init.migrateSchema(gpa, db.conn) catch |err| {
+        fatal("unable to migrate DB: {t}", .{err});
+    };
+
     defer ___state.deinit(gpa);
 
     server_created = ___state.settings.created;
