@@ -5,8 +5,7 @@ const proto = @import("../protocol.zig");
 const User = @import("../User.zig");
 const Caller = @import("../Caller.zig");
 const Host = @import("../Host.zig");
-const Voice = @import("../channels/Voice.zig");
-const Chat = @import("../channels/Chat.zig");
+const Channel = @import("../Channel.zig");
 const Message = @import("../Message.zig");
 
 const log = std.log.scoped(.protocol);
@@ -87,20 +86,14 @@ pub const ClientRequestReply = struct {
 };
 
 pub const HostSync = struct {
-    host: Host,
     user_id: User.Id,
-    /// Messages are stored in a ring buffer on the server
-    messages_front: []const Message,
-    messages_back: []const Message,
+    host: Host,
 
     pub const marker = 'S';
     pub const serializeAlloc = proto.MakeSerializeAllocFn(HostSync);
     pub const deserializeAlloc = proto.MakeDeserializeAllocFn(HostSync);
     pub const protocol = struct {
-        pub const sizes = struct {
-            pub const messages_front = u64;
-            pub const messages_back = u64;
-        };
+        pub const sizes = struct {};
     };
 
     pub fn deinit(hs: *HostSync, gpa: std.mem.Allocator) void {
@@ -121,7 +114,7 @@ pub const CallersUpdate = struct {
 };
 
 pub const MediaConnectionDetails = struct {
-    voice: Voice.Id,
+    voice: Channel.Id,
     tcp_client: u64,
     nonce: u64,
 
@@ -133,7 +126,7 @@ pub const MediaConnectionDetails = struct {
 
 pub const ChatMessageNew = struct {
     origin: u64,
-    chat: Chat.Id,
+    channel: Channel.Id,
     msg: Message,
 
     pub const marker = 'M';
@@ -144,7 +137,7 @@ pub const ChatMessageNew = struct {
 
 pub const ChannelsUpdate = struct {
     kind: enum(u8) { full, delta },
-    channels: []const Chat,
+    channels: []const Channel,
 
     pub const marker = 'H';
     pub const serializeAlloc = proto.MakeSerializeAllocFn(ChannelsUpdate);

@@ -1,14 +1,14 @@
 const Io = @import("std").Io;
 const TcpMessage = @import("protocol.zig").TcpMessage;
 const User = @import("User.zig");
-const channels = @import("channels.zig");
+const Channel = @import("Channel.zig");
 const Message = @This();
 
 pub const Id = u64;
 
 id: Id,
 origin: Id,
-channel: channels.Id,
+channel: Channel.Id,
 author: User.Id,
 text: []const u8,
 

@@ -4,9 +4,7 @@ const proto = @import("../protocol.zig");
 const User = @import("../User.zig");
 const Host = @import("../Host.zig");
 const Message = @import("../Message.zig");
-const channels = @import("../channels.zig");
-const Voice = channels.Voice;
-const Chat = channels.Chat;
+const Channel = @import("../Channel.zig");
 
 pub const OriginId = u64;
 
@@ -56,7 +54,7 @@ pub const Authenticate = struct {
 
 pub const CallJoin = struct {
     origin: OriginId,
-    voice: Voice.Id,
+    voice: Channel.Id,
 
     pub const marker = 'J';
     pub const serialize = proto.MakeSerializeFn(CallJoin);
@@ -67,7 +65,7 @@ pub const CallJoin = struct {
 
 pub const ChatMessageSend = struct {
     origin: OriginId,
-    chat: Chat.Id,
+    channel: Channel.Id,
     text: []const u8,
 
     pub const marker = 'M';
@@ -99,7 +97,7 @@ pub const ChatMessageSend = struct {
 
 pub const ChannelCreate = struct {
     origin: OriginId,
-    kind: channels.Kind,
+    kind: Channel.Kind,
     name: []const u8,
 
     pub const marker = 'C';

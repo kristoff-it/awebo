@@ -1,15 +1,16 @@
 const std = @import("std");
 const dvui = @import("dvui");
 const awebo = @import("../../../awebo.zig");
+const Channel = awebo.Channel;
+const Chat = Channel.Chat;
 const Core = @import("../../Core.zig");
 const App = @import("../../../main_client_gui.zig").App;
 const Host = awebo.Host;
-const Chat = awebo.channels.Chat;
 
 pub fn draw(app: *App, frozen: bool) !void {
     const core = &app.core;
     const h = core.hosts.get(app.active_host).?;
-    const c = h.chats.get(h.client.active_channel.chat).?;
+    const c = h.channels.get(h.client.active_channel.?).?;
 
     var box = dvui.box(
         @src(),
@@ -23,10 +24,10 @@ pub fn draw(app: *App, frozen: bool) !void {
     defer box.deinit();
 
     try sendBar(core, h, c, frozen);
-    try messageList(h, c);
+    try messageList(h, &c.kind.chat);
 }
 
-fn sendBar(core: *Core, h: *awebo.Host, c: *Chat, frozen: bool) !void {
+fn sendBar(core: *Core, h: *awebo.Host, c: *Channel, frozen: bool) !void {
     const gpa = core.gpa;
 
     var box = dvui.box(@src(), .{ .dir = .horizontal }, .{
@@ -83,19 +84,19 @@ fn messageList(h: *awebo.Host, c: *Chat) !void {
     });
     defer scroll.deinit();
 
-    const messages = c.client.messages.items.values();
+    const messages_len = c.messages.items.len;
 
     var idx: usize = 0;
     var last_author: awebo.User.Id = undefined;
-    while (idx < messages.len) {
+    while (idx < messages_len) {
         var showing_pending = false;
-        const m = &messages[idx];
+        const m = c.messages.items.at(idx);
         const mfr = messageFrame(h, m.author, idx);
         defer if (!showing_pending) mfr.deinit();
         last_author = mfr.author;
 
-        while (idx < messages.len) : (idx += 1) {
-            const next_m = messages[idx];
+        while (idx < messages_len) : (idx += 1) {
+            const next_m = c.messages.items.at(idx);
             if (m.author != next_m.author) break;
 
             var tl = dvui.textLayout(@src(), .{}, .{
@@ -109,7 +110,7 @@ fn messageList(h: *awebo.Host, c: *Chat) !void {
             idx += 1;
         }
 
-        if (idx >= messages.len) {
+        if (idx >= messages_len) {
             if (h.client.pending_messages.count() > 0) {
                 var maybe_mfr: ?MsgFrameResult = null;
                 defer if (maybe_mfr) |mfr1| mfr1.deinit();

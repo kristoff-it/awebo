@@ -47,8 +47,10 @@ fn initTables(io: Io, gpa: Allocator, cmd: Command, conn: zqlite.Conn) !void {
     , .{@intFromEnum(awebo.User.Power.owner)});
     conn.exec(admin, .{ cmd.owner.handle, pass_str }) catch fatalDb(conn);
 
+    const now = Io.Clock.real.now(io) catch @panic("server needs a clock");
     const settings: Settings = .{
         .name = cmd.server.name,
+        .created = now.toMilliseconds(),
     };
 
     const setting_kv =
@@ -202,10 +204,11 @@ const tables = struct {
         ,
         std.fmt.comptimePrint(
             \\INSERT INTO channels VALUES
-            \\  (0, 0, 0, NULL, 0, 'Default Chat Channel', 1, {0}),
-            \\  (1, 0, 0, NULL, 0, 'Default Voice Channel', 2, {0})
+            \\  (0, 0, 0, NULL, 0, 'Default Chat Channel', 0, {0}),
+            \\  (1, 0, 0, NULL, 0, 'Second Chat Channel', 0, {0}),
+            \\  (2, 0, 0, NULL, 0, 'Default Voice Channel', 1, {0})
             \\;
-        , .{@intFromEnum(awebo.channels.Privacy.private)}),
+        , .{@intFromEnum(awebo.Channel.Privacy.private)}),
 
         std.fmt.comptimePrint(
             \\CREATE TRIGGER channels_cleanup AFTER DELETE ON channels BEGIN

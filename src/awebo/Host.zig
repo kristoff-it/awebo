@@ -5,18 +5,14 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const proto = @import("protocol.zig");
-const Home = @import("channels/Home.zig");
-const Chat = @import("channels/Chat.zig");
-const Voice = @import("channels/Voice.zig");
+const Channel = @import("Channel.zig");
 const User = @import("User.zig");
 const Caller = @import("Caller.zig");
 
 name: []const u8 = "",
 logo: []const u8 = "", // TODO: draw default logo
-home: Home = .{ .readme = "" },
+channels: Channels = .{},
 users: Users = .{},
-chats: Chats = .{},
-voices: Voices = .{},
 
 client: switch (context) {
     .client => ClientOnly,
@@ -51,11 +47,7 @@ pub const ClientOnly = struct {
 
     input_buf: [256]u8 = undefined,
     input_len: usize = 0,
-    active_channel: union(enum) {
-        home,
-        chat: Chat.Id,
-        voice: Voice.Id,
-    } = .home,
+    active_channel: ?Channel.Id = null,
 
     connection: ?*network.HostConnection = null,
     connection_status: ConnectionStatus = .connecting,
@@ -86,10 +78,8 @@ pub const ClientOnly = struct {
 pub fn deinit(hs: *Host, gpa: std.mem.Allocator) void {
     gpa.free(hs.name);
     gpa.free(hs.logo);
-    hs.home.deinit(gpa);
     hs.users.deinit(gpa);
-    hs.chats.deinit(gpa);
-    hs.voices.deinit(gpa);
+    hs.channels.deinit(gpa);
 }
 
 pub const Users = struct {
@@ -150,10 +140,10 @@ pub const Users = struct {
     }
 };
 
-pub const Chats = struct {
-    items: std.AutoArrayHashMapUnmanaged(Chat.Id, Chat) = .{},
+pub const Channels = struct {
+    items: std.AutoArrayHashMapUnmanaged(Channel.Id, Channel) = .{},
     indexes: struct {
-        name: std.StringHashMapUnmanaged(Chat.Id) = .{},
+        name: std.StringHashMapUnmanaged(Channel.Id) = .{},
     } = .{},
 
     pub const protocol = struct {
@@ -161,39 +151,40 @@ pub const Chats = struct {
             pub const items = u32;
         };
 
-        pub inline fn serialize(chats: Chats, comptime serializeFn: anytype, w: *Io.Writer) !void {
-            try w.writeInt(sizes.items, @intCast(chats.items.count()), .little);
-            for (chats.items.values()) |chat| try serializeFn(chat, w);
+        pub inline fn serialize(channels: Channels, comptime serializeFn: anytype, w: *Io.Writer) !void {
+            try w.writeInt(sizes.items, @intCast(channels.items.count()), .little);
+            for (channels.items.values()) |ch| try serializeFn(ch, w);
         }
 
-        pub fn deserializeAlloc(comptime deserializeFn: anytype, gpa: Allocator, r: *Io.Reader) !Chats {
-            var chats: Chats = .{};
-            errdefer chats.deinit(gpa);
+        pub fn deserializeAlloc(comptime deserializeFn: anytype, gpa: Allocator, r: *Io.Reader) !Channels {
+            var channels: Channels = .{};
+            errdefer channels.deinit(gpa);
 
             const len = try r.takeInt(sizes.items, .little);
             for (0..len) |_| {
-                const c: Chat = try deserializeFn(Chat, gpa, r);
-                try chats.set(gpa, c);
+                const c: Channel = try deserializeFn(Channel, gpa, r);
+                try channels.set(gpa, c);
             }
-            return chats;
+            return channels;
         }
     };
 
     pub fn deinit(c: *@This(), gpa: std.mem.Allocator) void {
-        for (c.items.values()) |*chat| chat.deinit(gpa);
+        var it = c.items.iterator();
+        while (it.next()) |kv| kv.value_ptr.deinit(gpa);
         c.items.deinit(gpa);
         c.indexes.name.deinit(gpa);
     }
 
     pub const create: fn (
-        u: *Chats,
+        u: *Channels,
         gpa: std.mem.Allocator,
         channel_name: []const u8,
-    ) error{ OutOfMemory, NameTaken }!*Chat = switch (context) {
+    ) error{ OutOfMemory, NameTaken }!*Channel = switch (context) {
         .client => @compileError("server only"),
         .server => struct {
-            var chat_counter: Chat.Id = 5;
-            fn create(u: *Chats, gpa: std.mem.Allocator, channel_name: []const u8) !*Chat {
+            var chat_counter: Channel.Id = 5;
+            fn create(u: *Channels, gpa: std.mem.Allocator, channel_name: []const u8) !*Channel {
                 if (u.indexes.name.get(channel_name) != null) {
                     return error.NameTaken;
                 }
@@ -204,6 +195,8 @@ pub const Chats = struct {
                 gop.value_ptr.* = .{
                     .id = chat_counter,
                     .name = channel_name,
+                    .kind = .{ .chat = .{} },
+                    .privacy = .private,
                 };
 
                 try u.indexes.name.put(gpa, channel_name, chat_counter);
@@ -212,82 +205,24 @@ pub const Chats = struct {
         }.create,
     };
 
-    pub fn set(u: *@This(), gpa: std.mem.Allocator, chat: Chat) !void {
-        const gop = try u.items.getOrPut(gpa, chat.id);
+    pub fn set(u: *@This(), gpa: std.mem.Allocator, channel: Channel) !void {
+        const gop = try u.items.getOrPut(gpa, channel.id);
         if (!gop.found_existing) {
-            gop.value_ptr.* = chat;
+            gop.value_ptr.* = channel;
         }
 
-        try u.indexes.name.put(gpa, chat.name, chat.id);
+        try u.indexes.name.put(gpa, channel.name, channel.id);
     }
 
-    pub fn get(u: @This(), id: Chat.Id) ?*Chat {
+    pub fn get(u: @This(), id: Channel.Id) ?*Channel {
         return u.items.getPtr(id);
     }
 
-    pub fn getId(u: @This(), name_: []const u8) ?Chat.Id {
+    pub fn getId(u: @This(), name_: []const u8) ?Channel.Id {
         return u.indexes.name.get(name_);
     }
 
-    pub fn name(u: @This(), name_: []const u8) ?*Chat {
-        const id = u.getId(name_) orelse return null;
-        return u.get(id);
-    }
-};
-
-pub const Voices = struct {
-    items: std.AutoArrayHashMapUnmanaged(Voice.Id, Voice) = .{},
-    indexes: struct {
-        name: std.StringHashMapUnmanaged(Voice.Id) = .{},
-    } = .{},
-
-    pub const protocol = struct {
-        pub const sizes = struct {
-            pub const items = u32;
-        };
-
-        pub inline fn serialize(voices: Voices, comptime serializeFn: anytype, w: *Io.Writer) !void {
-            try w.writeInt(sizes.items, @intCast(voices.items.count()), .little);
-            for (voices.items.values()) |voice| try serializeFn(voice, w);
-        }
-
-        pub fn deserializeAlloc(comptime deserializeFn: anytype, gpa: Allocator, r: *Io.Reader) !Voices {
-            var voices: Voices = .{};
-            errdefer voices.deinit(gpa);
-
-            const len = try r.takeInt(sizes.items, .little);
-            for (0..len) |_| {
-                const v: Voice = try deserializeFn(Voice, gpa, r);
-                try voices.set(gpa, v);
-            }
-            return voices;
-        }
-    };
-
-    pub fn deinit(v: *Voices, gpa: std.mem.Allocator) void {
-        for (v.items.values()) |voice| voice.deinit(gpa);
-        v.items.deinit(gpa);
-        v.indexes.name.deinit(gpa);
-    }
-
-    pub fn set(u: *Voices, gpa: std.mem.Allocator, voice: Voice) !void {
-        const gop = try u.items.getOrPut(gpa, voice.id);
-        if (!gop.found_existing) {
-            gop.value_ptr.* = voice;
-        }
-
-        try u.indexes.name.put(gpa, voice.name, voice.id);
-    }
-
-    pub fn get(u: Voices, id: Voice.Id) ?*Voice {
-        return u.items.getPtr(id);
-    }
-
-    pub fn getId(u: Voices, name_: []const u8) ?Voice.Id {
-        return u.indexes.name.get(name_);
-    }
-
-    pub fn name(u: Voices, name_: []const u8) ?*Voice {
+    pub fn name(u: @This(), name_: []const u8) ?*Channel {
         const id = u.getId(name_) orelse return null;
         return u.get(id);
     }
@@ -297,7 +232,7 @@ pub const Callers = struct {
     items: std.AutoArrayHashMapUnmanaged(Caller.Id, Caller) = .{},
     indexes: struct {
         rooms: std.AutoHashMapUnmanaged(
-            Voice.Id,
+            Channel.Id,
             std.AutoArrayHashMapUnmanaged(Caller.Id, void),
         ) = .{},
     } = .{},
@@ -358,7 +293,7 @@ pub const Callers = struct {
         return callers.items.getPtr(cid);
     }
 
-    pub fn getRoom(callers: @This(), rid: Voice.Id) ?[]const Caller.Id {
+    pub fn getVoiceRoom(callers: @This(), rid: Channel.Id) ?[]const Caller.Id {
         const room = callers.indexes.rooms.get(rid) orelse return null;
         return room.keys();
     }

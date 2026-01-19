@@ -66,10 +66,11 @@ pub fn draw(app: *App) !void {
         });
         defer hbox.deinit();
         try channel_list.draw(app);
-        switch (h.client.active_channel) {
-            .home => home_panel.draw(),
-            .chat => try chat_panel.draw(app, frozen),
-            .voice => @panic("TODO"),
+        if (h.client.active_channel) |ac| {
+            switch (h.channels.get(ac).?.kind) {
+                .chat => try chat_panel.draw(app, frozen),
+                .voice => @panic("TODO"),
+            }
         }
     }
 

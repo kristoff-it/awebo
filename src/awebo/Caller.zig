@@ -3,13 +3,13 @@ const Caller = @This();
 const context = @import("options").context;
 const TcpMessage = @import("protocol.zig").TcpMessage;
 const User = @import("User.zig");
-const Voice = @import("channels/Voice.zig");
+const Channel = @import("Channel.zig");
 
 pub const Id = u16;
 
 id: Id,
 user: User.Id,
-voice: Voice.Id,
+voice: Channel.Id,
 screensharing: bool = false,
 status: Status = .none,
 client: switch (context) {
@@ -51,7 +51,7 @@ pub fn serialize(c: Caller, msg: TcpMessage) void {
 pub fn parse(r: anytype) !Caller {
     const id = try TcpMessage.readInt(Id, r);
     const user = try TcpMessage.readInt(User.Id, r);
-    const voice = try TcpMessage.readInt(Voice.Id, r);
+    const voice = try TcpMessage.readInt(Channel.Id, r);
     const screensharing = try TcpMessage.readBool(r);
     const status = try TcpMessage.readEnum(Status, r);
 

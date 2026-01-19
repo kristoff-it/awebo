@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const dvui = @import("dvui");
 const awebo = @import("../../../awebo.zig");
+const Channel = awebo.Channel;
 const App = @import("../../../main_client_gui.zig").App;
 const Core = @import("../../Core.zig");
 
@@ -19,8 +20,7 @@ pub fn draw(app: *App) !void {
     }
 
     hostName(h);
-    chatList(h);
-    try voiceList(h, core);
+    try channelList(h, core);
     try joinedVoice(core);
     try userbox(app, h);
 }
@@ -180,7 +180,7 @@ pub fn newChatFloatingWindow(app: *App, h: *awebo.Host) !void {
     }
 }
 
-pub fn chatList(h: *awebo.Host) void {
+pub fn channelList(h: *awebo.Host, core: *Core) !void {
     var list_scroll = dvui.scrollArea(
         @src(),
         .{},
@@ -203,199 +203,165 @@ pub fn chatList(h: *awebo.Host) void {
         },
     );
     defer menu.deinit();
-    for (h.chats.items.values(), 0..) |c, idx| {
-        const item = dvui.menuItem(@src(), .{}, .{
-            .gravity_x = 0,
-            .id_extra = idx,
-            .expand = .horizontal,
-        });
-        defer item.deinit();
-
-        if (item.activated) {
-            h.client.active_channel = .{ .chat = c.id };
-        }
-
-        const active = switch (h.client.active_channel) {
-            .chat => |ac| ac == c.id,
-            else => false,
-        };
-        if (active) {
-            // item.wd.options.color_fill = .{ .name = .fill_press };
-            item.wd.options.background = true;
-            // try item.drawBackground(.{});
-        }
-
-        dvui.labelNoFmt(@src(), c.name, .{}, .{
-            .font = dvui.Font.theme(.title).larger(4),
-            .id_extra = idx,
-        });
-    }
-}
-
-fn voiceList(h: *awebo.Host, core: *Core) !void {
-    _ = dvui.separator(@src(), .{ .expand = .horizontal });
-
-    const opts: dvui.Options = .{
-        .margin = dvui.Rect.all(8),
-        .font = dvui.Font.theme(.title).larger(2),
-        .expand = .horizontal,
-        .background = true,
-        // .color_fill = .{ .name = .fill },
-        .border = dvui.Rect.all(1),
-        // .color_border = .{ .name = .text_press },
-    };
-
-    const open = dvui.expander(@src(), "Voice Channels", .{}, opts);
-    _ = dvui.separator(@src(), .{ .expand = .horizontal });
-    if (open) {
-        var bar = dvui.scrollArea(
-            @src(),
-            .{},
-            .{
-                .expand = .vertical,
-                // .color_fill = .{ .name = .fill_window },
-            },
-        );
-        defer bar.deinit();
-
-        var voices_menu = dvui.menu(
-            @src(),
-            .vertical,
-            .{
-                .expand = .vertical,
-                .min_size_content = .{ .w = 250 },
-                .background = true,
-                .margin = .{ .x = 8, .w = 8 },
-                // .color_fill = .{ .name = .fill },
-            },
-        );
-        defer voices_menu.deinit();
-
-        for (h.voices.items.values(), 0..) |*v, idx| {
-            {
-                var box = dvui.box(@src(), .{ .dir = .horizontal }, .{
-                    .id_extra = idx,
-                    .expand = .horizontal,
-                });
-                defer box.deinit();
-
-                const maybe_call = core.active_call;
-                if (maybe_call == null or maybe_call.?.voice_id != v.id) {
-                    if (dvui.button(@src(), "Join", .{}, .{
-                        .id_extra = idx,
-                        .expand = .vertical,
-                        .gravity_x = 1,
-                        .margin = dvui.Rect.all(4),
-                    })) {
-                        try core.callJoin(h.client.host_id, v.id);
-                    }
-                }
-
-                {
-                    const item = dvui.menuItem(@src(), .{}, .{
-                        .gravity_x = 0,
-                        .id_extra = idx,
-                        .expand = .horizontal,
-                    });
-                    defer item.deinit();
-
-                    if (core.active_call) |call| {
-                        const active = call.voice_id == v.id;
-                        if (active) {
-                            // item.wd.options.color_fill = .{ .name = .fill };
-                            item.wd.options.background = true;
-                            // try item.drawBackground(.{});
-                        }
-                    }
-                    dvui.labelNoFmt(@src(), v.name, .{}, .{
-                        .font = dvui.Font.theme(.title).larger(4),
-                        .id_extra = idx,
-                    });
-                }
-            }
-
-            const members_menu = dvui.menu(@src(), .vertical, .{
-                .id_extra = idx,
-            });
-            defer members_menu.deinit();
-
-            const callers = h.client.callers.getRoom(v.id) orelse &.{};
-            for (callers) |cid| {
-                const caller = h.client.callers.get(cid).?;
-
-                if (caller.user == h.client.user_id and
-                    core.active_call == null) continue;
-
-                const m = h.users.get(caller.user).?;
+    for (h.channels.items.values(), 0..) |*channel, idx| {
+        switch (channel.kind) {
+            .chat => |chat| {
+                _ = chat;
                 const item = dvui.menuItem(@src(), .{}, .{
-                    .margin = .{ .x = 8, .w = 8 },
                     .gravity_x = 0,
-                    .id_extra = caller.id,
+                    .id_extra = idx,
                     .expand = .horizontal,
                 });
                 defer item.deinit();
 
-                // const ctext = dvui.context(@src(), .{}, .{ .expand = .horizontal });
-                // defer ctext.deinit();
+                if (item.activated) {
+                    h.client.active_channel = channel.id;
+                }
 
-                const box = dvui.box(@src(), .{ .dir = .horizontal }, .{});
-                defer box.deinit();
+                const active = if (h.client.active_channel) |ac|
+                    ac == channel.id
+                else
+                    false;
 
-                // if (ctext.activePoint()) |cp| {
-                //     var fw2 = try dvui.floatingMenu(
-                //         @src(),
-                //         dvui.Rect.fromPoint(cp),
-                //         .{
-                //             .id_extra = idx,
-                //         },
-                //     );
-                //     defer fw2.deinit();
+                if (active) {
+                    // item.wd.options.color_fill = .{ .name = .fill_press };
+                    item.wd.options.background = true;
+                    // try item.drawBackground(.{});
+                }
 
-                //     if (dvui.menuItemLabel(@src(), "Kick", .{}, .{
-                //         .id_extra = idx,
-                //         .expand = .horizontal,
-                //     })) |_| blk: {
-                //         dvui.menuGet().?.close();
-                //         break :blk;
-                //         //if (mid == h.client.user_id) {
-                //         //    app.command(.{ .ui = .call_leave });
-                //         //} else {
-                //         //    const vc_idx = for (
-                //         //        v.members.slice(),
-                //         //        0..,
-                //         //    ) |vm, vc_idx| {
-                //         //        if (vm == mid) break vc_idx;
-                //         //    } else break :blk;
-
-                //         //    _ = v.members.orderedRemove(vc_idx);
-                //         //}
-                //     }
-                // }
-
-                //  dvui.image(@src(), "zig favicon", m.avatar, .{
-                //     .gravity_y = 0.5,
-                //     .min_size_content = .{ .w = 20, .h = 20 },
-                //     .id_extra = idx,
-                // });
-
-                const pending = if (core.active_call) |ac| switch (ac.status.get()) {
-                    .intent, .connecting => true,
-                    else => false,
-                } else false;
-
-                const text_color: dvui.Color = if (caller.user == h.client.user_id and pending) .gray else .white;
-                const speaking = caller.client.speaking_last_ms + 250 >= core.now();
-                const bg_color: ?dvui.Color = if (speaking) .yellow else null;
-
-                dvui.labelNoFmt(@src(), m.display_name, .{}, .{
-                    .font = .theme(.title),
-                    .id_extra = caller.id,
-                    .color_text = text_color,
-                    .background = true,
-                    .color_fill = bg_color,
+                dvui.labelNoFmt(@src(), channel.name, .{}, .{
+                    .font = dvui.Font.theme(.title).larger(4),
+                    .id_extra = idx,
                 });
+            },
+            .voice => try renderVoiceChannel(h, core, channel, idx),
+        }
+    }
+}
+
+fn renderVoiceChannel(h: *awebo.Host, core: *Core, v: *const Channel, idx: usize) !void {
+    {
+        var box = dvui.box(@src(), .{ .dir = .horizontal }, .{
+            .id_extra = idx,
+            .expand = .horizontal,
+        });
+        defer box.deinit();
+
+        const maybe_call = core.active_call;
+        if (maybe_call == null or maybe_call.?.voice_id != v.id) {
+            if (dvui.button(@src(), "Join", .{}, .{
+                .id_extra = idx,
+                .expand = .vertical,
+                .gravity_x = 1,
+                .margin = dvui.Rect.all(4),
+            })) {
+                try core.callJoin(h.client.host_id, v.id);
             }
         }
+
+        {
+            const item = dvui.menuItem(@src(), .{}, .{
+                .gravity_x = 0,
+                .id_extra = idx,
+                .expand = .horizontal,
+            });
+            defer item.deinit();
+
+            if (core.active_call) |call| {
+                const active = call.voice_id == v.id;
+                if (active) {
+                    // item.wd.options.color_fill = .{ .name = .fill };
+                    item.wd.options.background = true;
+                    // try item.drawBackground(.{});
+                }
+            }
+            dvui.labelNoFmt(@src(), v.name, .{}, .{
+                .font = dvui.Font.theme(.title).larger(4),
+                .id_extra = idx,
+            });
+        }
+    }
+
+    const members_menu = dvui.menu(@src(), .vertical, .{
+        .id_extra = idx,
+    });
+    defer members_menu.deinit();
+
+    const callers = h.client.callers.getVoiceRoom(v.id) orelse &.{};
+    for (callers) |cid| {
+        const caller = h.client.callers.get(cid).?;
+
+        if (caller.user == h.client.user_id and
+            core.active_call == null) continue;
+
+        const m = h.users.get(caller.user).?;
+        const item = dvui.menuItem(@src(), .{}, .{
+            .margin = .{ .x = 8, .w = 8 },
+            .gravity_x = 0,
+            .id_extra = caller.id,
+            .expand = .horizontal,
+        });
+        defer item.deinit();
+
+        // const ctext = dvui.context(@src(), .{}, .{ .expand = .horizontal });
+        // defer ctext.deinit();
+
+        const box = dvui.box(@src(), .{ .dir = .horizontal }, .{});
+        defer box.deinit();
+
+        // if (ctext.activePoint()) |cp| {
+        //     var fw2 = try dvui.floatingMenu(
+        //         @src(),
+        //         dvui.Rect.fromPoint(cp),
+        //         .{
+        //             .id_extra = idx,
+        //         },
+        //     );
+        //     defer fw2.deinit();
+
+        //     if (dvui.menuItemLabel(@src(), "Kick", .{}, .{
+        //         .id_extra = idx,
+        //         .expand = .horizontal,
+        //     })) |_| blk: {
+        //         dvui.menuGet().?.close();
+        //         break :blk;
+        //         //if (mid == h.client.user_id) {
+        //         //    app.command(.{ .ui = .call_leave });
+        //         //} else {
+        //         //    const vc_idx = for (
+        //         //        v.members.slice(),
+        //         //        0..,
+        //         //    ) |vm, vc_idx| {
+        //         //        if (vm == mid) break vc_idx;
+        //         //    } else break :blk;
+
+        //         //    _ = v.members.orderedRemove(vc_idx);
+        //         //}
+        //     }
+        // }
+
+        //  dvui.image(@src(), "zig favicon", m.avatar, .{
+        //     .gravity_y = 0.5,
+        //     .min_size_content = .{ .w = 20, .h = 20 },
+        //     .id_extra = idx,
+        // });
+
+        const pending = if (core.active_call) |ac| switch (ac.status.get()) {
+            .intent, .connecting => true,
+            else => false,
+        } else false;
+
+        const text_color: dvui.Color = if (caller.user == h.client.user_id and pending) .gray else .white;
+        const speaking = caller.client.speaking_last_ms + 250 >= core.now();
+        const bg_color: ?dvui.Color = if (speaking) .yellow else null;
+
+        dvui.labelNoFmt(@src(), m.display_name, .{}, .{
+            .font = .theme(.title),
+            .id_extra = caller.id,
+            .color_text = text_color,
+            .background = true,
+            .color_fill = bg_color,
+        });
     }
 }
 
@@ -418,7 +384,7 @@ fn joinedVoice(core: *Core) !void {
             });
 
             const h = core.hosts.get(call.host_id).?;
-            const v = h.voices.get(call.voice_id).?;
+            const v = h.channels.get(call.voice_id).?;
 
             dvui.label(@src(), "{s} / {s}", .{ v.name, h.name }, .{
                 .font = dvui.Font.theme(.body).larger(-2),

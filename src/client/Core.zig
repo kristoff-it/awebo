@@ -9,8 +9,9 @@ const Allocator = std.mem.Allocator;
 const awebo = @import("../awebo.zig");
 const Host = awebo.Host;
 const HostId = awebo.Host.ClientOnly.Id;
-const Chat = awebo.channels.Chat;
-const Voice = awebo.channels.Voice;
+const Channel = awebo.Channel;
+const Chat = Channel.Chat;
+const Voice = Channel.Voice;
 const Media = @import("Media.zig");
 const network = @import("Core/network.zig");
 const persistence = @import("Core/persistence.zig");
@@ -98,7 +99,6 @@ pub const Hosts = struct {
 
     pub fn sync(
         hosts: *@This(),
-        gpa: Allocator,
         host_id: HostId,
         hs: awebo.protocol.server.HostSync,
     ) void {
@@ -120,11 +120,6 @@ pub const Hosts = struct {
         h.client.user_id = hs.user_id;
         h.client.connection = old_client.connection;
         h.client.connection_status = .synced;
-
-        for ([_][]const awebo.Message{ hs.messages_front, hs.messages_back }) |messages| for (messages) |msg| {
-            const ch = h.chats.get(msg.channel) orelse continue;
-            ch.client.messages.add(gpa, msg) catch oom();
-        };
     }
 };
 
@@ -245,7 +240,7 @@ fn hostConnectionUpdate(core: *Core, id: HostId, hcu: awebo.Host.ClientOnly.Conn
 fn hostSync(core: *Core, id: HostId, hs: awebo.protocol.server.HostSync) void {
     var locked = lockState(core);
     defer locked.unlock();
-    core.hosts.sync(core.gpa, id, hs);
+    core.hosts.sync(id, hs);
 }
 
 fn channelsUpdate(core: *Core, msg: NetworkCommand.Msg) !void {
@@ -298,8 +293,8 @@ fn chatMessageNew(core: *Core, host_id: HostId, cmn: awebo.protocol.server.ChatM
     defer locked.unlock();
 
     const h = core.hosts.get(host_id).?;
-    const c = h.chats.get(cmn.chat).?;
-    c.client.messages.add(core.gpa, cmn.msg) catch oom();
+    const c = &h.channels.get(cmn.channel).?.kind.chat;
+    c.messages.add(core.gpa, cmn.msg, .back) catch oom();
 
     if (cmn.origin != 0) {
         if (h.client.pending_messages.orderedRemove(cmn.origin)) {
@@ -466,7 +461,7 @@ pub const UserAudio = struct {
 
 pub const ActiveCall = struct {
     host_id: Host.ClientOnly.Id = undefined,
-    voice_id: Voice.Id = undefined,
+    voice_id: Channel.Id = undefined,
     status: Status = .{},
     push_future: ?Io.Future(error{ Closed, Canceled }!void) = null,
     manager_future: ?Io.Future(void) = null,
@@ -497,13 +492,13 @@ pub const ActiveCall = struct {
 /// On error return, the message was not scheduled for sending and should be
 /// left untouched in the UI text input element, letting the user know that
 /// more resources must be freed in order to be able to complete the operation.
-pub fn messageSend(core: *Core, h: *Host, c: *Chat, text: []const u8) !void {
+pub fn messageSend(core: *Core, h: *Host, c: *Channel, text: []const u8) !void {
     const gpa = core.gpa;
     const io = core.io;
     const ChatMessageSend = awebo.protocol.client.ChatMessageSend;
     const cms: ChatMessageSend = .{
         .origin = core.now(),
-        .chat = c.id,
+        .channel = c.id,
         .text = text,
     };
 
@@ -567,7 +562,7 @@ pub fn hostJoin(
 pub fn callJoin(
     core: *Core,
     host_id: HostId,
-    voice_id: Voice.Id,
+    voice_id: Channel.Id,
 ) !void {
     const gpa = core.gpa;
     const io = core.io;

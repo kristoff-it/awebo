@@ -110,7 +110,7 @@ pub fn AtomicEnum(
 pub const ChannelCreate = struct {
     origin: u64,
     host: *Host,
-    kind: awebo.channels.Kind,
+    kind: awebo.Channel.Kind.Enum,
     name: []const u8,
 
     status: Status = .{},

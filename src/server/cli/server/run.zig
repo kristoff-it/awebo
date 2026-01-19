@@ -67,7 +67,6 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     }
 
     if (options.slow) server_log.warn("slow mode enabled", .{});
-    server_start = std.time.Instant.now() catch @panic("server needs a working clock");
 
     server_log.info("loading database", .{});
     db = .init(cmd.db_path, .read_write);
@@ -75,6 +74,8 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
         fatal("unable to load state from database: {t}", .{err});
     };
     defer ___state.deinit(gpa);
+
+    server_created = ___state.settings.created;
 
     server_log.info("starting tcp interface at {f}", .{cmd.tcp});
     var tcp = cmd.tcp.listen(io, .{ .reuse_address = true }) catch |err| {
@@ -147,7 +148,7 @@ fn runClientManager(io: Io, gpa: Allocator, stream: Io.net.Stream) void {
     var qbuf: [64][]const u8 = undefined;
     var client: Client = .{
         .tcp = .{
-            .connected_at = now(),
+            .connected_at = now(io),
             .stream = stream,
             .reader_state = stream.reader(io, &rbuf),
             .writer_state = stream.writer(io, &wbuf),
@@ -338,7 +339,7 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
                     state.removeUdp(io, gpa, client);
                 }
 
-                state.setUdp(gpa, client, packet.from);
+                state.setUdp(io, gpa, client, packet.from);
 
                 {
                     const cu: awebo.protocol.server.CallersUpdate = .{
@@ -363,7 +364,7 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
                     continue;
                 };
 
-                sender.udp.?.last_msg_ms = now();
+                sender.udp.?.last_msg_ms = now(io);
                 header.id.client_id = sender.udp.?.id;
 
                 const room = state.clients.voice_index.get(sender.voice.?.id).?;
@@ -405,7 +406,7 @@ const Client = struct {
 
     authenticated: ?awebo.User.Id = null,
     voice: ?struct {
-        id: awebo.channels.Voice.Id,
+        id: awebo.Channel.Id,
         nonce: u64,
     } = null,
 
@@ -505,37 +506,15 @@ const Client = struct {
         };
         const auth_bytes = try reply.serializeAlloc(gpa);
 
-        log.debug("latest_messages.buffer.len = {} head = {} len = {}", .{
-            state.latest_messages.buffer.len,
-            state.latest_messages.head,
-            state.latest_messages.len,
-        });
-        const head = state.latest_messages.head;
-        const len = state.latest_messages.len;
-        const buflen = state.latest_messages.buffer.len;
-        const slice_front, const slice_back = if (head + len < buflen) blk: {
-            break :blk .{
-                state.latest_messages.buffer[head..][0..len],
-                &.{},
-            };
-        } else blk: {
-            break :blk .{
-                state.latest_messages.buffer[0 .. (head + len) - buflen],
-                state.latest_messages.buffer[head..buflen],
-            };
-        };
         const hs: awebo.protocol.server.HostSync = .{
-            .host = state.host,
             .user_id = client.authenticated.?,
-            .messages_front = slice_front,
-            .messages_back = slice_back,
+            .host = state.host,
         };
         const bytes = try hs.serializeAlloc(gpa);
         errdefer gpa.free(bytes);
 
         // order matters, we first confirm the auth request and second send the host sync data
         try client.tcp.queue.putAll(io, &.{ auth_bytes, bytes });
-        log.debug("queued 2 replies", .{});
     }
 
     fn bufferIndex(deque: *const std.Deque(awebo.Message), index: usize) usize {
@@ -557,7 +536,7 @@ const Client = struct {
         defer locked.unlock(io);
         const state = locked.state;
 
-        const chat = state.host.chats.create(gpa, cc.name) catch |err| switch (err) {
+        const chat = state.host.channels.create(gpa, cc.name) catch |err| switch (err) {
             error.OutOfMemory => @panic("oom"),
             error.NameTaken => {
                 const ccr = cc.reply(.name_taken);
@@ -668,7 +647,7 @@ const Client = struct {
             try client.tcp.queue.putOne(io, bytes);
         };
 
-        const chat = state.host.chats.get(cms.chat) orelse {
+        const channel = state.host.channels.get(cms.channel) orelse {
             log.debug("unknown channel", .{});
             const reply = cms.replyErr(.unknown_channel);
             const bytes = try reply.serializeAlloc(gpa);
@@ -678,21 +657,19 @@ const Client = struct {
         };
 
         const new: awebo.Message = .{
-            .id = now(),
+            .id = now(io),
             .origin = cms.origin,
-            .channel = chat.id,
+            .channel = channel.id,
             .author = client.authenticated.?,
             .text = cms.text,
         };
 
-        try chat.addMessage(db, new);
-        try state.latest_messages.pushFront(gpa, new);
-        if (state.latest_messages.len > 128) state.latest_messages.popBack().?.deinit(gpa);
+        try channel.kind.chat.addMessage(gpa, channel.id, db, new);
 
         {
             const cmn: awebo.protocol.server.ChatMessageNew = .{
                 .origin = cms.origin,
-                .chat = cms.chat,
+                .channel = cms.channel,
                 .msg = new,
             };
 
@@ -745,10 +722,6 @@ pub const State = @TypeOf(___state);
 var ___state: struct {
     settings: Settings = undefined,
     host: Host = .{},
-    callers: struct {} = .{},
-    /// Cache of latest messages we received, so that we can quickly sync
-    /// new clients without having to hit the database every time.
-    latest_messages: std.Deque(awebo.Message) = .empty,
     /// Per-user rate limiters, use User.Id to index into the array
     user_limits: std.ArrayList(RateLimiter) = .empty,
     clients: struct {
@@ -763,7 +736,7 @@ var ___state: struct {
         /// Clients that express an intent to be in a voice call.
         /// Not all clients listed here have a UDP address yet.
         voice_index: std.AutoHashMapUnmanaged(
-            awebo.channels.Voice.Id,
+            awebo.Channel.Id,
             std.AutoArrayHashMapUnmanaged(*Client, void),
         ) = .{},
 
@@ -810,7 +783,7 @@ var ___state: struct {
                     if (std.mem.eql(u8, f.name, key)) {
                         @field(settings, f.name) = switch (f.type) {
                             []const u8 => try r.text(gpa, .value),
-                            usize => @intCast(r.int(.value)),
+                            usize, u64, i64 => @intCast(r.int(.value)),
                             else => @compileError("implement mapping for " ++ @typeName(f.type)),
                         };
                         continue :outer;
@@ -821,81 +794,64 @@ var ___state: struct {
         };
 
         const host: awebo.Host = host: {
-            const chats = blk: {
-                var rs = db.rows("SELECT id, name FROM channels WHERE kind = ?", .{
-                    @intFromEnum(awebo.channels.Kind.chat),
-                }) catch db.fatal(@src());
+            const channels = blk: {
+                var rs = db.rows("SELECT id, name, privacy, kind FROM channels", .{}) catch db.fatal(@src());
                 defer rs.deinit();
 
-                var chats: awebo.Host.Chats = .{};
-
+                var channels: awebo.Host.Channels = .{};
                 while (rs.next()) |r| {
-                    const chat: awebo.channels.Chat = .{
+                    const kind: awebo.Channel.Kind.Enum = @enumFromInt(r.int(.kind));
+                    var channel: awebo.Channel = .{
                         .id = @intCast(r.int(.id)),
                         .name = try r.text(gpa, .name),
+                        .privacy = @enumFromInt(r.int(.privacy)),
+                        .kind = switch (kind) {
+                            inline else => |tag| @unionInit(
+                                awebo.Channel.Kind,
+                                @tagName(tag),
+                                .{},
+                            ),
+                        },
                     };
-                    try chats.set(gpa, chat);
-                    server_log.debug("loaded chat: {f}", .{chat});
+
+                    if (channel.kind == .chat) {
+                        var msgs = db.rows(
+                            \\SELECT id, origin, author, body FROM messages
+                            \\WHERE channel = ? ORDER BY id DESC LIMIT 50;
+                        ,
+                            .{channel.id},
+                        ) catch db.fatal(@src());
+                        defer msgs.deinit();
+
+                        while (msgs.next()) |m| {
+                            const msg: awebo.Message = .{
+                                .id = @intCast(m.int(.id)),
+                                .origin = @intCast(m.int(.origin)),
+                                .channel = channel.id,
+                                .author = @intCast(m.int(.author)),
+                                .text = try m.text(gpa, .body),
+                            };
+                            try channel.kind.chat.messages.add(gpa, msg, .back);
+                            server_log.debug("loaded chat message: {f}", .{msg});
+                        }
+                    }
+
+                    try channels.set(gpa, channel);
+                    server_log.debug("loaded {f}", .{channel});
                 }
 
-                break :blk chats;
-            };
-
-            const voices = blk: {
-                var rs = db.rows("SELECT id, name FROM channels WHERE kind = ?", .{
-                    @intFromEnum(awebo.channels.Kind.voice),
-                }) catch db.fatal(@src());
-                defer rs.deinit();
-
-                var voices: awebo.Host.Voices = .{};
-
-                while (rs.next()) |r| {
-                    const voice: awebo.channels.Voice = .{
-                        .id = @intCast(r.int(.id)),
-                        .name = try r.text(gpa, .name),
-                    };
-                    try voices.set(gpa, voice);
-                    server_log.debug("loaded voice chat: {f}", .{voice});
-                }
-
-                break :blk voices;
+                break :blk channels;
             };
 
             break :host .{
                 .name = settings.name,
-                .chats = chats,
-                .voices = voices,
+                .channels = channels,
             };
-        };
-
-        const latest_messages = blk: {
-            var rs = db.rows(
-                "SELECT id, origin, channel, author, body FROM messages ORDER BY id DESC LIMIT 128",
-                .{},
-            ) catch db.fatal(@src());
-            defer rs.deinit();
-
-            var latest_messages: std.Deque(awebo.Message) = .empty;
-
-            while (rs.next()) |r| {
-                const msg: awebo.Message = .{
-                    .id = @intCast(r.int(.id)),
-                    .origin = @intCast(r.int(.origin)),
-                    .channel = @intCast(r.int(.channel)),
-                    .author = @intCast(r.int(.author)),
-                    .text = try r.text(gpa, .body),
-                };
-                try latest_messages.pushFront(gpa, msg);
-                server_log.debug("loaded chat message: {f}", .{msg});
-            }
-
-            break :blk latest_messages;
         };
 
         state.* = .{
             .settings = settings,
             .host = host,
-            .latest_messages = latest_messages,
             .user_limits = user_limits,
         };
     }
@@ -903,25 +859,19 @@ var ___state: struct {
     fn deinit(state: *State, gpa: Allocator) void {
         if (builtin.mode != .Debug) return;
 
-        {
-            var it = state.latest_messages.iterator();
-            while (it.next()) |msg| msg.deinit(gpa);
-            state.latest_messages.deinit(gpa);
-        }
-
         state.host.deinit(gpa);
         state.clients.deinit(gpa);
         state.user_limits.deinit(gpa);
     }
 
-    fn setUdp(state: *State, gpa: Allocator, client: *Client, addr: Io.net.IpAddress) void {
+    fn setUdp(state: *State, io: Io, gpa: Allocator, client: *Client, addr: Io.net.IpAddress) void {
         std.debug.assert(client.udp == null);
 
         client_id += 1;
         client.udp = .{
             .id = client_id,
             .addr = addr,
-            .last_msg_ms = now(),
+            .last_msg_ms = now(io),
         };
 
         server_log.debug("setting {f}", .{addr});
@@ -1048,10 +998,10 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(1);
 }
 
-pub var server_start: std.time.Instant = undefined;
-fn now() u64 {
-    const n = std.time.Instant.now() catch @panic("server needs a working clock");
-    return n.since(server_start);
+pub var server_created: i64 = undefined;
+fn now(io: Io) u64 {
+    const n = Io.Clock.real.now(io) catch @panic("server needs a working clock");
+    return @intCast(n.toMilliseconds() - server_created);
 }
 
 fn fatalHelp() noreturn {
