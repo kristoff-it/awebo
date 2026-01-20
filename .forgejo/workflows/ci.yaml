@@ -1,4 +1,5 @@
 name: Build and Test
+
 on:
   push:
     branches: [main]
@@ -7,11 +8,7 @@ on:
 
 jobs:
   build:
-    runs-on: ${{ matrix.host }}
-    strategy:
-      matrix:
-        host: [x86_64-linux]
-        target: [x86_64-linux, aarch64-linux, x86_64-windows]
+    runs-on: x86_64-linux
     steps:
       - uses: actions/checkout@v2
         with:
@@ -20,9 +17,17 @@ jobs:
       - name: Setup Zig
         uses: https://codeberg.org/mlugg/setup-zig@v2
 
-      - name: Build
-        run: zig build ${{ matrix.host != matrix.target && format('-Dtarget={0}', matrix.target) || '' }} --summary all
+      - name: Build native
+        run: zig build --summary all
+
+      - name: Build x86_64-linux
+        run: zig build -Dtarget=x86_64-linux --summary all
+
+      - name: Build aarch64-linux
+        run: zig build -Dtarget=aarch64-linux --summary all
+
+      - name: Build x86_64-windows
+        run: zig build -Dtarget=x86_64-windows --summary all
 
       - name: Test
-        if: ${{ matrix.host == matrix.target }}
         run: zig build test
