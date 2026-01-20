@@ -1,6 +1,7 @@
 pub const opus = @import("awebo/opus.zig");
 pub const permissions = @import("awebo/permissions.zig");
 pub const protocol = @import("awebo/protocol.zig");
+pub const Clock = @import("awebo/Clock.zig");
 pub const Channel = @import("awebo/Channel.zig");
 pub const Host = @import("awebo/Host.zig");
 pub const Message = @import("awebo/Message.zig");

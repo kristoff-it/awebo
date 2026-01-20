@@ -75,7 +75,10 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     };
     defer ___state.deinit(gpa);
 
-    server_created = ___state.settings.created;
+    server_log.info("server epoch: {d}, last id generated: {f}", .{
+        ___state.settings.epoch,
+        ___state.clock.now,
+    });
 
     server_log.info("starting tcp interface at {f}", .{cmd.tcp});
     var tcp = cmd.tcp.listen(io, .{ .reuse_address = true }) catch |err| {
@@ -148,7 +151,7 @@ fn runClientManager(io: Io, gpa: Allocator, stream: Io.net.Stream) void {
     var qbuf: [64][]const u8 = undefined;
     var client: Client = .{
         .tcp = .{
-            .connected_at = now(io),
+            .connected_at = 0,
             .stream = stream,
             .reader_state = stream.reader(io, &rbuf),
             .writer_state = stream.writer(io, &wbuf),
@@ -364,7 +367,7 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
                     continue;
                 };
 
-                sender.udp.?.last_msg_ms = now(io);
+                sender.udp.?.last_msg_ms = state.clock.tick(io);
                 header.id.client_id = sender.udp.?.id;
 
                 const room = state.clients.voice_index.get(sender.voice.?.id).?;
@@ -657,7 +660,7 @@ const Client = struct {
         };
 
         const new: awebo.Message = .{
-            .id = now(io),
+            .id = state.clock.tick(io),
             .origin = cms.origin,
             .channel = channel.id,
             .author = client.authenticated.?,
@@ -720,6 +723,7 @@ var db: Database = undefined;
 
 pub const State = @TypeOf(___state);
 var ___state: struct {
+    clock: awebo.Clock = undefined,
     settings: Settings = undefined,
     host: Host = .{},
     /// Per-user rate limiters, use User.Id to index into the array
@@ -757,11 +761,15 @@ var ___state: struct {
     var client_id: u15 = 0;
 
     fn init(state: *State, io: Io, gpa: Allocator) !void {
+        var latest_id: u64 = 0;
+
         const user_limits = blk: {
-            var r = db.conn.row("SELECT COUNT(*) FROM users", .{}) catch db.fatal(@src());
+            var r = db.conn.row("SELECT COUNT(*), MAX(id), MAX(updated) FROM users", .{}) catch db.fatal(@src());
             defer r.?.deinit();
 
             const user_count: usize = @intCast(r.?.int(0));
+
+            latest_id = @intCast(@max(latest_id, r.?.nullableInt(1) orelse 0, r.?.nullableInt(2) orelse 0));
 
             var user_limits: std.ArrayList(RateLimiter) = .empty;
 
@@ -795,6 +803,18 @@ var ___state: struct {
 
         const host: awebo.Host = host: {
             const channels = blk: {
+                {
+                    var r = db.conn.row("SELECT MAX(created), MAX(updated) FROM channels", .{}) catch db.fatal(@src());
+                    defer r.?.deinit();
+
+                    latest_id = @intCast(@max(latest_id, r.?.nullableInt(0) orelse 0, r.?.nullableInt(1) orelse 0));
+                }
+                {
+                    var r = db.conn.row("SELECT MAX(id), MAX(updated) FROM messages", .{}) catch db.fatal(@src());
+                    defer r.?.deinit();
+
+                    latest_id = @intCast(@max(latest_id, r.?.nullableInt(0) orelse 0, r.?.nullableInt(1) orelse 0));
+                }
                 var rs = db.rows("SELECT id, name, privacy, kind FROM channels", .{}) catch db.fatal(@src());
                 defer rs.deinit();
 
@@ -849,7 +869,10 @@ var ___state: struct {
             };
         };
 
+        server_log.debug("latest_id = {} {f}", .{ latest_id, awebo.Clock.Tick.fromId(latest_id) });
+
         state.* = .{
+            .clock = .init(settings.epoch, .fromId(latest_id)),
             .settings = settings,
             .host = host,
             .user_limits = user_limits,
@@ -871,7 +894,7 @@ var ___state: struct {
         client.udp = .{
             .id = client_id,
             .addr = addr,
-            .last_msg_ms = now(io),
+            .last_msg_ms = state.clock.tick(io),
         };
 
         server_log.debug("setting {f}", .{addr});
@@ -996,12 +1019,6 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     server_log.err("fatal error: " ++ fmt ++ "\n", args);
     if (builtin.mode == .Debug) @breakpoint();
     std.process.exit(1);
-}
-
-pub var server_created: i64 = undefined;
-fn now(io: Io) u64 {
-    const n = Io.Clock.real.now(io) catch @panic("server needs a working clock");
-    return @intCast(n.toMilliseconds() - server_created);
 }
 
 fn fatalHelp() noreturn {

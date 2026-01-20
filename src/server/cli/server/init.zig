@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
+const zeit = @import("zeit");
 
 const Settings = @import("../../Settings.zig");
 const Database = @import("../../Database.zig");
@@ -421,6 +422,10 @@ fn initSchema(conn: zqlite.Conn) !void {
 }
 
 fn seed(io: std.Io, gpa: Allocator, cmd: Command, conn: zqlite.Conn) !void {
+    const now = Io.Clock.real.now(io) catch @panic("server needs a clock");
+    const epoch = now.toSeconds();
+    var clock: awebo.Clock = .init(epoch, .fromId(0));
+
     var out: [4096]u8 = undefined;
     const pass_str = std.crypto.pwhash.argon2.strHash(cmd.owner.password, .{
         .allocator = gpa,
@@ -429,18 +434,59 @@ fn seed(io: std.Io, gpa: Allocator, cmd: Command, conn: zqlite.Conn) !void {
         fatal("unable to hash admin password: {t}", .{err});
     };
 
+    const admin_ts = clock.tick(io);
+    log.debug("admin ts = {}, as id: {f}", .{ admin_ts, awebo.Clock.Tick.fromId(admin_ts) });
     const admin = std.fmt.comptimePrint(
         \\INSERT INTO users VALUES
-        \\  (0, 0, 0, 0, 0, {}, ?, ?, 'Admin', NULL)
+        \\  (0, ?, 0, 0, 0, {}, ?, ?, 'Admin', NULL)
         \\;
     , .{@intFromEnum(awebo.User.Power.owner)});
-    conn.exec(admin, .{ cmd.owner.handle, pass_str }) catch fatalDb(conn);
+    conn.exec(admin, .{ admin_ts, cmd.owner.handle, pass_str }) catch fatalDb(conn);
 
-    const now = Io.Clock.real.now(io) catch @panic("server needs a clock");
+    const channels = std.fmt.comptimePrint(
+        \\INSERT INTO channels VALUES
+        \\  (0, ?, 0, NULL, 0, 'Default Chat Channel', 0, {0}),
+        \\  (1, ?, 0, NULL, 0, 'Second Chat Channel', 0, {0}),
+        \\  (2, ?, 0, NULL, 0, 'Default Voice Channel', 1, {0})
+        \\;
+    , .{@intFromEnum(awebo.Channel.Privacy.private)});
+
+    conn.exec(channels, .{
+        clock.tick(io),
+        clock.tick(io),
+        clock.tick(io),
+    }) catch fatalDb(conn);
+
+    const roles =
+        \\INSERT INTO roles (id, created, updated, name, sort, visible) VALUES
+        \\  (1, ?,  0, 'Moderator', 2, true)
+        \\;
+    ;
+    conn.exec(roles, .{clock.tick(io)}) catch fatalDb(conn);
+
     const settings: Settings = .{
         .name = cmd.server.name,
-        .created = now.toMilliseconds(),
+        .epoch = epoch,
     };
+
+    std.debug.print(
+        \\ --- IMPORTANT ---
+        \\This server was created with epoch datetime {} (UTC).
+        \\Awebo uses monotonic timestamps to keep clients in sync.
+        \\
+        \\--> MAKE SURE THE EPOCH DATETIME IS CORRECT <--
+        \\
+        \\If the datetime is not correct, adjust the system clock and then
+        \\re-initialize the server.
+        \\
+        \\Changing the server time after server creation will cause the
+        \\server to panic if running, and you might not be able to start
+        \\it again.
+        \\
+        \\Awebo can deal with small NTP clock jumps.
+        \\ --------------
+        \\
+    , .{now.toSeconds()});
 
     const setting_kv =
         \\INSERT INTO settings VALUES
@@ -459,6 +505,13 @@ fn seed(io: std.Io, gpa: Allocator, cmd: Command, conn: zqlite.Conn) !void {
     //     \\;
     // ;
     // conn.exec(owner_role, .{}) catch fatalDb(conn);
+
+    std.debug.print(
+        \\Database initialized correctly, you can now start your awebo server:
+        \\$ awebo-server server run
+        \\
+        \\
+    , .{});
 }
 
 const tables = struct {
@@ -510,10 +563,6 @@ const tables = struct {
         \\  sort         INTEGER UNIQUE NOT NULL,
         \\  visible      INTEGER NOT NULL
         \\);
-        ,
-        \\INSERT INTO roles (id, created, updated, name, sort, visible) VALUES
-        \\  (1, 0,  0, 'Moderator', 2, true)
-        \\;
         ,
     };
 
@@ -591,13 +640,6 @@ const tables = struct {
         \\  UNIQUE (section, sort)
         \\);
         ,
-        std.fmt.comptimePrint(
-            \\INSERT INTO channels VALUES
-            \\  (0, 0, 0, NULL, 0, 'Default Chat Channel', 0, {0}),
-            \\  (1, 0, 0, NULL, 0, 'Second Chat Channel', 0, {0}),
-            \\  (2, 0, 0, NULL, 0, 'Default Voice Channel', 1, {0})
-            \\;
-        , .{@intFromEnum(awebo.Channel.Privacy.private)}),
 
         std.fmt.comptimePrint(
             \\CREATE TRIGGER channels_cleanup AFTER DELETE ON channels BEGIN
@@ -611,6 +653,7 @@ const tables = struct {
         \\CREATE TABLE messages (
         \\  id           INTEGER PRIMARY KEY ASC,
         \\  origin       INTEGER,
+        \\  updated      INTEGER,
         \\  channel      REFERENCES channels ON DELETE CASCADE,
         \\  author       REFERENCES users ON DELETE CASCADE,
         \\  body         TEXT NOT NULL,
