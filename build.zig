@@ -26,8 +26,8 @@ pub fn build(b: *std.Build) void {
     });
 
     setupServer(b, target, optimize, check, zqlite, known_folders);
-    setupClientGui(b, target, optimize, check, known_folders);
-    setupClientTui(b, target, optimize, check, known_folders);
+    setupClientGui(b, target, optimize, check, zqlite, known_folders);
+    setupClientTui(b, target, optimize, check, zqlite, known_folders);
 
     // Here for CI, add dependencies on tests later
     _ = b.step("test", "");
@@ -70,31 +70,7 @@ pub fn setupServer(
 
     server.root_module.addOptions("options", options);
     server.root_module.addImport("folders", folders.module("known-folders"));
-    server.root_module.addImport("zqlite", zqlite.module("zqlite"));
-
-    server.root_module.addCSourceFile(.{
-        .file = zqlite.path("lib/sqlite3.c"),
-        .flags = &[_][]const u8{
-            "-DSQLITE_DQS=0",
-            "-DSQLITE_DEFAULT_WAL_SYNCHRONOUS=1",
-            "-DSQLITE_USE_ALLOCA=1",
-            "-DSQLITE_THREADSAFE=1",
-            "-DSQLITE_TEMP_STORE=3",
-            "-DSQLITE_ENABLE_API_ARMOR=1",
-            "-DSQLITE_ENABLE_UNLOCK_NOTIFY",
-            "-DSQLITE_DEFAULT_FILE_PERMISSIONS=0600",
-            "-DSQLITE_OMIT_DECLTYPE=1",
-            "-DSQLITE_OMIT_DEPRECATED=1",
-            "-DSQLITE_OMIT_LOAD_EXTENSION=1",
-            "-DSQLITE_OMIT_PROGRESS_CALLBACK=1",
-            "-DSQLITE_OMIT_SHARED_CACHE",
-            "-DSQLITE_OMIT_TRACE=1",
-            "-DSQLITE_OMIT_UTF16=1",
-            "-DHAVE_USLEEP=0",
-            "-DSQLITE_ENABLE_FTS5=1",
-        },
-    });
-    server.root_module.link_libc = true;
+    addSqlite(server, zqlite, .server);
 
     const install = b.addInstallArtifact(server, .{});
     b.getInstallStep().dependOn(&install.step);
@@ -118,6 +94,7 @@ pub fn setupClientGui(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     check: *std.Build.Step,
+    zqlite: *std.Build.Dependency,
     folders: *std.Build.Dependency,
 ) void {
     const dvui = b.dependency("dvui", .{
@@ -152,6 +129,8 @@ pub fn setupClientGui(
     client.root_module.addImport("folders", folders.module("known-folders"));
     client.root_module.linkLibrary(opus.artifact("opus"));
     client.root_module.linkLibrary(opus_tools.artifact("opus-tools"));
+    addSqlite(client, zqlite, .client);
+
     if (target.result.os.tag == .windows) {
         if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
             client.root_module.addImport("win32", win32_dep.module("win32"));
@@ -179,6 +158,7 @@ pub fn setupClientTui(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     check: *std.Build.Step,
+    zqlite: *std.Build.Dependency,
     folders: *std.Build.Dependency,
 ) void {
     const vaxis = b.dependency("vaxis", .{
@@ -217,6 +197,7 @@ pub fn setupClientTui(
     client.root_module.addImport("folders", folders.module("known-folders"));
     client.root_module.linkLibrary(opus.artifact("opus"));
     client.root_module.linkLibrary(opus_tools.artifact("opus-tools"));
+    addSqlite(client, zqlite, .client);
     if (target.result.os.tag == .windows) {
         if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
             client.root_module.addImport("win32", win32_dep.module("win32"));
@@ -237,4 +218,36 @@ pub fn setupClientTui(
     run_step.dependOn(&run_cmd.step);
 
     check.dependOn(&client.step);
+}
+
+fn addSqlite(
+    exe: *std.Build.Step.Compile,
+    zqlite: *std.Build.Dependency,
+    comptime context: enum { server, client },
+) void {
+    exe.root_module.addImport("zqlite", zqlite.module("zqlite"));
+    exe.root_module.addCSourceFile(.{
+        .file = zqlite.path("lib/sqlite3.c"),
+        .flags = &[_][]const u8{
+            "-DSQLITE_DQS=0",
+            "-DSQLITE_DEFAULT_WAL_SYNCHRONOUS=1",
+            "-DSQLITE_USE_ALLOCA=1",
+            "-DSQLITE_THREADSAFE=1",
+            "-DSQLITE_TEMP_STORE=3",
+            "-DSQLITE_ENABLE_API_ARMOR=1",
+            "-DSQLITE_ENABLE_UNLOCK_NOTIFY",
+            "-DSQLITE_DEFAULT_FILE_PERMISSIONS=0600",
+            "-DSQLITE_OMIT_DECLTYPE=1",
+            "-DSQLITE_OMIT_DEPRECATED=1",
+            "-DSQLITE_OMIT_LOAD_EXTENSION=1",
+            "-DSQLITE_OMIT_PROGRESS_CALLBACK=1",
+            "-DSQLITE_OMIT_SHARED_CACHE",
+            "-DSQLITE_OMIT_TRACE=1",
+            "-DSQLITE_OMIT_UTF16=1",
+            "-DHAVE_USLEEP=0",
+        } ++ if (context == .server) .{
+            "-DSQLITE_ENABLE_FTS5=1",
+        } else .{},
+    });
+    exe.root_module.link_libc = true;
 }

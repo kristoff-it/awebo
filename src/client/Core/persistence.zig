@@ -121,7 +121,7 @@ pub fn loadImpl(core: *Core) error{OutOfMemory}!void {
             log.debug("missing password field from host file, abandoning", .{});
             break :blk;
         };
-        const h = core.hosts.add(core, ident, username, password) catch |err| switch (err) {
+        const h = core.hosts.add(core, ident, username, password, false) catch |err| switch (err) {
             // We never write duplicate data into the file, but
             // in case a user did this to themselves by editing the file
             // manually, we can be graceful about it, I guess.
@@ -139,31 +139,17 @@ pub fn loadImpl(core: *Core) error{OutOfMemory}!void {
     }
 
     for (core.hosts.items.values()) |*h| {
-        const data = cache.readFileAlloc(io, h.client.identity, gpa, .limited(10 * 1024 * 1024)) catch |err| {
-            log.info("could not load the cache for host '{s}': {s}", .{
-                h.client.identity,
-                @errorName(err),
-            });
-            continue;
-        };
+        // const identity = h.client.identity;
+        // const id = h.client.host_id;
 
-        const identity = h.client.identity;
-        const id = h.client.host_id;
+        const path = try gpa.dupeZ(u8, h.client.identity);
+        defer gpa.free(path);
 
-        var fbr = Io.Reader.fixed(data);
-        var hs = awebo.protocol.server.HostSync.deserializeAlloc(gpa, &fbr) catch |err| {
-            log.info("could not parse the cache for '{s}': {s}", .{
-                h.client.identity,
-                @errorName(err),
-            });
-            continue;
-        };
-        hs.host.client.identity = identity;
-        hs.host.client.host_id = id;
-        h.* = hs.host;
+        const db: awebo.Database = .init(path, .create);
+        // db.load(h);
+
+        h.client.db = db;
     }
-
-    //TODO: load messages separately
 }
 
 pub fn updateHosts(io: Io, hosts: []const awebo.Host) !void {

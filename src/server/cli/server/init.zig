@@ -5,9 +5,10 @@ const Allocator = std.mem.Allocator;
 const zeit = @import("zeit");
 
 const Settings = @import("../../Settings.zig");
-const Database = @import("../../Database.zig");
-const zqlite = @import("zqlite");
+
 const awebo = @import("../../../awebo.zig");
+const Database = awebo.Database;
+const zqlite = @import("zqlite");
 
 const log = std.log.scoped(.db);
 

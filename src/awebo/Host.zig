@@ -5,6 +5,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const proto = @import("protocol.zig");
+const Database = @import("Database.zig");
 const Channel = @import("Channel.zig");
 const User = @import("User.zig");
 const Caller = @import("Caller.zig");
@@ -42,6 +43,7 @@ pub const ClientOnly = struct {
     user_id: User.Id = undefined,
     username: []const u8 = undefined,
     password: []const u8 = undefined,
+    db: Database = undefined,
 
     callers: Callers = .{},
 

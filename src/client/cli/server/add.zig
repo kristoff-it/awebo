@@ -39,7 +39,7 @@ pub fn run(io: Io, gpa: Allocator, environ: *std.process.Environ.Map, it: *std.p
         return;
     };
 
-    _ = core.hosts.add(&core, identity, username, password) catch |e| {
+    _ = core.hosts.add(&core, identity, username, password, true) catch |e| {
         std.log.err("failed to add host: {t} \n", .{e});
         return;
     };

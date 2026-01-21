@@ -73,6 +73,7 @@ pub const Hosts = struct {
         identity: []const u8,
         username: []const u8,
         password: []const u8,
+        save: bool,
     ) error{ DuplicateHost, OutOfMemory }!*Host {
         const gpa = core.gpa;
         const io = core.io;
@@ -93,7 +94,7 @@ pub const Hosts = struct {
         });
 
         // We gained a new server, let's update our persisted data.
-        persistence.updateHosts(io, hosts.items.values()) catch |err| {
+        if (save) persistence.updateHosts(io, hosts.items.values()) catch |err| {
             log.err("error while saving config: {t}", .{err});
         };
         return gop.value_ptr;

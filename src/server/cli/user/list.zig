@@ -2,7 +2,8 @@ const builtin = @import("builtin");
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
-const Database = @import("../../Database.zig");
+const awebo = @import("../../../awebo.zig");
+const Database = awebo.Database;
 const zqlite = @import("zqlite");
 
 const log = std.log.scoped(.db);

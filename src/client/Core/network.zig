@@ -223,7 +223,7 @@ fn runHostManagerFallible(
             const host_id = lock: {
                 var locked = core.lockState();
                 defer locked.unlock();
-                const host = try core.hosts.add(core, identity, username, password);
+                const host = try core.hosts.add(core, identity, username, password, true);
                 break :lock host.client.host_id;
             };
 

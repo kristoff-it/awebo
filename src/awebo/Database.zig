@@ -1,5 +1,6 @@
 const Database = @This();
 
+const context = @import("options").context;
 const builtin = @import("builtin");
 const std = @import("std");
 const Io = std.Io;
@@ -65,89 +66,6 @@ pub fn init(db_path: [:0]const u8, mode: Mode) Database {
 //         log.debug("loaded user: {any}", .{user});
 //     }
 // }
-
-/// Returns a user given its username and password.
-/// Validation logic is part of this function to make efficient use of the memory returned from sqlite,
-/// which becomes invalid as soon as the relative `Row` is deinited.
-/// On success dupes `username`.
-pub fn getUserByLogin(
-    db: Database,
-    io: Io,
-    gpa: Allocator,
-    username: []const u8,
-    password: []const u8,
-) error{ NotFound, Password }!awebo.User {
-    const maybe_pswd_row = db.row("SELECT pswd_hash FROM users WHERE handle = ?", .{
-        username,
-    }) catch db.fatal(@src());
-    const pswd_row = maybe_pswd_row orelse {
-        std.crypto.pwhash.argon2.strVerify("bananarama123", password, .{ .allocator = gpa }, io) catch {};
-        return error.NotFound;
-    };
-    defer pswd_row.deinit();
-
-    const pswd_hash = pswd_row.textNoDupe(.pswd_hash);
-
-    std.crypto.pwhash.argon2.strVerify(pswd_hash, password, .{ .allocator = gpa }, io) catch |err| switch (err) {
-        error.PasswordVerificationFailed => return error.Password,
-        error.OutOfMemory => oom(),
-        else => fatalErr(err),
-    };
-
-    const maybe_row = db.row("SELECT id, display_name, power, avatar FROM users WHERE handle = ?", .{
-        username,
-    }) catch db.fatal(@src());
-    const user_row = maybe_row orelse return error.NotFound;
-    defer user_row.deinit();
-
-    return .{
-        .id = @intCast(user_row.int(.id)),
-        .power = @enumFromInt(user_row.int(.power)),
-        .display_name = user_row.text(gpa, .display_name) catch oom(),
-        .avatar = user_row.text(gpa, .avatar) catch oom(),
-        .handle = gpa.dupe(u8, username) catch oom(),
-        .server = .{
-            .pswd_hash = gpa.dupe(u8, pswd_hash) catch oom(),
-        },
-    };
-}
-
-pub fn serverPermission(db: Database, user: *const awebo.User, comptime key: awebo.permissions.Server.Enum) bool {
-    const user_id = user.id;
-    const user_default = @field(awebo.permissions.Server{}, @tagName(key));
-
-    switch (user.power) {
-        .banned => return false,
-        .admin, .owner => return true,
-        .user, .moderator => {},
-    }
-
-    const user_perm_query =
-        \\SELECT value FROM user_permissions WHERE user = ? AND kind = ? AND key = ?;
-    ;
-    const roles_perm_query =
-        \\SELECT permissions.value FROM permissions
-        \\INNER JOIN user_roles ON user_roles.role == permissions.role
-        \\WHERE user_roles.user = ? AND permissions.kind = ? AND permissions.key = ?;
-    ;
-    for (&[_][]const u8{ user_perm_query, roles_perm_query }) |q| {
-        var result_rows = db.conn.rows(q, .{
-            user_id,
-            @intFromEnum(awebo.permissions.Kind.server),
-            @intFromEnum(key),
-        }) catch db.fatal(@src());
-        defer result_rows.deinit();
-
-        var found = false;
-        while (result_rows.next()) |r| {
-            const value = r.int(0);
-            if (value == 0) return false;
-            found = true;
-        }
-
-        if (found) return true;
-    } else return user_default;
-}
 
 /// See docs for `rows`
 pub fn row(db: Database, comptime query: []const u8, args: anytype) !?Rows(query).Row {
@@ -229,6 +147,103 @@ pub fn Rows(comptime query: []const u8) type {
         };
     };
 }
+
+/// Returns a user given its username and password.
+/// Validation logic is part of this function to make efficient use of the memory returned from sqlite,
+/// which becomes invalid as soon as the relative `Row` is deinited.
+/// On success dupes `username`.
+pub const getUserByLogin = if (context == .client)
+    @compileError("server only")
+else
+    struct {
+        fn impl(
+            db: Database,
+            io: Io,
+            gpa: Allocator,
+            username: []const u8,
+            password: []const u8,
+        ) error{ NotFound, Password }!awebo.User {
+            const maybe_pswd_row = db.row("SELECT pswd_hash FROM users WHERE handle = ?", .{
+                username,
+            }) catch db.fatal(@src());
+            const pswd_row = maybe_pswd_row orelse {
+                std.crypto.pwhash.argon2.strVerify("bananarama123", password, .{ .allocator = gpa }, io) catch {};
+                return error.NotFound;
+            };
+            defer pswd_row.deinit();
+
+            const pswd_hash = pswd_row.textNoDupe(.pswd_hash);
+
+            std.crypto.pwhash.argon2.strVerify(pswd_hash, password, .{ .allocator = gpa }, io) catch |err| switch (err) {
+                error.PasswordVerificationFailed => return error.Password,
+                error.OutOfMemory => oom(),
+                else => fatalErr(err),
+            };
+
+            const maybe_row = db.row("SELECT id, display_name, power, avatar FROM users WHERE handle = ?", .{
+                username,
+            }) catch db.fatal(@src());
+            const user_row = maybe_row orelse return error.NotFound;
+            defer user_row.deinit();
+
+            return .{
+                .id = @intCast(user_row.int(.id)),
+                .power = @enumFromInt(user_row.int(.power)),
+                .display_name = user_row.text(gpa, .display_name) catch oom(),
+                .avatar = user_row.text(gpa, .avatar) catch oom(),
+                .handle = gpa.dupe(u8, username) catch oom(),
+                .server = .{
+                    .pswd_hash = gpa.dupe(u8, pswd_hash) catch oom(),
+                },
+            };
+        }
+    }.impl;
+
+pub const serverPermission = if (context == .client)
+    @compileError("server only")
+else
+    struct {
+        fn impl(
+            db: Database,
+            user: *const awebo.User,
+            comptime key: awebo.permissions.Server.Enum,
+        ) bool {
+            const user_id = user.id;
+            const user_default = @field(awebo.permissions.Server{}, @tagName(key));
+
+            switch (user.power) {
+                .banned => return false,
+                .admin, .owner => return true,
+                .user, .moderator => {},
+            }
+
+            const user_perm_query =
+                \\SELECT value FROM user_permissions WHERE user = ? AND kind = ? AND key = ?;
+            ;
+            const roles_perm_query =
+                \\SELECT permissions.value FROM permissions
+                \\INNER JOIN user_roles ON user_roles.role == permissions.role
+                \\WHERE user_roles.user = ? AND permissions.kind = ? AND permissions.key = ?;
+            ;
+            for (&[_][]const u8{ user_perm_query, roles_perm_query }) |q| {
+                var result_rows = db.conn.rows(q, .{
+                    user_id,
+                    @intFromEnum(awebo.permissions.Kind.server),
+                    @intFromEnum(key),
+                }) catch db.fatal(@src());
+                defer result_rows.deinit();
+
+                var found = false;
+                while (result_rows.next()) |r| {
+                    const value = r.int(0);
+                    if (value == 0) return false;
+                    found = true;
+                }
+
+                if (found) return true;
+            } else return user_default;
+        }
+    }.impl;
 
 pub fn fatal(db: Database, src: std.builtin.SourceLocation) noreturn {
     log.err("{s}:{}: fatal db error: {s}", .{ src.file, src.line, db.conn.lastError() });

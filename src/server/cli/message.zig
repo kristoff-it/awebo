@@ -3,7 +3,8 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const zqlite = @import("zqlite");
-const Database = @import("../Database.zig");
+const awebo = @import("../../awebo.zig");
+const Database = awebo.Database;
 
 const Subcommand = enum {
     search,

@@ -4,6 +4,7 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const options = @import("options");
+const Database = @import("../Database.zig");
 const Channel = @import("../Channel.zig");
 const Message = @import("../Message.zig");
 const tcpSize = @import("../protocol.zig").tcpSize;
@@ -142,7 +143,6 @@ pub fn deinit(c: *Chat, gpa: std.mem.Allocator) void {
 pub const addMessage = switch (context) {
     .client => @compileError("server only"),
     .server => struct {
-        const Database = @import("../../server/Database.zig");
         fn impl(chat: *Chat, gpa: Allocator, chat_id: Channel.Id, db: Database, msg: Message) !void {
             const query =
                 \\INSERT INTO messages (id, origin, channel, author, body, reactions) VALUES
