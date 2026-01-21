@@ -25,6 +25,7 @@ pub fn load(core: *Core) !void {
 pub fn loadImpl(core: *Core) error{OutOfMemory}!void {
     const io = core.io;
     const gpa = core.gpa;
+
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
     const allocator = arena.allocator();

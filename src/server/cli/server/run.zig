@@ -75,9 +75,9 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     };
     defer ___state.deinit(gpa);
 
-    server_log.info("server epoch: {d}, last id generated: {f}", .{
+    server_log.info("server epoch: {d}, last id generated: {}", .{
         ___state.settings.epoch,
-        ___state.clock.now,
+        ___state.id.last,
     });
 
     server_log.info("starting tcp interface at {f}", .{cmd.tcp});
@@ -342,7 +342,7 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
                     state.removeUdp(io, gpa, client);
                 }
 
-                state.setUdp(io, gpa, client, packet.from);
+                state.setUdp(gpa, client, packet.from);
 
                 {
                     const cu: awebo.protocol.server.CallersUpdate = .{
@@ -367,7 +367,7 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
                     continue;
                 };
 
-                sender.udp.?.last_msg_ms = state.clock.tick(io);
+                sender.udp.?.last_msg_ms = state.id.new();
                 header.id.client_id = sender.udp.?.id;
 
                 const room = state.clients.voice_index.get(sender.voice.?.id).?;
@@ -660,7 +660,7 @@ const Client = struct {
         };
 
         const new: awebo.Message = .{
-            .id = state.clock.tick(io),
+            .id = state.id.new(),
             .origin = cms.origin,
             .channel = channel.id,
             .author = client.authenticated.?,
@@ -723,7 +723,8 @@ var db: Database = undefined;
 
 pub const State = @TypeOf(___state);
 var ___state: struct {
-    clock: awebo.Clock = undefined,
+    // clock: awebo.Clock = undefined,
+    id: awebo.IdGenerator = undefined,
     settings: Settings = undefined,
     host: Host = .{},
     /// Per-user rate limiters, use User.Id to index into the array
@@ -872,7 +873,7 @@ var ___state: struct {
         server_log.debug("latest_id = {} {f}", .{ latest_id, awebo.Clock.Tick.fromId(latest_id) });
 
         state.* = .{
-            .clock = .init(settings.epoch, .fromId(latest_id)),
+            .id = .init(latest_id),
             .settings = settings,
             .host = host,
             .user_limits = user_limits,
@@ -887,14 +888,14 @@ var ___state: struct {
         state.user_limits.deinit(gpa);
     }
 
-    fn setUdp(state: *State, io: Io, gpa: Allocator, client: *Client, addr: Io.net.IpAddress) void {
+    fn setUdp(state: *State, gpa: Allocator, client: *Client, addr: Io.net.IpAddress) void {
         std.debug.assert(client.udp == null);
 
         client_id += 1;
         client.udp = .{
             .id = client_id,
             .addr = addr,
-            .last_msg_ms = state.clock.tick(io),
+            .last_msg_ms = state.id.new(),
         };
 
         server_log.debug("setting {f}", .{addr});

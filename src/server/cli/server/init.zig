@@ -422,9 +422,7 @@ fn initSchema(conn: zqlite.Conn) !void {
 }
 
 fn seed(io: std.Io, gpa: Allocator, cmd: Command, conn: zqlite.Conn) !void {
-    const now = Io.Clock.real.now(io) catch @panic("server needs a clock");
-    const epoch = now.toSeconds();
-    var clock: awebo.Clock = .init(epoch, .fromId(0));
+    var id: awebo.IdGenerator = .init(0);
 
     var out: [4096]u8 = undefined;
     const pass_str = std.crypto.pwhash.argon2.strHash(cmd.owner.password, .{
@@ -434,14 +432,12 @@ fn seed(io: std.Io, gpa: Allocator, cmd: Command, conn: zqlite.Conn) !void {
         fatal("unable to hash admin password: {t}", .{err});
     };
 
-    const admin_ts = clock.tick(io);
-    log.debug("admin ts = {}, as id: {f}", .{ admin_ts, awebo.Clock.Tick.fromId(admin_ts) });
     const admin = std.fmt.comptimePrint(
         \\INSERT INTO users VALUES
         \\  (0, ?, 0, 0, 0, {}, ?, ?, 'Admin', NULL)
         \\;
     , .{@intFromEnum(awebo.User.Power.owner)});
-    conn.exec(admin, .{ admin_ts, cmd.owner.handle, pass_str }) catch fatalDb(conn);
+    conn.exec(admin, .{ id.new(), cmd.owner.handle, pass_str }) catch fatalDb(conn);
 
     const channels = std.fmt.comptimePrint(
         \\INSERT INTO channels VALUES
@@ -452,9 +448,9 @@ fn seed(io: std.Io, gpa: Allocator, cmd: Command, conn: zqlite.Conn) !void {
     , .{@intFromEnum(awebo.Channel.Privacy.private)});
 
     conn.exec(channels, .{
-        clock.tick(io),
-        clock.tick(io),
-        clock.tick(io),
+        id.new(),
+        id.new(),
+        id.new(),
     }) catch fatalDb(conn);
 
     const roles =
@@ -462,31 +458,13 @@ fn seed(io: std.Io, gpa: Allocator, cmd: Command, conn: zqlite.Conn) !void {
         \\  (1, ?,  0, 'Moderator', 2, true)
         \\;
     ;
-    conn.exec(roles, .{clock.tick(io)}) catch fatalDb(conn);
+    conn.exec(roles, .{id.new()}) catch fatalDb(conn);
 
+    const epoch = Io.Clock.real.now(io) catch @panic("server needs a clock");
     const settings: Settings = .{
         .name = cmd.server.name,
-        .epoch = epoch,
+        .epoch = epoch.toMilliseconds(),
     };
-
-    std.debug.print(
-        \\ --- IMPORTANT ---
-        \\This server was created with epoch datetime {} (UTC).
-        \\Awebo uses monotonic timestamps to keep clients in sync.
-        \\
-        \\--> MAKE SURE THE EPOCH DATETIME IS CORRECT <--
-        \\
-        \\If the datetime is not correct, adjust the system clock and then
-        \\re-initialize the server.
-        \\
-        \\Changing the server time after server creation will cause the
-        \\server to panic if running, and you might not be able to start
-        \\it again.
-        \\
-        \\Awebo can deal with small NTP clock jumps.
-        \\ --------------
-        \\
-    , .{now.toSeconds()});
 
     const setting_kv =
         \\INSERT INTO settings VALUES

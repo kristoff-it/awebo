@@ -10,7 +10,7 @@ const log = std.log.scoped(.clock);
 epoch: i64,
 now: Tick,
 
-pub const Tick = struct {
+pub const Tick = packed struct(u64) {
     counter: Counter,
     time: Time,
 
@@ -20,14 +20,10 @@ pub const Tick = struct {
     pub const zero: Tick = .{ .time = 0, .counter = 0 };
 
     pub fn id(t: Tick) u64 {
-        return t.time << @bitSizeOf(Counter) | t.counter;
+        return @bitCast(t);
     }
-
     pub fn fromId(_id: u64) Tick {
-        return .{
-            .time = @truncate(_id >> @bitSizeOf(Counter)),
-            .counter = @truncate(_id),
-        };
+        return @bitCast(_id);
     }
 
     pub fn timestamp(t: Tick, epoch: i64) i64 {
@@ -47,8 +43,8 @@ pub fn init(epoch: i64, now: Tick) Clock {
 pub fn tick(clock: *Clock, io: Io) u64 {
     while (true) {
         const now = Io.Clock.real.now(io) catch @panic("server needs a working clock");
-        log.debug("now = {}, epoch = {}", .{ now.toSeconds(), clock.epoch });
-        const system_time: u32 = @intCast(now.toSeconds() - clock.epoch);
+        const now_seconds = now.toSeconds();
+        const system_time: u32 = @intCast(now_seconds - clock.epoch);
 
         if (system_time <= clock.now.time) {
             const delta = clock.now.time - system_time;
@@ -61,13 +57,17 @@ pub fn tick(clock: *Clock, io: Io) u64 {
             }
 
             if (delta > 0) {
-                log.warn("clock observed a clock skew of {}seconds!", .{delta});
-                io.sleep(.fromSeconds(delta), .awake) catch continue;
+                log.warn("clock observed a clock skew of {} seconds, sleeping to compensate", .{delta});
+                const target_ns = (now_seconds + 1) * std.time.ns_per_s;
+                io.sleep(.fromNanoseconds(target_ns - now), .awake) catch continue;
                 continue;
             }
 
             if (clock.now.counter == std.math.maxInt(Tick.Counter)) {
-                @panic("exhausted the counter of a Clock.Tick, either a huge clock skew happened or spam got through");
+                log.warn("exhausted counter for {}, sleeping to compensate", .{now_seconds});
+                const target_ns = (now_seconds + 1) * std.time.ns_per_s;
+                io.sleep(.fromNanoseconds(target_ns - now), .awake) catch continue;
+                continue;
             }
 
             clock.now.counter += 1;
