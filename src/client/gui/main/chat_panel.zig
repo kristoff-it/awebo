@@ -57,13 +57,13 @@ fn sendBar(core: *Core, h: *awebo.Host, c: *Channel, frozen: bool) !void {
 
     var enter_pressed = false;
     for (dvui.events()) |*e| {
-        if (e.evt != .key ) continue;
+        if (e.evt != .key) continue;
 
         // The TextEntryWidget can detect when enter is pressed, but it will
         // keep spamming it every frame the key is held down. Checking the key
         // action prevents this.
         if (in.enter_pressed and e.evt.key.code == .enter and e.evt.key.action == .down) {
-            enter_pressed = true;
+            enter_pressed = true and !frozen;
             e.handled = true;
         }
     }
