@@ -57,9 +57,6 @@ fn sendBar(core: *Core, h: *awebo.Host, c: *Channel, frozen: bool) !void {
 
     var enter_pressed = false;
     for (dvui.events()) |*e| {
-        // Note that the TextEntryWidget doesn't actually consume key events,
-        // even when typing characters into them! Therefore .matchEvent() always
-        // returns false. Instead, we do the following:
         if (e.evt != .key ) continue;
 
         // The TextEntryWidget can detect when enter is pressed, but it will
