@@ -55,7 +55,7 @@ fn sendBar(core: *Core, h: *awebo.Host, c: *Channel, frozen: bool) !void {
     });
     defer in.deinit();
 
-    if (clicked or in.enter_pressed) {
+    if (clicked or (in.enter_pressed and !frozen)) {
         const raw = std.mem.trim(u8, in.textGet(), " \t\n\r");
         if (raw.len > 0) {
             const text = try gpa.dupe(u8, raw);
