@@ -53,7 +53,11 @@ pub const Authenticate = struct {
 };
 
 /// Get information for an invite.
-/// Can be sent unauthenticated.
+/// Must be sent unauthenticated.
+///
+/// Response type:
+/// - on error: ClientRequestReply
+/// - on success: InviteInfoReply
 pub const InviteInfo = struct {
     slug: []const u8,
 
@@ -66,21 +70,33 @@ pub const InviteInfo = struct {
         };
     };
 
+    pub const Error = enum { invite_invalid, invite_expired };
+
+    pub fn replyErr(_: InviteInfo, err: Error) server.ClientRequestReply {
+        return .{
+            .origin = 0, // No origin
+            .reply_marker = marker,
+            .result = .{ .err = .{ .code = @intFromEnum(err) } },
+        };
+    }
+
     pub fn deinit(ii: InviteInfo, gpa: std.mem.Allocator) void {
         gpa.free(ii.slug);
     }
 };
 
 /// Get information for an invite.
-/// Can be sent unauthenticated.
+/// Must be sent unauthenticated.
+///
+/// Response type:
+/// - on error: ClientRequestReply
+/// - on success: HostSync
 pub const SignUp = struct {
     invite_slug: []const u8,
     username: []const u8,
     password: []const u8,
 
     pub const marker = 'S';
-    pub const serialize = proto.MakeSerializeFn(SignUp);
-    pub const deserializeAlloc = proto.MakeDeserializeAllocFn(SignUp);
     pub const protocol = struct {
         pub const sizes = struct {
             pub const invite_slug = u16;
@@ -88,6 +104,16 @@ pub const SignUp = struct {
             pub const password = u16;
         };
     };
+
+    pub const Error = enum { invite_invalid, invite_expired, username_duplicate };
+
+    pub fn replyErr(_: SignUp, err: Error) server.ClientRequestReply {
+        return .{
+            .origin = 0, // No origin
+            .reply_marker = marker,
+            .result = .{ .err = .{ .code = @intFromEnum(err) } },
+        };
+    }
 
     pub fn deinit(su: SignUp, gpa: std.mem.Allocator) void {
         gpa.free(su.invite_slug);
