@@ -46,6 +46,23 @@ pub const AuthenticateReply = struct {
     };
 };
 
+pub const InviteInfoReply = struct {
+    server_name: []const u8,
+
+    pub const marker = 'i';
+    pub const serialize = proto.MakeSerializeFn(InviteInfoReply);
+    pub const deserializeAlloc = proto.MakeDeserializeAllocFn(InviteInfoReply);
+    pub const protocol = struct {
+        pub const sizes = struct {
+            pub const server_name = u16;
+        };
+    };
+
+    pub fn deinit(iir: InviteInfoReply, gpa: std.mem.Allocator) void {
+        gpa.free(iir.server_name);
+    }
+};
+
 /// Sent by the server to a client, usually by using a convenience
 /// `reply` method from the original request. Complex requests might
 /// have a dedicated reply type.
