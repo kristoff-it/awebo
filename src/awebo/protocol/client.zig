@@ -52,6 +52,50 @@ pub const Authenticate = struct {
     }
 };
 
+/// Get information for an invite.
+/// Can be sent unauthenticated.
+pub const InviteInfo = struct {
+    slug: []const u8,
+
+    pub const marker = 'I';
+    pub const serialize = proto.MakeSerializeFn(InviteInfo);
+    pub const deserializeAlloc = proto.MakeDeserializeAllocFn(InviteInfo);
+    pub const protocol = struct {
+        pub const sizes = struct {
+            pub const slug = u16;
+        };
+    };
+
+    pub fn deinit(ii: InviteInfo, gpa: std.mem.Allocator) void {
+        gpa.free(ii.slug);
+    }
+};
+
+/// Get information for an invite.
+/// Can be sent unauthenticated.
+pub const SignUp = struct {
+    invite_slug: []const u8,
+    username: []const u8,
+    password: []const u8,
+
+    pub const marker = 'S';
+    pub const serialize = proto.MakeSerializeFn(SignUp);
+    pub const deserializeAlloc = proto.MakeDeserializeAllocFn(SignUp);
+    pub const protocol = struct {
+        pub const sizes = struct {
+            pub const invite_slug = u16;
+            pub const username = u16;
+            pub const password = u16;
+        };
+    };
+
+    pub fn deinit(su: SignUp, gpa: std.mem.Allocator) void {
+        gpa.free(su.invite_slug);
+        gpa.free(su.username);
+        gpa.free(su.password);
+    }
+};
+
 pub const CallJoin = struct {
     origin: OriginId,
     voice: Channel.Id,
