@@ -55,20 +55,7 @@ fn sendBar(core: *Core, h: *awebo.Host, c: *Channel, frozen: bool) !void {
     });
     defer in.deinit();
 
-    var enter_pressed = false;
-    for (dvui.events()) |*e| {
-        if (e.evt != .key) continue;
-
-        // The TextEntryWidget can detect when enter is pressed, but it will
-        // keep spamming it every frame the key is held down. Checking the key
-        // action prevents this.
-        if (in.enter_pressed and e.evt.key.code == .enter and e.evt.key.action == .down) {
-            enter_pressed = true and !frozen;
-            e.handled = true;
-        }
-    }
-
-    if (clicked or enter_pressed) {
+    if (clicked or in.enter_pressed) {
         const raw = std.mem.trim(u8, in.textGet(), " \t\n\r");
         if (raw.len > 0) {
             const text = try gpa.dupe(u8, raw);
