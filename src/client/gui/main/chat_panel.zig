@@ -57,16 +57,17 @@ fn sendBar(core: *Core, h: *awebo.Host, c: *Channel, frozen: bool) !void {
 
     var enter_pressed = false;
     for (dvui.events()) |*e| {
-        if (!in.matchEvent(e))
-            continue;
+        // Note that the TextEntryWidget doesn't actually consume key events,
+        // even when typing characters into them! Therefore .matchEvent() always
+        // returns false. Instead, we do the following:
+        if (e.evt != .key ) continue;
 
-        if (e.evt == .key and e.evt.key.code == .enter and e.evt.key.action == .down) {
-            e.handled = true;
+        // The TextEntryWidget can detect when enter is pressed, but it will
+        // keep spamming it every frame the key is held down. Checking the key
+        // action prevents this.
+        if (in.enter_pressed and e.evt.key.code == .enter and e.evt.key.action == .down) {
             enter_pressed = true;
-        }
-
-        if (!e.handled) {
-            in.processEvent(e);
+            e.handled = true;
         }
     }
 
