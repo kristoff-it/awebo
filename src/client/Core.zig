@@ -99,31 +99,6 @@ pub const Hosts = struct {
         };
         return gop.value_ptr;
     }
-
-    pub fn sync(
-        hosts: *@This(),
-        host_id: HostId,
-        hs: awebo.protocol.server.HostSync,
-    ) void {
-        // const id = hosts.identities.get(identity) orelse {
-        //     log.info("ignoring host sync for host we must have deleted: '{s}'", .{identity});
-        //     var hsd = hs;
-        //     hsd.deinit(gpa);
-        //     return;
-        // };
-
-        const h = hosts.get(host_id) orelse @panic("host index out of sync!");
-
-        const old_client = h.client;
-        const old_identity = h.client.identity;
-
-        h.* = hs.host;
-        h.client = old_client;
-        h.client.identity = old_identity;
-        h.client.user_id = hs.user_id;
-        h.client.connection = old_client.connection;
-        h.client.connection_status = .synced;
-    }
 };
 
 pub fn init(
@@ -256,7 +231,18 @@ fn hostConnectionUpdate(core: *Core, id: HostId, hcu: awebo.Host.ClientOnly.Conn
 fn hostSync(core: *Core, id: HostId, hs: awebo.protocol.server.HostSync) void {
     var locked = lockState(core);
     defer locked.unlock();
-    core.hosts.sync(id, hs);
+
+    if (core.hosts.get(id)) |host| {
+        const db = host.client.db;
+        db.conn.transaction() catch db.fatal(@src());
+        host.sync(core.gpa, &hs.host, hs.user_id);
+        db.conn.commit() catch db.fatal(@src());
+    } else {
+        // Not considering this a programming error because it seems possible for
+        // a message to be stuck in the queue while this host is being deleted by the user.
+        log.debug("received update for host (id={}) that doesn't exist, dropping it", .{id});
+        hs.deinit(core.gpa);
+    }
 }
 
 fn channelsUpdate(core: *Core, msg: NetworkCommand.Msg) !void {
@@ -310,7 +296,10 @@ fn chatMessageNew(core: *Core, host_id: HostId, cmn: awebo.protocol.server.ChatM
 
     const h = core.hosts.get(host_id).?;
     const c = &h.channels.get(cmn.channel).?.kind.chat;
-    c.messages.add(core.gpa, cmn.msg) catch oom();
+    const db = h.client.db;
+    db.conn.transaction() catch db.fatal(@src());
+    c.messages.add(core.gpa, h.client.db, cmn.channel, cmn.msg) catch oom();
+    db.conn.commit() catch db.fatal(@src());
 
     if (cmn.origin != 0) {
         if (h.client.pending_messages.orderedRemove(cmn.origin)) {

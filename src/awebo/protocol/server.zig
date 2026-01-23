@@ -113,7 +113,7 @@ pub const HostSync = struct {
         pub const sizes = struct {};
     };
 
-    pub fn deinit(hs: *HostSync, gpa: std.mem.Allocator) void {
+    pub fn deinit(hs: *const HostSync, gpa: std.mem.Allocator) void {
         hs.host.deinit(gpa);
     }
 };

@@ -493,7 +493,7 @@ const Client = struct {
         try state.host.users.set(gpa, user);
 
         log.debug("client authenticated successfully as '{s}'", .{user.handle});
-        client.authenticated = 0;
+        client.authenticated = user.id;
         if (state.clients.head) |old_head| {
             client.next = old_head;
             old_head.prev = client;
@@ -662,12 +662,11 @@ const Client = struct {
         const new: awebo.Message = .{
             .id = state.id.new(),
             .origin = cms.origin,
-            .channel = channel.id,
             .author = client.authenticated.?,
             .text = cms.text,
         };
 
-        try channel.kind.chat.addMessage(gpa, channel.id, db, new);
+        try channel.kind.chat.messages.add(gpa, db, channel.id, new);
 
         {
             const cmn: awebo.protocol.server.ChatMessageNew = .{
@@ -765,12 +764,12 @@ var ___state: struct {
         var latest_id: u64 = 0;
 
         const user_limits = blk: {
-            var r = db.conn.row("SELECT COUNT(*), MAX(id), MAX(updated) FROM users", .{}) catch db.fatal(@src());
+            var r = db.conn.row("SELECT COUNT(*), MAX(id) FROM users", .{}) catch db.fatal(@src());
             defer r.?.deinit();
 
             const user_count: usize = @intCast(r.?.int(0));
 
-            latest_id = @intCast(@max(latest_id, r.?.nullableInt(1) orelse 0, r.?.nullableInt(2) orelse 0));
+            latest_id = @intCast(@max(latest_id, r.?.nullableInt(1) orelse 0));
 
             var user_limits: std.ArrayList(RateLimiter) = .empty;
 
@@ -783,7 +782,7 @@ var ___state: struct {
         const settings = blk: {
             var settings: Settings = undefined;
 
-            var rows = db.rows("SELECT key, value FROM settings", .{}) catch db.fatal(@src());
+            var rows = db.rows("SELECT key, value FROM host", .{}) catch db.fatal(@src());
             defer rows.deinit();
 
             outer: while (rows.next()) |r| {
@@ -805,10 +804,10 @@ var ___state: struct {
         const host: awebo.Host = host: {
             const channels = blk: {
                 {
-                    var r = db.conn.row("SELECT MAX(created), MAX(updated) FROM channels", .{}) catch db.fatal(@src());
+                    var r = db.conn.row("SELECT MAX(updated) FROM channels", .{}) catch db.fatal(@src());
                     defer r.?.deinit();
 
-                    latest_id = @intCast(@max(latest_id, r.?.nullableInt(0) orelse 0, r.?.nullableInt(1) orelse 0));
+                    latest_id = @intCast(@max(latest_id, r.?.nullableInt(0) orelse 0));
                 }
                 {
                     var r = db.conn.row("SELECT MAX(id), MAX(updated) FROM messages", .{}) catch db.fatal(@src());
@@ -848,7 +847,6 @@ var ___state: struct {
                             const msg: awebo.Message = .{
                                 .id = @intCast(m.int(.id)),
                                 .origin = @intCast(m.int(.origin)),
-                                .channel = channel.id,
                                 .author = @intCast(m.int(.author)),
                                 .text = try m.text(gpa, .body),
                             };

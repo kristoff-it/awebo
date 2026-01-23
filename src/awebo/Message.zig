@@ -8,7 +8,6 @@ pub const Id = u64;
 
 id: Id,
 origin: Id,
-channel: Channel.Id,
 author: User.Id,
 text: []const u8,
 
@@ -42,7 +41,7 @@ pub fn parseAlloc(gpa: std.mem.Allocator, r: anytype) !Message {
 }
 
 pub fn format(msg: *const Message, w: *Io.Writer) !void {
-    try w.print("Message(id: {} origin: {} author: {} channel: {} text: '{s}')", .{
-        msg.id, msg.origin, msg.author, msg.channel, msg.text,
+    try w.print("Message(id: {} origin: {} author: {}  text: '{s}')", .{
+        msg.id, msg.origin, msg.author, msg.text,
     });
 }

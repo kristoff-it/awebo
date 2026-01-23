@@ -2,6 +2,7 @@ const Host = @This();
 
 const context = @import("options").context;
 const std = @import("std");
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const proto = @import("protocol.zig");
@@ -31,6 +32,97 @@ pub const protocol = struct {
         pub const identity = u16;
     };
 };
+
+pub fn deinit(hs: *const Host, gpa: std.mem.Allocator) void {
+    gpa.free(hs.name);
+    gpa.free(hs.logo);
+    hs.users.deinit(gpa);
+    hs.channels.deinit(gpa);
+}
+
+pub fn sync(host: *Host, gpa: Allocator, delta: *const Host, user_id: User.Id) void {
+    if (context != .client) @compileError("client only");
+
+    host.client.user_id = user_id;
+    host.client.connection_status = .synced;
+
+    const db = host.client.db;
+
+    {
+        gpa.free(host.name);
+        host.name = delta.name;
+
+        const query =
+            \\INSERT INTO host(key, value) VALUES ('name', ?1)
+            \\ON CONFLICT(key) DO UPDATE SET value = ?1
+        ;
+
+        db.conn.exec(query, .{host.name}) catch db.fatal(@src());
+    }
+    {
+        const query =
+            \\INSERT INTO users(id, created, updated, invited_by, power, handle, display_name, avatar)
+            \\VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            \\ON CONFLICT(id) DO UPDATE
+            \\SET (created, updated, invited_by, power, handle, display_name, avatar)
+            \\ = (?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            \\ON CONFLICT(handle) DO UPDATE
+            \\SET (created, updated, invited_by, power, handle, display_name, avatar)
+            \\ = (?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        ;
+
+        for (delta.users.items.values()) |new_user| {
+            if (host.users.get(new_user.id)) |u| {
+                u.deinit(gpa);
+                u.* = new_user;
+            } else {
+                host.users.set(gpa, new_user) catch @panic("oom");
+            }
+
+            std.log.debug("upsert {f}", .{new_user});
+
+            db.conn.exec(query, .{
+                new_user.id,
+                0, // u.created,
+                0, //u.updated,
+                new_user.invited_by,
+                @intFromEnum(new_user.power),
+                new_user.handle,
+                new_user.display_name,
+                "",
+            }) catch db.fatal(@src());
+        }
+    }
+
+    {
+        const query =
+            \\INSERT INTO channels(id, updated, section, sort, name, kind, privacy)
+            \\VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            \\ON CONFLICT(id) DO UPDATE
+            \\SET (updated, section, sort, name, kind, privacy)
+            \\ = (?2, ?3, ?4, ?5, ?6, ?7)
+        ;
+
+        for (delta.channels.items.values()) |new_ch| {
+            if (host.channels.get(new_ch.id)) |ch| {
+                assert(@as(Channel.Kind.Enum, ch.kind) == new_ch.kind);
+                ch.sync(gpa, db, &new_ch);
+            } else {
+                host.channels.set(gpa, new_ch) catch @panic("oom");
+            }
+
+            db.conn.exec(query, .{
+                new_ch.id,
+                0, // ch.updated,
+                null, // ch.section,
+                0, // ch.sort,
+                new_ch.name,
+                @intFromEnum(new_ch.kind),
+                @intFromEnum(new_ch.privacy),
+            }) catch db.fatal(@src());
+        }
+    }
+}
 
 pub const ClientOnly = struct {
     const network = @import("../client/Core/network.zig");
@@ -77,13 +169,6 @@ pub const ClientOnly = struct {
     };
 };
 
-pub fn deinit(hs: *Host, gpa: std.mem.Allocator) void {
-    gpa.free(hs.name);
-    gpa.free(hs.logo);
-    hs.users.deinit(gpa);
-    hs.channels.deinit(gpa);
-}
-
 pub const Users = struct {
     items: std.AutoArrayHashMapUnmanaged(User.Id, User) = .{},
     indexes: struct {
@@ -113,19 +198,26 @@ pub const Users = struct {
         }
     };
 
-    pub fn deinit(u: *Users, gpa: std.mem.Allocator) void {
+    pub fn deinit(u: *const Users, gpa: std.mem.Allocator) void {
         for (u.items.values()) |user| user.deinit(gpa);
-        u.items.deinit(gpa);
-        u.indexes.handle.deinit(gpa);
+        @constCast(&u.items).deinit(gpa);
+        @constCast(&u.indexes.handle).deinit(gpa);
     }
 
     pub fn set(u: *Users, gpa: std.mem.Allocator, user: User) !void {
         const gop = try u.items.getOrPut(gpa, user.id);
-        if (!gop.found_existing) {
-            gop.value_ptr.* = user;
+        if (gop.found_existing) {
+            const new_handle = std.mem.eql(u8, user.handle, gop.value_ptr.handle);
+            if (new_handle) {
+                assert(u.indexes.handle.remove(gop.value_ptr.handle));
+                try u.indexes.handle.put(gpa, user.handle, user.id);
+            }
+            gop.value_ptr.deinit(gpa);
+        } else {
+            try u.indexes.handle.put(gpa, user.handle, user.id);
         }
 
-        try u.indexes.handle.put(gpa, user.handle, user.id);
+        gop.value_ptr.* = user;
     }
 
     pub fn get(u: Users, id: User.Id) ?*User {
@@ -171,11 +263,11 @@ pub const Channels = struct {
         }
     };
 
-    pub fn deinit(c: *@This(), gpa: std.mem.Allocator) void {
+    pub fn deinit(c: *const @This(), gpa: std.mem.Allocator) void {
         var it = c.items.iterator();
         while (it.next()) |kv| kv.value_ptr.deinit(gpa);
-        c.items.deinit(gpa);
-        c.indexes.name.deinit(gpa);
+        @constCast(&c.items).deinit(gpa);
+        @constCast(&c.indexes.name).deinit(gpa);
     }
 
     pub const create: fn (
@@ -209,11 +301,18 @@ pub const Channels = struct {
 
     pub fn set(u: *@This(), gpa: std.mem.Allocator, channel: Channel) !void {
         const gop = try u.items.getOrPut(gpa, channel.id);
-        if (!gop.found_existing) {
-            gop.value_ptr.* = channel;
+        if (gop.found_existing) {
+            const new_name = std.mem.eql(u8, channel.name, gop.value_ptr.name);
+            if (new_name) {
+                assert(u.indexes.name.remove(gop.value_ptr.name));
+                try u.indexes.name.put(gpa, channel.name, channel.id);
+            }
+            gop.value_ptr.deinit(gpa);
+        } else {
+            try u.indexes.name.put(gpa, channel.name, channel.id);
         }
 
-        try u.indexes.name.put(gpa, channel.name, channel.id);
+        gop.value_ptr.* = channel;
     }
 
     pub fn get(u: @This(), id: Channel.Id) ?*Channel {
