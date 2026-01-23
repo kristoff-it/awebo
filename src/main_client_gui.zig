@@ -73,14 +73,21 @@ pub const App = struct {
     in_progress_host_join: ?Core.ui.FirstConnectionStatus = null,
     show_add_host: bool = false,
     err_msg: ?[]const u8 = null,
-    environ: std.process.Environ.Map,
+    environ: *std.process.Environ.Map,
 
     fn init(app: *App, window: *dvui.Window) void {
         const io = window.io;
         const gpa = window.gpa;
 
+        var empty_environ: std.process.Environ.Map = .init(gpa);
+        var environ = &empty_environ;
         if (dvui.App.main_init) |mi| {
-            var it: std.process.Args.Iterator = .init(mi.minimal.args);
+            environ = mi.environ_map;
+
+            var it = std.process.Args.Iterator.initAllocator(mi.minimal.args, gpa) catch {
+                fatal("unable to allocate cli arguments", .{});
+            };
+
             while (it.next()) |arg| {
                 log.debug("arg: {s}", .{arg});
             }
@@ -90,8 +97,8 @@ pub const App = struct {
             .active_screen = .main,
             .window = window,
             .command_queue_buffer = undefined,
-            .environ = .init(gpa), // TODO: get from dvui
-            .core = .init(gpa, io, &app.environ, refresh, &app.command_queue_buffer),
+            .environ = environ, // TODO: get from dvui
+            .core = .init(gpa, io, environ, refresh, &app.command_queue_buffer),
             .core_future = io.concurrent(Core.run, .{&app.core}) catch |err| {
                 std.process.fatal("unable to start awebo client core: {t}", .{err});
             },
@@ -182,4 +189,10 @@ fn loadingFrame() !dvui.App.Result {
         .font = .theme(.title),
     });
     return .ok;
+}
+
+fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
+    std.debug.print("fatal error: " ++ fmt ++ "\n", args);
+    if (builtin.mode == .Debug) @breakpoint();
+    std.process.exit(1);
 }
