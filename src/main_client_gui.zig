@@ -78,6 +78,14 @@ pub const App = struct {
     fn init(app: *App, window: *dvui.Window) void {
         const io = window.io;
         const gpa = window.gpa;
+
+        if (dvui.App.main_init) |mi| {
+            var it: std.process.Args.Iterator = .init(mi.minimal.args);
+            while (it.next()) |arg| {
+                log.debug("arg: {s}", .{arg});
+            }
+        }
+
         app.* = .{
             .active_screen = .main,
             .window = window,
