@@ -13,34 +13,64 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const slow = b.option(
+        bool,
+        "slow",
+        "(server option) add 1s delay to most operations",
+    ) orelse false;
+
+    const echo = b.option(
+        bool,
+        "echo",
+        "(server option) echo a client's audio back to them",
+    ) orelse false;
+
+    const server_version = b.option(
+        []const u8,
+        "override-version",
+        "Overrides the version of awebo",
+    ) orelse zon.version;
+
+    const client_version = b.option(
+        []const u8,
+        "override-client-version",
+        "Overrides the client version of awebo",
+    ) orelse zon.version;
+
+    const server = setupServer(b, target, optimize, slow, echo, server_version);
+    const gui = setupGui(b, target, optimize);
+    const tui = setupTui(b, target, optimize, client_version);
+
+    const server_step = b.step("server", "Launch the server executable");
+    runArtifact(b, server_step, server);
+
+    const gui_step = b.step("gui", "Launch the GUI client");
+    runArtifact(b, gui_step, gui);
+
+    const tui_step = b.step("tui", "Launch the TUI client");
+    runArtifact(b, tui_step, tui);
+
+    const test_step = b.step("test", "run tests");
+    // setupTest(b, target, optimize, check, zqlite, known_folders);
+
+    const ci_step = b.step("ci", "build for all platforms and then run all tests");
+    setupCi(b, ci_step);
+    ci_step.dependOn(test_step);
+
     const check = b.step("check", "check everything");
-
-    const known_folders = b.dependency("known_folders", .{
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const zqlite = b.dependency("zqlite", .{
-        .target = target,
-        .optimize = optimize,
-    });
-
-    setupServer(b, target, optimize, check, zqlite, known_folders);
-    setupClientGui(b, target, optimize, check, zqlite, known_folders);
-    setupClientTui(b, target, optimize, check, zqlite, known_folders);
-
-    // Here for CI, add dependencies on tests later
-    _ = b.step("test", "");
+    check.dependOn(&server.step);
+    check.dependOn(&gui.step);
+    check.dependOn(&tui.step);
 }
 
 pub fn setupServer(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    check: *std.Build.Step,
-    zqlite: *std.Build.Dependency,
-    folders: *std.Build.Dependency,
-) void {
+    slow: bool,
+    echo: bool,
+    version: []const u8,
+) *std.Build.Step.Compile {
     const server = b.addExecutable(.{
         .name = "awebo-server",
         .root_module = b.createModule(.{
@@ -50,23 +80,21 @@ pub fn setupServer(
         }),
     });
 
+    const folders = b.dependency("known_folders", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const zqlite = b.dependency("zqlite", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const options = b.addOptions();
     options.addOption(Context, "context", .server);
-    options.addOption(bool, "slow", b.option(
-        bool,
-        "slow",
-        "(server option) add 1s delay to most operations",
-    ) orelse false);
-    options.addOption(bool, "echo", b.option(
-        bool,
-        "echo",
-        "(server option) echo a client's audio back to them",
-    ) orelse false);
-    options.addOption([]const u8, "version", b.option(
-        []const u8,
-        "override-version",
-        "Overrides the version of awebo",
-    ) orelse zon.version);
+    options.addOption(bool, "slow", slow);
+    options.addOption(bool, "echo", echo);
+    options.addOption([]const u8, "version", version);
 
     server.root_module.addOptions("options", options);
     server.root_module.addImport("folders", folders.module("known-folders"));
@@ -75,28 +103,15 @@ pub fn setupServer(
     const install = b.addInstallArtifact(server, .{});
     b.getInstallStep().dependOn(&install.step);
 
-    const serve_cmd = b.addRunArtifact(server);
-
-    serve_cmd.step.dependOn(&install.step);
-
-    if (b.args) |args| {
-        serve_cmd.addArgs(args);
-    }
-
-    const serve_step = b.step("server", "Launch the server executable");
-    serve_step.dependOn(&serve_cmd.step);
-
-    check.dependOn(&server.step);
+    b.installArtifact(server);
+    return server;
 }
 
-pub fn setupClientGui(
+pub fn setupGui(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    check: *std.Build.Step,
-    zqlite: *std.Build.Dependency,
-    folders: *std.Build.Dependency,
-) void {
+) *std.Build.Step.Compile {
     const dvui = b.dependency("dvui", .{
         .target = target,
         .optimize = optimize,
@@ -122,6 +137,16 @@ pub fn setupClientGui(
         .optimize = optimize,
     });
 
+    const folders = b.dependency("known_folders", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const zqlite = b.dependency("zqlite", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const options = b.addOptions();
     options.addOption(Context, "context", .client);
     client.root_module.addOptions("options", options);
@@ -137,30 +162,16 @@ pub fn setupClientGui(
         }
     }
 
-    const install = b.addInstallArtifact(client, .{});
-    b.getInstallStep().dependOn(&install.step);
-
-    const run_cmd = b.addRunArtifact(client);
-    run_cmd.step.dependOn(&install.step);
-
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
-
-    const run_step = b.step("gui", "Launch the GUI client");
-    run_step.dependOn(&run_cmd.step);
-
-    check.dependOn(&client.step);
+    b.installArtifact(client);
+    return client;
 }
 
-pub fn setupClientTui(
+pub fn setupTui(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    check: *std.Build.Step,
-    zqlite: *std.Build.Dependency,
-    folders: *std.Build.Dependency,
-) void {
+    version: []const u8,
+) *std.Build.Step.Compile {
     const vaxis = b.dependency("vaxis", .{
         .target = target,
         .optimize = optimize,
@@ -185,13 +196,19 @@ pub fn setupClientTui(
         .optimize = optimize,
     });
 
+    const folders = b.dependency("known_folders", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const zqlite = b.dependency("zqlite", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const options = b.addOptions();
     options.addOption(Context, "context", .client);
-    options.addOption([]const u8, "version", b.option(
-        []const u8,
-        "override-client-version",
-        "Overrides the client version of awebo",
-    ) orelse zon.version);
+    options.addOption([]const u8, "version", version);
     client.root_module.addOptions("options", options);
     client.root_module.addImport("vaxis", vaxis.module("vaxis"));
     client.root_module.addImport("folders", folders.module("known-folders"));
@@ -204,20 +221,31 @@ pub fn setupClientTui(
         }
     }
 
-    const install = b.addInstallArtifact(client, .{});
-    b.getInstallStep().dependOn(&install.step);
+    b.installArtifact(client);
+    return client;
+}
 
-    const run_cmd = b.addRunArtifact(client);
-    run_cmd.step.dependOn(&install.step);
+pub fn setupCi(b: *std.Build, step: *std.Build.Step) void {
+    const targets: []const std.Target.Query = &.{
+        // .{ .cpu_arch = .aarch64, .os_tag = .macos },
+        .{ .cpu_arch = .aarch64, .os_tag = .linux },
+        .{ .cpu_arch = .x86_64, .os_tag = .linux },
+        .{ .cpu_arch = .x86_64, .os_tag = .windows },
+        // .{ .cpu_arch = .aarch64, .os_tag = .windows },
+    };
 
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
+    for (targets) |t| {
+        const target = b.resolveTargetQuery(t);
+        const optimize = .Debug;
+
+        const server = setupServer(b, target, optimize, false, false, zon.version);
+        const gui = setupGui(b, target, optimize);
+        const tui = setupTui(b, target, optimize, zon.version);
+
+        step.dependOn(&server.step);
+        step.dependOn(&gui.step);
+        step.dependOn(&tui.step);
     }
-
-    const run_step = b.step("tui", "Launch the TUI client");
-    run_step.dependOn(&run_cmd.step);
-
-    check.dependOn(&client.step);
 }
 
 fn addSqlite(
@@ -250,4 +278,14 @@ fn addSqlite(
         } else .{},
     });
     exe.root_module.link_libc = true;
+}
+
+fn runArtifact(b: *std.Build, step: *std.Build.Step, artifact: *std.Build.Step.Compile) void {
+    const run_cmd = b.addRunArtifact(artifact);
+    run_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_cmd.addArgs(args);
+    }
+
+    step.dependOn(&run_cmd.step);
 }

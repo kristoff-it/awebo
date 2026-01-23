@@ -17,17 +17,5 @@ jobs:
       - name: Setup Zig
         uses: https://codeberg.org/mlugg/setup-zig@v2
 
-      - name: Build native
-        run: zig build --summary all
-
-      - name: Build x86_64-linux
-        run: zig build -Dtarget=x86_64-linux --summary all
-
-      - name: Build aarch64-linux
-        run: zig build -Dtarget=aarch64-linux --summary all
-
-      - name: Build x86_64-windows
-        run: zig build -Dtarget=x86_64-windows --summary all
-
-      - name: Test
-        run: zig build test
+      - name: Build for all targets and run tests
+        run: zig build ci --summary new
