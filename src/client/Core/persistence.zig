@@ -139,15 +139,29 @@ pub fn loadImpl(core: *Core) error{OutOfMemory}!void {
     }
 
     for (core.hosts.items.values()) |*h| {
-        // const identity = h.client.identity;
-        // const id = h.client.host_id;
+        const identity = h.client.identity;
+        const username = h.client.username;
+        const password = h.client.password;
+        const id = h.client.host_id;
 
-        const path = try gpa.dupeZ(u8, h.client.identity);
-        defer gpa.free(path);
+        const db_path = try std.fmt.allocPrintSentinel(
+            gpa,
+            "{f}.db",
+            .{
+                std.fs.path.fmtJoin(&.{ cache_path, h.client.identity }),
+            },
+            0,
+        );
+        std.mem.replaceScalar(u8, db_path, ':', '_');
+        defer gpa.free(db_path);
 
-        const db: awebo.Database = .init(path, .create);
-        // db.load(h);
+        const db: awebo.Database = .init(db_path, .create);
+        db.loadHost(gpa, h);
 
+        h.client.identity = identity;
+        h.client.host_id = id;
+        h.client.username = username;
+        h.client.password = password;
         h.client.db = db;
     }
 }

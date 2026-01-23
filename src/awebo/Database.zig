@@ -12,6 +12,8 @@ const log = std.log.scoped(.db);
 
 conn: zqlite.Conn,
 
+pub const tables = @import("Database/tables.zig");
+
 pub const Mode = enum(c_int) {
     create = zqlite.OpenFlags.Create | zqlite.OpenFlags.Exclusive,
     read_write = zqlite.OpenFlags.ReadWrite,
@@ -148,6 +150,127 @@ pub fn Rows(comptime query: []const u8) type {
     };
 }
 
+pub const loadHost = switch (context) {
+    .server => @compileError("client only"),
+    .client => struct {
+        fn impl(db: Database, gpa: Allocator, h: *awebo.Host) void {
+            if (isEmpty(db)) {
+                h.* = .{};
+                initialize(db);
+                return;
+            }
+
+            loadData(db, gpa, h) catch oom();
+        }
+
+        fn loadData(db: Database, gpa: Allocator, h: *awebo.Host) !void {
+            {
+                const query = "SELECT value FROM host WHERE key = 'name'";
+                const maybe_row = db.row(query, .{}) catch db.fatal(@src());
+                const r = maybe_row orelse @panic("missing server name");
+                h.name = try r.text(gpa, .value);
+            }
+
+            {
+                var rs = db.rows("SELECT id, handle, power, invited_by, display_name FROM users", .{}) catch db.fatal(@src());
+                defer rs.deinit();
+
+                var users: awebo.Host.Users = .{};
+                while (rs.next()) |r| {
+                    const user: awebo.User = .{
+                        .id = @intCast(r.int(.id)),
+                        .handle = try r.text(gpa, .handle),
+                        .power = @enumFromInt(r.int(.power)),
+                        // arst
+                        .invited_by = @intCast(r.int(.invited_by)),
+                        .display_name = try r.text(gpa, .display_name),
+                        .avatar = "arst",
+                    };
+                    log.debug("loaded {f}", .{user});
+                    users.set(gpa, user) catch oom();
+                }
+            }
+
+            {
+                var rs = db.rows("SELECT id, name, privacy, kind FROM channels", .{}) catch db.fatal(@src());
+                defer rs.deinit();
+
+                var channels: awebo.Host.Channels = .{};
+                while (rs.next()) |r| {
+                    const kind: awebo.Channel.Kind.Enum = @enumFromInt(r.int(.kind));
+                    var channel: awebo.Channel = .{
+                        .id = @intCast(r.int(.id)),
+                        .name = try r.text(gpa, .name),
+                        .privacy = @enumFromInt(r.int(.privacy)),
+                        .kind = switch (kind) {
+                            inline else => |tag| @unionInit(
+                                awebo.Channel.Kind,
+                                @tagName(tag),
+                                .{},
+                            ),
+                        },
+                    };
+
+                    if (channel.kind == .chat) {
+                        var msgs = db.rows(
+                            \\SELECT id, origin, author, body FROM messages
+                            \\WHERE channel = ? ORDER BY id DESC;
+                        ,
+                            .{channel.id},
+                        ) catch db.fatal(@src());
+                        defer msgs.deinit();
+
+                        while (msgs.next()) |m| {
+                            const msg: awebo.Message = .{
+                                .id = @intCast(m.int(.id)),
+                                .origin = @intCast(m.int(.origin)),
+                                .author = @intCast(m.int(.author)),
+                                .text = try m.text(gpa, .body),
+                            };
+                            try channel.kind.chat.messages.backfill(gpa, msg);
+                            log.debug("loaded chat message: {f}", .{msg});
+                        }
+                    }
+
+                    try channels.set(gpa, channel);
+                    log.debug("loaded {f}", .{channel});
+                }
+            }
+        }
+
+        fn isEmpty(db: Database) bool {
+            const query =
+                \\SELECT name FROM sqlite_master 
+                \\WHERE type='table' AND name='host';
+            ;
+
+            const r = db.row(query, .{}) catch unreachable;
+            return r == null;
+        }
+
+        fn initialize(db: Database) void {
+            inline for (comptime std.meta.declarations(tables)) |d| {
+                const maybe_s = @field(tables, d.name);
+                const s = if (@typeInfo(@TypeOf(maybe_s)) == .optional)
+                    maybe_s orelse continue
+                else
+                    maybe_s;
+
+                inline for (s, 0..) |maybe_q, i| {
+                    const q = if (@typeInfo(@TypeOf(maybe_q)) == .optional)
+                        maybe_q orelse continue
+                    else
+                        maybe_q;
+                    db.conn.execNoArgs(q) catch {
+                        log.err("while processing query '{s}' idx {} ", .{ d.name, i });
+                        db.fatal(@src());
+                    };
+                }
+            }
+        }
+    }.impl,
+};
+
 /// Returns a user given its username and password.
 /// Validation logic is part of this function to make efficient use of the memory returned from sqlite,
 /// which becomes invalid as soon as the relative `Row` is deinited.
@@ -163,7 +286,7 @@ else
             username: []const u8,
             password: []const u8,
         ) error{ NotFound, Password }!awebo.User {
-            const maybe_pswd_row = db.row("SELECT pswd_hash FROM users WHERE handle = ?", .{
+            const maybe_pswd_row = db.row("SELECT pswd_hash, handle FROM users JOIN passwords ON users.id == passwords.id WHERE handle = ?", .{
                 username,
             }) catch db.fatal(@src());
             const pswd_row = maybe_pswd_row orelse {
@@ -180,9 +303,10 @@ else
                 else => fatalErr(err),
             };
 
-            const maybe_row = db.row("SELECT id, display_name, power, avatar FROM users WHERE handle = ?", .{
-                username,
-            }) catch db.fatal(@src());
+            const maybe_row = db.row(
+                \\SELECT id, display_name, power, invited_by, avatar FROM users
+                \\WHERE handle = ?;
+            , .{username}) catch db.fatal(@src());
             const user_row = maybe_row orelse return error.NotFound;
             defer user_row.deinit();
 
@@ -192,6 +316,7 @@ else
                 .display_name = user_row.text(gpa, .display_name) catch oom(),
                 .avatar = user_row.text(gpa, .avatar) catch oom(),
                 .handle = gpa.dupe(u8, username) catch oom(),
+                .invited_by = @intCast(user_row.int(.invited_by)),
                 .server = .{
                     .pswd_hash = gpa.dupe(u8, pswd_hash) catch oom(),
                 },

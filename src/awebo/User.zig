@@ -1,6 +1,7 @@
 const User = @This();
 
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const context = @import("options").context;
 
@@ -11,10 +12,13 @@ const context = @import("options").context;
 pub const Id = u32;
 
 id: Id,
+created: u32 = 0,
+updated: u32 = 0,
+invited_by: Id,
+power: Power,
 handle: []const u8,
 display_name: []const u8,
 avatar: []const u8,
-power: Power,
 server: switch (context) {
     .server => ServerOnly,
     .client => struct {
@@ -69,4 +73,11 @@ pub fn deinit(u: User, gpa: Allocator) void {
         .client => {},
         .server => u.server.deinit(gpa),
     }
+}
+
+pub fn format(user: *const User, w: *Io.Writer) !void {
+    try w.print(
+        "User(id: {} power: {} invited_by: {} handle: '{s}' display_name: '{s}')",
+        .{ user.id, user.power, user.invited_by, user.handle, user.display_name },
+    );
 }

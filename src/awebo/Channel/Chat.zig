@@ -57,10 +57,16 @@ const MessageWindow = struct {
         mw.indexes.id.deinit(gpa);
     }
 
-    pub fn add(mw: *MessageWindow, gpa: std.mem.Allocator, msg: Message) !void {
+    pub fn add(
+        mw: *MessageWindow,
+        gpa: std.mem.Allocator,
+        db: Database,
+        chat_id: Channel.Id,
+        msg: Message,
+    ) !void {
         const gop = try mw.indexes.id.getOrPut(gpa, msg.id);
         if (!gop.found_existing) {
-            gop.value_ptr.* = mw.pushNew(gpa, msg);
+            gop.value_ptr.* = mw.pushNew(gpa, db, chat_id, msg);
         }
     }
 
@@ -99,11 +105,31 @@ const MessageWindow = struct {
         return &mw.items[mw.indexes.id.get(id) orelse return null];
     }
 
-    fn pushNew(mw: *MessageWindow, gpa: Allocator, msg: Message) usize {
+    fn pushNew(
+        mw: *MessageWindow,
+        gpa: Allocator,
+        db: Database,
+        chat_id: Channel.Id,
+        msg: Message,
+    ) usize {
         const tail_w: u32 = mw.tail;
         const idx: Channel.WindowSize = @intCast(@mod(tail_w + mw.len, Channel.window_size));
 
+        const query =
+            \\INSERT INTO messages (id, origin, channel, author, body, reactions) VALUES
+            \\  (?, ?, ?, ?, ?, ?)
+            \\;
+        ;
+
+        log.debug("adding msg author {} chat_id {}", .{ msg.author, chat_id });
+
+        db.conn.exec(query, .{ msg.id, msg.origin, chat_id, msg.author, msg.text, "" }) catch {
+            db.fatal(@src());
+        };
+
         if (idx == mw.tail and mw.len == Channel.window_size) {
+            const delete_query = "DELETE FROM messages WHERE id = ?";
+            db.conn.exec(delete_query, .{mw.buffer[idx].id}) catch db.fatal(@src());
             mw.buffer[idx].deinit(gpa);
             mw.tail +%= 1;
         } else {
@@ -132,29 +158,47 @@ const MessageWindow = struct {
         const idx: Channel.WindowSize = mw.tail +% slot_t;
         return &mw.buffer[idx];
     }
+
+    // pub fn load(mw: *MessageWindow, chat_id: Channel.Id, db: Database) !void {}
 };
 
 pub fn deinit(c: *Chat, gpa: std.mem.Allocator) void {
     c.messages.deinit(gpa);
 }
 
-// -- Server only functions
+/// Synchronizes messages in bulk.
+pub fn sync(
+    chat: *Chat,
+    gpa: Allocator,
+    db: Database,
+    chat_id: Channel.Id,
+    new_kind: *const Channel.Kind,
+) void {
+    if (context != .client) @compileError("client only");
 
-pub const addMessage = switch (context) {
-    .client => @compileError("server only"),
-    .server => struct {
-        fn impl(chat: *Chat, gpa: Allocator, chat_id: Channel.Id, db: Database, msg: Message) !void {
-            const query =
-                \\INSERT INTO messages (id, origin, channel, author, body, reactions) VALUES
-                \\  (?, ?, ?, ?, ?, ?)
-                \\;
-            ;
+    const new_chat = new_kind.chat;
 
-            db.conn.exec(query, .{ msg.id, msg.origin, chat_id, msg.author, msg.text, "" }) catch {
-                db.fatal(@src());
-            };
+    const slices = new_chat.messages.slices();
+    for (slices) |s| for (s) |message| {
+        chat.messages.add(gpa, db, chat_id, message) catch @panic("oom");
+    };
 
-            try chat.messages.add(gpa, msg);
-        }
-    }.impl,
-};
+    // const msg_query =
+    //     \\INSERT INTO messages(id, origin, updated, channel, author, body)
+    //     \\VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+    //     \\ON CONFLICT(id) DO UPDATE
+    //     \\SET (origin, updated, channel, author, body)
+    //     \\ = (?2, ?3, ?4, ?5, ?6)
+    // ;
+
+    // for (messages) |slice| for (slice) |m| {
+    //     db.conn.exec(msg_query, .{
+    //         m.id,
+    //         m.origin,
+    //         0, //  m.updated,
+    //         chat_id,
+    //         m.author,
+    //         m.text,
+    //     }) catch db.fatal(@src());
+    // };
+}
