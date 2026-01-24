@@ -38,8 +38,13 @@ pub fn build(b: *std.Build) void {
     ) orelse zon.version;
 
     const server = setupServer(b, target, optimize, slow, echo, server_version);
+    b.installArtifact(server);
+
     const gui = setupGui(b, target, optimize);
+    b.installArtifact(gui);
+
     const tui = setupTui(b, target, optimize, client_version);
+    b.installArtifact(tui);
 
     const server_step = b.step("server", "Launch the server executable");
     runArtifact(b, server_step, server);
@@ -100,10 +105,6 @@ pub fn setupServer(
     server.root_module.addImport("folders", folders.module("known-folders"));
     addSqlite(server, zqlite, .server);
 
-    const install = b.addInstallArtifact(server, .{});
-    b.getInstallStep().dependOn(&install.step);
-
-    b.installArtifact(server);
     return server;
 }
 
@@ -162,7 +163,6 @@ pub fn setupGui(
         }
     }
 
-    b.installArtifact(client);
     return client;
 }
 
@@ -221,7 +221,6 @@ pub fn setupTui(
         }
     }
 
-    b.installArtifact(client);
     return client;
 }
 
