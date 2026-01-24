@@ -49,25 +49,25 @@ pub fn init(db_path: [:0]const u8, mode: Mode) Database {
     return db;
 }
 
-// // host.users
-// {
-//     var rows = conn.rows(
-//         "SELECT id, handle, display_name, avatar FROM users",
-//         .{},
-//     ) catch fatalDb(conn);
-//     defer rows.deinit();
-
-//     while (rows.next()) |row| {
-//         const user: awebo.User = .{
-//             .id = @intCast(row.get(i64, 0)),
-//             .handle = row.text(1),
-//             .display_name = row.text(2),
-//             .avatar = row.blob(3),
-//         };
-//         try host.users.set(gpa, user);
-//         log.debug("loaded user: {any}", .{user});
-//     }
-// }
+pub fn createSchema(db: Database) void {
+    inline for (comptime std.meta.declarations(awebo.Database.tables)) |d| {
+        const maybe_s = @field(awebo.Database.tables, d.name);
+        const s = if (@typeInfo(@TypeOf(maybe_s)) == .optional)
+            maybe_s orelse continue
+        else
+            maybe_s;
+        inline for (s, 0..) |maybe_q, i| {
+            const q = if (@typeInfo(@TypeOf(maybe_q)) == .optional)
+                maybe_q orelse continue
+            else
+                maybe_q;
+            db.conn.execNoArgs(q) catch {
+                log.err("while processing query '{s}' idx {} ", .{ d.name, i });
+                db.fatal(@src());
+            };
+        }
+    }
+}
 
 /// See docs for `rows`
 pub fn row(db: Database, comptime query: []const u8, args: anytype) !?Rows(query).Row {
@@ -156,7 +156,7 @@ pub const loadHost = switch (context) {
         fn impl(db: Database, gpa: Allocator, h: *awebo.Host) void {
             if (isEmpty(db)) {
                 h.* = .{};
-                initialize(db);
+                db.createSchema();
                 return;
             }
 
@@ -246,27 +246,6 @@ pub const loadHost = switch (context) {
 
             const r = db.row(query, .{}) catch unreachable;
             return r == null;
-        }
-
-        fn initialize(db: Database) void {
-            inline for (comptime std.meta.declarations(tables)) |d| {
-                const maybe_s = @field(tables, d.name);
-                const s = if (@typeInfo(@TypeOf(maybe_s)) == .optional)
-                    maybe_s orelse continue
-                else
-                    maybe_s;
-
-                inline for (s, 0..) |maybe_q, i| {
-                    const q = if (@typeInfo(@TypeOf(maybe_q)) == .optional)
-                        maybe_q orelse continue
-                    else
-                        maybe_q;
-                    db.conn.execNoArgs(q) catch {
-                        log.err("while processing query '{s}' idx {} ", .{ d.name, i });
-                        db.fatal(@src());
-                    };
-                }
-            }
         }
     }.impl,
 };

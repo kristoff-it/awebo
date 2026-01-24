@@ -18,9 +18,7 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     const db: Database = .init(cmd.db_path, .create);
     defer db.conn.close();
 
-    initSchema(db.conn) catch |err| {
-        fatal("unable to initialize database: {t}", .{err});
-    };
+    db.createSchema();
 
     try seed(io, gpa, cmd, db.conn);
 }
@@ -113,7 +111,8 @@ fn tableInfo(arena: Allocator, conn: zqlite.Conn, table_name: []const u8) !Table
     return table_info;
 }
 
-fn getTables(arena: Allocator, conn: zqlite.Conn) !TableMap {
+fn getTables(arena: Allocator, db: awebo.Database) !TableMap {
+    const conn = db.conn;
     var rows = try conn.rows(
         \\SELECT name, sql FROM sqlite_schema
         \\WHERE type = 'table' AND name != 'sqlite_sequence'
@@ -220,14 +219,14 @@ pub fn migrateSchema(gpa: Allocator, conn: zqlite.Conn) !void {
     const arena = arena_alloc.allocator();
 
     log.debug("creating pristine", .{});
-    const pristine: zqlite.Conn = try .init(
+    const pristine: awebo.Database = try .init(
         ":memory:",
         @intFromEnum(Database.Mode.create) | zqlite.OpenFlags.EXResCode,
     );
     defer pristine.close();
 
     log.debug("pristine init schema", .{});
-    try initSchema(pristine);
+    try pristine.createSchema();
 
     var changes_made = false;
 
@@ -398,26 +397,6 @@ pub fn migrateSchema(gpa: Allocator, conn: zqlite.Conn) !void {
 
     if (!changes_made)
         log.info("No changes made to DB schema", .{});
-}
-
-fn initSchema(conn: zqlite.Conn) !void {
-    inline for (comptime std.meta.declarations(awebo.Database.tables)) |d| {
-        const maybe_s = @field(awebo.Database.tables, d.name);
-        const s = if (@typeInfo(@TypeOf(maybe_s)) == .optional)
-            maybe_s orelse continue
-        else
-            maybe_s;
-        inline for (s, 0..) |maybe_q, i| {
-            const q = if (@typeInfo(@TypeOf(maybe_q)) == .optional)
-                maybe_q orelse continue
-            else
-                maybe_q;
-            conn.execNoArgs(q) catch {
-                log.err("while processing query '{s}' idx {} ", .{ d.name, i });
-                fatalDb(conn);
-            };
-        }
-    }
 }
 
 fn seed(io: std.Io, gpa: Allocator, cmd: Command, conn: zqlite.Conn) !void {
