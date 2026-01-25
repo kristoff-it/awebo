@@ -627,3 +627,7 @@ pub fn audioDirectional(core: *Core, direction: audio.Direction) *audio.Directio
 fn oom() noreturn {
     @panic("oom");
 }
+
+test {
+    _ = awebo;
+}

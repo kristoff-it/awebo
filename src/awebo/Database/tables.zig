@@ -1,17 +1,19 @@
 const std = @import("std");
 const context = @import("options").context;
 const awebo = @import("../../awebo.zig");
+const zqlite = @import("zqlite");
 
 /// Contains host metadata such as the name and the creation datetime.
 /// See awebo.Host
-pub const host = .{
+pub const host: Table = .{ .schema =
     \\CREATE TABLE host (
     \\  key          TEXT UNIQUE PRIMARY KEY NOT NULL,
     \\  value        NOT NULL
     \\);
 };
 
-pub const users = .{
+pub const users: Table = .{
+    .schema =
     \\CREATE TABLE users (
     \\  id             INTEGER PRIMARY KEY ASC NOT NULL,
     \\  created        DATETIME NOT NULL,
@@ -24,11 +26,14 @@ pub const users = .{
     \\  avatar
     \\);
     ,
-    \\CREATE UNIQUE INDEX users_by_handle ON users (handle);
-    ,
+    .indexes = &.{
+        \\CREATE UNIQUE INDEX users_by_handle ON users (handle);
+    },
 };
 
-pub const passwords = serverOnly(.{
+pub const passwords: Table = .{
+    .context = .server,
+    .schema =
     \\CREATE TABLE passwords (
     \\  id             REFERENCES users ON DELETE CASCADE PRIMARY KEY NOT NULL,
     \\  updated        DATETIME NOT NULL,
@@ -36,9 +41,12 @@ pub const passwords = serverOnly(.{
     \\  ip             IP NULL,
     \\  pswd_hash      TEXT NOT NULL
     \\);
-});
+    ,
+};
 
-pub const invites = serverOnly(.{
+pub const invites: Table = .{
+    .context = .server,
+    .schema =
     \\CREATE TABLE invites (
     \\  slug           TEXT PRIMARY KEY NOT NULL,
     \\  created        DATETIME NOT NULL,
@@ -49,9 +57,10 @@ pub const invites = serverOnly(.{
     \\  remaining      INTEGER NOT NULL
     \\);
     ,
-});
+};
 
-pub const roles = .{
+pub const roles: Table = .{
+    .schema =
     \\CREATE TABLE roles (
     \\  id           INTEGER PRIMARY KEY ASC AUTOINCREMENT,
     \\  updated      DATETIME NOT NULL,
@@ -62,7 +71,8 @@ pub const roles = .{
     ,
 };
 
-pub const user_roles = .{
+pub const user_roles: Table = .{
+    .schema =
     \\CREATE TABLE user_roles (
     \\  user         REFERENCES users ON DELETE CASCADE NOT NULL,
     \\  role         REFERENCES roles ON DELETE CASCADE NOT NULL,
@@ -71,7 +81,9 @@ pub const user_roles = .{
     ,
 };
 
-pub const user_permissions = serverOnly(.{
+pub const user_permissions: Table = .{
+    .context = .server,
+    .schema =
     \\CREATE TABLE user_permissions (
     \\  updated      INTEGER NOT NULL,
     \\  user         REFERENCES users ON DELETE CASCADE NOT NULL,
@@ -85,9 +97,11 @@ pub const user_permissions = serverOnly(.{
     \\  PRIMARY KEY (user, kind, resource, key)
     \\) WITHOUT ROWID;
     ,
-});
+};
 
-pub const role_permissions = serverOnly(.{
+pub const role_permissions: Table = .{
+    .context = .server,
+    .schema =
     \\CREATE TABLE role_permissions (
     \\  updated      INTEGER NOT NULL,
     \\  role         REFERENCES roles ON DELETE CASCADE NOT NULL,
@@ -101,9 +115,10 @@ pub const role_permissions = serverOnly(.{
     \\  PRIMARY KEY (role, kind, resource, key)
     \\) WITHOUT ROWID;
     ,
-});
+};
 
-pub const sections = .{
+pub const sections: Table = .{
+    .schema =
     \\CREATE TABLE sections (
     \\  id           INTEGER PRIMARY KEY ASC AUTOINCREMENT,
     \\  updated      INTEGER NOT NULL,
@@ -114,17 +129,20 @@ pub const sections = .{
     \\);
     ,
 
-    serverOnly(
-        std.fmt.comptimePrint(
-            \\CREATE TRIGGER sections_cleanup AFTER DELETE ON sections BEGIN
-            \\  DELETE FROM user_permissions WHERE kind = {0} AND resource = old.id; 
-            \\  DELETE FROM role_permissions WHERE kind = {0} AND resource = old.id; 
-            \\END;
-        , .{@intFromEnum(awebo.permissions.Kind.section)}),
-    ),
+    .server_only = .{
+        .triggers = &.{
+            std.fmt.comptimePrint(
+                \\CREATE TRIGGER sections_cleanup AFTER DELETE ON sections BEGIN
+                \\  DELETE FROM user_permissions WHERE kind = {0} AND resource = old.id; 
+                \\  DELETE FROM role_permissions WHERE kind = {0} AND resource = old.id; 
+                \\END;
+            , .{@intFromEnum(awebo.permissions.Kind.section)}),
+        },
+    },
 };
 
-pub const channels = .{
+pub const channels: Table = .{
+    .schema =
     \\CREATE TABLE channels (
     \\  id           INTEGER PRIMARY KEY ASC NOT NULL,
     \\  updated      DATETIME NOT NULL,
@@ -139,17 +157,20 @@ pub const channels = .{
     \\);
     ,
 
-    serverOnly(
-        std.fmt.comptimePrint(
-            \\CREATE TRIGGER channels_cleanup AFTER DELETE ON channels BEGIN
-            \\  DELETE FROM user_permissions WHERE kind = {0} AND resource = old.id; 
-            \\  DELETE FROM role_permissions WHERE kind = {0} AND resource = old.id; 
-            \\END;
-        , .{@intFromEnum(awebo.permissions.Kind.channel)}),
-    ),
+    .server_only = .{
+        .triggers = &.{
+            std.fmt.comptimePrint(
+                \\CREATE TRIGGER channels_cleanup AFTER DELETE ON channels BEGIN
+                \\  DELETE FROM user_permissions WHERE kind = {0} AND resource = old.id; 
+                \\  DELETE FROM role_permissions WHERE kind = {0} AND resource = old.id; 
+                \\END;
+            , .{@intFromEnum(awebo.permissions.Kind.channel)}),
+        },
+    },
 };
 
-pub const messages = .{
+pub const messages: Table = .{
+    .schema =
     \\CREATE TABLE messages (
     \\  id           INTEGER PRIMARY KEY ASC,
     \\  origin       INTEGER,
@@ -160,38 +181,45 @@ pub const messages = .{
     \\  reactions    TEXT
     \\) WITHOUT ROWID;
     ,
-    \\CREATE INDEX messages_by_channel ON messages (channel);
-    ,
-    \\CREATE INDEX messages_by_author ON messages (author);
-    ,
+    .indexes = &.{
+        \\CREATE INDEX messages_by_channel ON messages (channel);
+        ,
+        \\CREATE INDEX messages_by_author ON messages (author);
+        ,
+    },
 };
 
-pub const messages_search = serverOnly(.{
+pub const messages_search: Table = .{
+    .context = .server,
+    .schema =
     \\CREATE VIRTUAL TABLE messages_search
     \\USING fts5(channel, author, body, content=messages, content_rowid=id)
     ,
+    .triggers = &.{
+        \\CREATE TRIGGER messages_search_insert AFTER INSERT ON messages BEGIN
+        \\  INSERT INTO messages_search(rowid, channel, author, body)
+        \\  VALUES (new.id, new.channel, new.author, new.body);
+        \\END;
+        ,
 
-    \\CREATE TRIGGER messages_search_insert AFTER INSERT ON messages BEGIN
-    \\  INSERT INTO messages_search(rowid, channel, author, body)
-    \\  VALUES (new.id, new.channel, new.author, new.body);
-    \\END;
-    ,
+        \\CREATE TRIGGER messages_search_delete AFTER DELETE ON messages BEGIN
+        \\  INSERT INTO messages_search(messages_search, rowid, channel, author, body)
+        \\  VALUES ('delete', old.id, old.channel, old.author, old.body);
+        \\END;
+        ,
+        \\CREATE TRIGGER messages_search_update AFTER UPDATE ON messages BEGIN
+        \\  INSERT INTO messages_search(messages_search, rowid, channel, author, body)
+        \\  VALUES ('delete', old.id, old.channel, old.author, old.body);
+        \\
+        \\  INSERT INTO messages_search(rowid, channel, author, body)
+        \\  VALUES (new.id, new.channel, new.author, new.body);
+        \\END;
+    },
+};
 
-    \\CREATE TRIGGER messages_search_delete AFTER DELETE ON messages BEGIN
-    \\  INSERT INTO messages_search(messages_search, rowid, channel, author, body)
-    \\  VALUES ('delete', old.id, old.channel, old.author, old.body);
-    \\END;
-    ,
-    \\CREATE TRIGGER messages_search_update AFTER UPDATE ON messages BEGIN
-    \\  INSERT INTO messages_search(messages_search, rowid, channel, author, body)
-    \\  VALUES ('delete', old.id, old.channel, old.author, old.body);
-    \\
-    \\  INSERT INTO messages_search(rowid, channel, author, body)
-    \\  VALUES (new.id, new.channel, new.author, new.body);
-    \\END;
-});
-
-pub const seen = serverOnly(.{
+pub const seen: Table = .{
+    .context = .server,
+    .schema =
     \\CREATE TABLE seen (
     \\  user         REFERENCES users ON DELETE CASCADE NOT NULL,
     \\  channel      REFERENCES channels ON DELETE CASCADE NOT NULL,
@@ -200,11 +228,15 @@ pub const seen = serverOnly(.{
     \\  PRIMARY KEY (user, channel)
     \\);
     ,
-    \\CREATE INDEX seen_by_user ON seen (user);
-    ,
-});
+    .indexes = &.{
+        \\CREATE INDEX seen_by_user ON seen (user);
+        ,
+    },
+};
 
-pub const notifications = serverOnly(.{
+pub const notifications: Table = .{
+    .context = .server,
+    .schema =
     \\CREATE TABLE notifications (
     \\  id           INTEGER PRIMARY KEY ASC AUTOINCREMENT,
     \\  user         REFERENCES users ON DELETE CASCADE NOT NULL,
@@ -212,13 +244,17 @@ pub const notifications = serverOnly(.{
     \\  created      INTEGER NOT NULL
     \\);
     ,
-    \\CREATE INDEX notifications_by_user ON notifications (user);
-    ,
-    \\CREATE INDEX notifications_by_created ON notifications (created);
-    ,
-});
+    .indexes = &.{
+        \\CREATE INDEX notifications_by_user ON notifications (user);
+        ,
+        \\CREATE INDEX notifications_by_created ON notifications (created);
+        ,
+    },
+};
 
-pub const emotes = serverOnly(.{
+pub const emotes: Table = .{
+    .context = .server,
+    .schema =
     \\CREATE TABLE emotes (
     \\  id           INTEGER PRIMARY KEY ASC AUTOINCREMENT,
     \\  created      TEXT NOT NULL,
@@ -226,12 +262,24 @@ pub const emotes = serverOnly(.{
     \\  image        TEXT NOT NULL
     \\);
     ,
-    \\CREATE INDEX emotes_by_name ON emotes (name);
-});
+    .indexes = &.{
+        \\CREATE INDEX emotes_by_name ON emotes (name);
+        ,
+    },
+};
 
-fn serverOnly(sql: anytype) ?@TypeOf(sql) {
-    return switch (context) {
-        .client => null,
-        .server => sql,
-    };
+pub const Table = struct {
+    context: ?@TypeOf(context) = null,
+    schema: [:0]const u8,
+    indexes: []const [:0]const u8 = &.{},
+    triggers: []const [:0]const u8 = &.{},
+    server_only: struct {
+        triggers: []const [:0]const u8 = &.{},
+    } = .{},
+};
+
+test "test queries" {
+    const db: awebo.Database = .init(":memory:", .create);
+    defer db.close();
+    db.createSchema();
 }

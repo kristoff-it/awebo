@@ -196,3 +196,7 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     if (builtin.mode == .Debug) @breakpoint();
     std.process.exit(1);
 }
+
+test {
+    _ = Core;
+}

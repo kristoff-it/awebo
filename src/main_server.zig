@@ -4,6 +4,8 @@ const std = @import("std");
 const process = std.process;
 const Io = std.Io;
 
+const server = @import("server/cli/server.zig");
+
 pub const Resource = enum {
     server,
     user,
@@ -41,7 +43,7 @@ pub fn main(init: process.Init) !void {
         .role => @import("server/cli/role.zig").run(init.io, gpa, &it),
         .user => @import("server/cli/user.zig").run(init.io, gpa, &it),
         .message => @import("server/cli/message.zig").run(init.io, gpa, &it),
-        .server => @import("server/cli/server.zig").run(init.io, gpa, &it),
+        .server => server.run(init.io, gpa, &it),
     }
 }
 
@@ -77,4 +79,8 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
 fn exitVersion() noreturn {
     std.debug.print("{s}", .{options.version});
     std.process.exit(0);
+}
+
+test {
+    _ = server;
 }

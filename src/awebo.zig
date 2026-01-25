@@ -21,3 +21,7 @@ pub const IdGenerator = struct {
         return g.last;
     }
 };
+
+test {
+    _ = Database;
+}

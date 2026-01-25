@@ -37,13 +37,13 @@ pub fn build(b: *std.Build) void {
         "Overrides the client version of awebo",
     ) orelse zon.version;
 
-    const server = setupServer(b, target, optimize, slow, echo, server_version);
+    const server, const server_test = setupServer(b, target, optimize, slow, echo, server_version);
     b.installArtifact(server);
 
-    const gui = setupGui(b, target, optimize);
+    const gui, const gui_test = setupGui(b, target, optimize);
     b.installArtifact(gui);
 
-    const tui = setupTui(b, target, optimize, client_version);
+    const tui, const tui_test = setupTui(b, target, optimize, client_version);
     b.installArtifact(tui);
 
     const server_step = b.step("server", "Launch the server executable");
@@ -56,7 +56,9 @@ pub fn build(b: *std.Build) void {
     runArtifact(b, tui_step, tui);
 
     const test_step = b.step("test", "run tests");
-    // setupTest(b, target, optimize, check, zqlite, known_folders);
+    runArtifact(b, test_step, server_test);
+    runArtifact(b, test_step, gui_test);
+    runArtifact(b, test_step, tui_test);
 
     const ci_step = b.step("ci", "build for all platforms and then run all tests");
     setupCi(b, ci_step);
@@ -75,7 +77,7 @@ pub fn setupServer(
     slow: bool,
     echo: bool,
     version: []const u8,
-) *std.Build.Step.Compile {
+) struct { *std.Build.Step.Compile, *std.Build.Step.Compile } {
     const server = b.addExecutable(.{
         .name = "awebo-server",
         .root_module = b.createModule(.{
@@ -105,21 +107,26 @@ pub fn setupServer(
     server.root_module.addImport("folders", folders.module("known-folders"));
     addSqlite(server, zqlite, .server);
 
-    return server;
+    const server_test = b.addTest(.{
+        .name = "server-test",
+        .root_module = server.root_module,
+    });
+
+    return .{ server, server_test };
 }
 
 pub fn setupGui(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-) *std.Build.Step.Compile {
+) struct { *std.Build.Step.Compile, *std.Build.Step.Compile } {
     const dvui = b.dependency("dvui", .{
         .target = target,
         .optimize = optimize,
         .backend = .sdl3,
     });
 
-    const client = b.addExecutable(.{
+    const gui = b.addExecutable(.{
         .name = "awebo-gui",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main_client_gui.zig"),
@@ -150,20 +157,25 @@ pub fn setupGui(
 
     const options = b.addOptions();
     options.addOption(Context, "context", .client);
-    client.root_module.addOptions("options", options);
-    client.root_module.addImport("dvui", dvui.module("dvui_sdl3"));
-    client.root_module.addImport("folders", folders.module("known-folders"));
-    client.root_module.linkLibrary(opus.artifact("opus"));
-    client.root_module.linkLibrary(opus_tools.artifact("opus-tools"));
-    addSqlite(client, zqlite, .client);
+    gui.root_module.addOptions("options", options);
+    gui.root_module.addImport("dvui", dvui.module("dvui_sdl3"));
+    gui.root_module.addImport("folders", folders.module("known-folders"));
+    gui.root_module.linkLibrary(opus.artifact("opus"));
+    gui.root_module.linkLibrary(opus_tools.artifact("opus-tools"));
+    addSqlite(gui, zqlite, .client);
 
     if (target.result.os.tag == .windows) {
         if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
-            client.root_module.addImport("win32", win32_dep.module("win32"));
+            gui.root_module.addImport("win32", win32_dep.module("win32"));
         }
     }
 
-    return client;
+    const gui_test = b.addTest(.{
+        .name = "gui-test",
+        .root_module = gui.root_module,
+    });
+
+    return .{ gui, gui_test };
 }
 
 pub fn setupTui(
@@ -171,14 +183,14 @@ pub fn setupTui(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     version: []const u8,
-) *std.Build.Step.Compile {
+) struct { *std.Build.Step.Compile, *std.Build.Step.Compile } {
     const vaxis = b.dependency("vaxis", .{
         .target = target,
         .optimize = optimize,
     });
 
-    const client = b.addExecutable(.{
-        .name = "awebo",
+    const tui = b.addExecutable(.{
+        .name = "awebo-tui",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main_client_tui.zig"),
             .target = target,
@@ -209,19 +221,24 @@ pub fn setupTui(
     const options = b.addOptions();
     options.addOption(Context, "context", .client);
     options.addOption([]const u8, "version", version);
-    client.root_module.addOptions("options", options);
-    client.root_module.addImport("vaxis", vaxis.module("vaxis"));
-    client.root_module.addImport("folders", folders.module("known-folders"));
-    client.root_module.linkLibrary(opus.artifact("opus"));
-    client.root_module.linkLibrary(opus_tools.artifact("opus-tools"));
-    addSqlite(client, zqlite, .client);
+    tui.root_module.addOptions("options", options);
+    tui.root_module.addImport("vaxis", vaxis.module("vaxis"));
+    tui.root_module.addImport("folders", folders.module("known-folders"));
+    tui.root_module.linkLibrary(opus.artifact("opus"));
+    tui.root_module.linkLibrary(opus_tools.artifact("opus-tools"));
+    addSqlite(tui, zqlite, .client);
     if (target.result.os.tag == .windows) {
         if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
-            client.root_module.addImport("win32", win32_dep.module("win32"));
+            tui.root_module.addImport("win32", win32_dep.module("win32"));
         }
     }
 
-    return client;
+    const tui_test = b.addTest(.{
+        .name = "tui-test",
+        .root_module = tui.root_module,
+    });
+
+    return .{ tui, tui_test };
 }
 
 pub fn setupCi(b: *std.Build, step: *std.Build.Step) void {
@@ -237,13 +254,18 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step) void {
         const target = b.resolveTargetQuery(t);
         const optimize = .Debug;
 
-        const server = setupServer(b, target, optimize, false, false, zon.version);
-        const gui = setupGui(b, target, optimize);
-        const tui = setupTui(b, target, optimize, zon.version);
+        const server, const server_test = setupServer(b, target, optimize, false, false, zon.version);
+        const gui, const gui_test = setupGui(b, target, optimize);
+        const tui, const tui_test = setupTui(b, target, optimize, zon.version);
 
         step.dependOn(&server.step);
+        step.dependOn(&server_test.step);
+
         step.dependOn(&gui.step);
+        step.dependOn(&gui_test.step);
+
         step.dependOn(&tui.step);
+        step.dependOn(&tui_test.step);
     }
 }
 

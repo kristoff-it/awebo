@@ -14,6 +14,10 @@ conn: zqlite.Conn,
 
 pub const tables = @import("Database/tables.zig");
 
+test {
+    _ = tables;
+}
+
 pub const Mode = enum(c_int) {
     create = zqlite.OpenFlags.Create | zqlite.OpenFlags.Exclusive,
     read_write = zqlite.OpenFlags.ReadWrite,
@@ -49,22 +53,30 @@ pub fn init(db_path: [:0]const u8, mode: Mode) Database {
     return db;
 }
 
+pub fn close(db: Database) void {
+    db.conn.close();
+}
+
 pub fn createSchema(db: Database) void {
     inline for (comptime std.meta.declarations(awebo.Database.tables)) |d| {
-        const maybe_s = @field(awebo.Database.tables, d.name);
-        const s = if (@typeInfo(@TypeOf(maybe_s)) == .optional)
-            maybe_s orelse continue
-        else
-            maybe_s;
-        inline for (s, 0..) |maybe_q, i| {
-            const q = if (@typeInfo(@TypeOf(maybe_q)) == .optional)
-                maybe_q orelse continue
-            else
-                maybe_q;
-            db.conn.execNoArgs(q) catch {
-                log.err("while processing query '{s}' idx {} ", .{ d.name, i });
-                db.fatal(@src());
-            };
+        const table = @field(awebo.Database.tables, d.name);
+        if (@TypeOf(table) != awebo.Database.tables.Table) continue;
+        if (table.context) |ctx| if (ctx != context) continue;
+
+        db.conn.execNoArgs(table.schema) catch db.fatal(@src());
+
+        for (table.indexes) |index| {
+            db.conn.execNoArgs(index) catch db.fatal(@src());
+        }
+
+        for (table.triggers) |trigger| {
+            db.conn.execNoArgs(trigger) catch db.fatal(@src());
+        }
+
+        if (context == .server) {
+            for (table.server_only.triggers) |trigger| {
+                db.conn.execNoArgs(trigger) catch db.fatal(@src());
+            }
         }
     }
 }

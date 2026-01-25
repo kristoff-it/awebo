@@ -1040,3 +1040,7 @@ fn fatalHelp() noreturn {
 
     std.process.exit(1);
 }
+
+test {
+    _ = awebo;
+}
