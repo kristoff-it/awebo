@@ -11,12 +11,10 @@ const awebo = @import("../awebo.zig");
 const log = std.log.scoped(.db);
 
 conn: zqlite.Conn,
+queries: Queries,
 
 pub const tables = @import("Database/tables.zig");
-
-test {
-    _ = tables;
-}
+pub const Queries = @import("Database/Queries.zig");
 
 pub const Mode = enum(c_int) {
     create = zqlite.OpenFlags.Create | zqlite.OpenFlags.Exclusive,
@@ -34,7 +32,14 @@ pub fn init(db_path: [:0]const u8, mode: Mode) Database {
     };
     errdefer conn.close();
 
-    const db: Database = .{ .conn = conn };
+    if (isEmpty(conn)) {
+        tables.init(conn);
+    }
+
+    const db: Database = .{
+        .conn = conn,
+        .queries = .init(conn),
+    };
 
     const pragmas = switch (mode) {
         .read_only =>
@@ -57,28 +62,14 @@ pub fn close(db: Database) void {
     db.conn.close();
 }
 
-pub fn createSchema(db: Database) void {
-    inline for (comptime std.meta.declarations(awebo.Database.tables)) |d| {
-        const table = @field(awebo.Database.tables, d.name);
-        if (@TypeOf(table) != awebo.Database.tables.Table) continue;
-        if (table.context) |ctx| if (ctx != context) continue;
+fn isEmpty(conn: zqlite.Conn) bool {
+    const query =
+        \\SELECT name FROM sqlite_master 
+        \\WHERE type='table' AND name='host';
+    ;
 
-        db.conn.execNoArgs(table.schema) catch db.fatal(@src());
-
-        for (table.indexes) |index| {
-            db.conn.execNoArgs(index) catch db.fatal(@src());
-        }
-
-        for (table.triggers) |trigger| {
-            db.conn.execNoArgs(trigger) catch db.fatal(@src());
-        }
-
-        if (context == .server) {
-            for (table.server_only.triggers) |trigger| {
-                db.conn.execNoArgs(trigger) catch db.fatal(@src());
-            }
-        }
-    }
+    const r = conn.row(query, .{}) catch |err| fatalErr(err);
+    return r == null;
 }
 
 /// See docs for `rows`
@@ -101,7 +92,7 @@ pub fn Rows(comptime query: []const u8) type {
     const columns = blk: {
         var columns: []const struct { []const u8, u8 } = &.{};
 
-        var it = std.mem.tokenizeAny(u8, query, " ,=\n");
+        var it = std.mem.tokenizeAny(u8, query, " ,\n");
         if (!std.mem.eql(u8, it.next() orelse "", "SELECT")) {
             @compileError("query must start with SELECT");
         }
@@ -166,12 +157,6 @@ pub const loadHost = switch (context) {
     .server => @compileError("client only"),
     .client => struct {
         fn impl(db: Database, gpa: Allocator, h: *awebo.Host) void {
-            if (isEmpty(db)) {
-                h.* = .{};
-                db.createSchema();
-                return;
-            }
-
             loadData(db, gpa, h) catch oom();
         }
 
@@ -248,16 +233,6 @@ pub const loadHost = switch (context) {
                     log.debug("loaded {f}", .{channel});
                 }
             }
-        }
-
-        fn isEmpty(db: Database) bool {
-            const query =
-                \\SELECT name FROM sqlite_master 
-                \\WHERE type='table' AND name='host';
-            ;
-
-            const r = db.row(query, .{}) catch unreachable;
-            return r == null;
         }
     }.impl,
 };
@@ -375,4 +350,10 @@ fn fatalErr(err: anyerror) noreturn {
 
 fn oom() noreturn {
     std.process.fatal("oom", .{});
+}
+
+test "test all queries" {
+    // Initializes the database and then prepares all queries
+    const db: awebo.Database = .init(":memory:", .create);
+    defer db.close();
 }

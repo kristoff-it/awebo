@@ -33,20 +33,10 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
 
     const query = it.next() orelse fatal("missing rearch term", .{});
 
-    var conn = zqlite.open("awebo.db", zqlite.OpenFlags.EXResCode) catch |err| {
-        std.debug.print("error while loading database file: {s}\n", .{@errorName(err)});
-        std.process.exit(1);
-    };
-    errdefer conn.close();
+    const db: Database = .init("awebo.db", .read_write);
+    errdefer db.close();
 
-    const db: Database = .{ .conn = conn };
-
-    conn.execNoArgs("PRAGMA foreign_keys = true") catch db.fatal(@src());
-    conn.execNoArgs("PRAGMA journal_mode = WAL") catch db.fatal(@src());
-    conn.execNoArgs("PRAGMA synchronous = NORMAL") catch db.fatal(@src());
-    conn.execNoArgs("PRAGMA temp_store = memory") catch db.fatal(@src());
-
-    var rows = conn.rows(
+    var rows = db.conn.rows(
         \\SELECT
         \\  messages_search.author,
         \\  users.handle,

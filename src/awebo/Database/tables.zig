@@ -1,7 +1,44 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const context = @import("options").context;
 const awebo = @import("../../awebo.zig");
 const zqlite = @import("zqlite");
+
+const log = std.log.scoped(.tables);
+
+pub const Table = struct {
+    context: ?@TypeOf(context) = null,
+    schema: [:0]const u8,
+    indexes: []const [:0]const u8 = &.{},
+    triggers: []const [:0]const u8 = &.{},
+    server_only: struct {
+        triggers: []const [:0]const u8 = &.{},
+    } = .{},
+};
+
+pub fn init(conn: zqlite.Conn) void {
+    inline for (comptime std.meta.declarations(@This())) |d| {
+        const table = @field(@This(), d.name);
+        if (@TypeOf(table) != @This().Table) continue;
+        if (table.context) |ctx| if (ctx != context) continue;
+
+        conn.execNoArgs(table.schema) catch fatalDb(conn, @src());
+
+        for (table.indexes) |index| {
+            conn.execNoArgs(index) catch fatalDb(conn, @src());
+        }
+
+        for (table.triggers) |trigger| {
+            conn.execNoArgs(trigger) catch fatalDb(conn, @src());
+        }
+
+        if (context == .server) {
+            for (table.server_only.triggers) |trigger| {
+                conn.execNoArgs(trigger) catch fatalDb(conn, @src());
+            }
+        }
+    }
+}
 
 /// Contains host metadata such as the name and the creation datetime.
 /// See awebo.Host
@@ -268,18 +305,8 @@ pub const emotes: Table = .{
     },
 };
 
-pub const Table = struct {
-    context: ?@TypeOf(context) = null,
-    schema: [:0]const u8,
-    indexes: []const [:0]const u8 = &.{},
-    triggers: []const [:0]const u8 = &.{},
-    server_only: struct {
-        triggers: []const [:0]const u8 = &.{},
-    } = .{},
-};
-
-test "test queries" {
-    const db: awebo.Database = .init(":memory:", .create);
-    defer db.close();
-    db.createSchema();
+pub fn fatalDb(conn: zqlite.Conn, src: std.builtin.SourceLocation) noreturn {
+    log.err("{s}:{}: fatal db error: {s}", .{ src.file, src.line, conn.lastError() });
+    if (builtin.mode == .Debug) @breakpoint();
+    std.process.exit(1);
 }

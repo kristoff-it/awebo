@@ -18,8 +18,6 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     const db: Database = .init(cmd.db_path, .create);
     defer db.conn.close();
 
-    db.createSchema();
-
     try seed(io, gpa, cmd, db.conn);
 }
 
