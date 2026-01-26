@@ -1,3 +1,34 @@
+//!Database is an abstraction over a sqlite connection that adds
+//!comptime / test-time safety to queries.
+//!
+//!This is one of the most comptime heavy parts of awebo.
+//!
+//!When initing a Database the following happens:
+//! - The sqlite database file is opened.
+//! - A query is run to see if the database is empty
+//!   (we consider absence of a 'host' table to denote an empty server)
+//! - If the database is considered empty, then all table creation
+//!   queries are run (from Database/tables.zig).
+//! - All queries in Database/Queries.zig are prepared, which will
+//!   both act as an optimization (since we're pre-compiling them)
+//!   and will also catch most semantic errors in the query.
+//!
+//!Things to keep in mind:
+//! - Database holds Queries, which is a struct with many pointers,
+//!   (somewhat like a vtable), so you should pass around instances
+//!   of Database by pointer.
+//! - Both table queries and normal queries are defined to be
+//!   either shared or server-only. The goal is to share as much
+//!   logic between server and client, but some things do have
+//!   to be different. The metaprogramming code in Database that
+//!   wraps the sqlite connection will poduce a compile error if
+//!   you attempt to use a query that is not meant to be run in
+//!   your context (client or server).
+//! - Each non-schema query (so the ones in Queries.zig) also
+//!   defines which arguments it expects as input, which columns
+//!   it outputs, and if it's meant to produce many rows or just
+//!   one. It's important to keep this metadata in sync with the
+//!   query text as there is currently no automated veryfication.
 const Database = @This();
 
 const context = @import("options").context;
