@@ -17,6 +17,9 @@ pub const Table = struct {
 };
 
 pub fn init(conn: zqlite.Conn) void {
+    conn.transaction() catch fatalDb(conn, @src());
+    defer conn.commit() catch fatalDb(conn, @src());
+
     inline for (comptime std.meta.declarations(@This())) |d| {
         const table = @field(@This(), d.name);
         if (@TypeOf(table) != @This().Table) continue;

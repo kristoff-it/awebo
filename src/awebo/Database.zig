@@ -63,15 +63,6 @@ pub fn init(db_path: [:0]const u8, mode: Mode) Database {
     };
     errdefer conn.close();
 
-    if (isEmpty(conn)) {
-        tables.init(conn);
-    }
-
-    const db: Database = .{
-        .conn = conn,
-        .queries = .init(conn),
-    };
-
     const pragmas = switch (mode) {
         .read_only =>
         \\PRAGMA query_only = true;
@@ -84,7 +75,16 @@ pub fn init(db_path: [:0]const u8, mode: Mode) Database {
         \\PRAGMA temp_store = memory;
         ,
     };
-    conn.execNoArgs(pragmas) catch db.fatal(@src());
+    conn.execNoArgs(pragmas) catch fatalDb(conn);
+
+    if (isEmpty(conn)) {
+        tables.init(conn);
+    }
+
+    const db: Database = .{
+        .conn = conn,
+        .queries = .init(conn),
+    };
 
     return db;
 }
@@ -99,7 +99,7 @@ fn isEmpty(conn: zqlite.Conn) bool {
         \\WHERE type='table' AND name='host';
     ;
 
-    const r = conn.row(query, .{}) catch |err| fatalErr(err);
+    const r = conn.row(query, .{}) catch fatalDb(conn);
     return r == null;
 }
 
@@ -195,7 +195,10 @@ pub const loadHost = switch (context) {
             {
                 const query = "SELECT value FROM host WHERE key = 'name'";
                 const maybe_row = db.row(query, .{}) catch db.fatal(@src());
-                const r = maybe_row orelse @panic("missing server name");
+                const r = maybe_row orelse {
+                    h.* = .{};
+                    return;
+                };
                 h.name = try r.text(gpa, .value);
             }
 
@@ -369,6 +372,11 @@ else
 
 pub fn fatal(db: Database, src: std.builtin.SourceLocation) noreturn {
     log.err("{s}:{}: fatal db error: {s}", .{ src.file, src.line, db.conn.lastError() });
+    if (builtin.mode == .Debug) @breakpoint();
+    std.process.exit(1);
+}
+fn fatalDb(conn: zqlite.Conn) noreturn {
+    log.err("fatal db error: {s}", .{conn.lastError()});
     if (builtin.mode == .Debug) @breakpoint();
     std.process.exit(1);
 }
