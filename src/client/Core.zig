@@ -25,6 +25,7 @@ mutex: Io.Mutex = .init,
 failure: ?[]const u8 = null,
 /// Set to true once data has been loaded from disk.
 loaded: bool = false,
+cache_path: []const u8 = undefined,
 hosts: Hosts = .{},
 cfg: std.StringHashMapUnmanaged([]const u8) = .{},
 

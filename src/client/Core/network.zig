@@ -4,6 +4,7 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const awebo = @import("../../awebo.zig");
+const persistence = @import("../Core/persistence.zig");
 const Core = @import("../Core.zig");
 const Media = @import("../Media.zig");
 const HostView = Core.HostView;
@@ -224,6 +225,7 @@ fn runHostManagerFallible(
                 var locked = core.lockState();
                 defer locked.unlock();
                 const host = try core.hosts.add(core, identity, username, password, true);
+                try persistence.initHostDb(gpa, core.cache_path, host);
                 break :lock host.client.host_id;
             };
 
