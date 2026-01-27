@@ -17,47 +17,9 @@ pub fn init(conn: zqlite.Conn) Queries {
     return qs;
 }
 
-pub fn run(qs: *const Queries, comptime query: std.meta.FieldEnum(Queries), args: Args(query)) Result(query) {
-    const db: awebo.Database = @fieldParentPtr("queries", qs);
-
-    switch (query) {
-        inline else => |tag| {
-            const q = @field(qs, @tagName(tag));
-            const config = @TypeOf(q).cfg;
-
-            const s: zqlite.Stmt = .{
-                .conn = db.conn,
-                .stmt = q.stmt,
-            };
-
-            s.reset() catch db.fatal(@src());
-            s.bind(args) catch db.fatal(@src());
-
-            switch (config.kind) {
-                .row => {
-                    s.step() catch db.fatal(@src());
-                    assert(false == s.step() catch db.fatal(@src()));
-                    return Rows(config).Row{ .row = .{ .stmt = s } };
-                },
-                .rows => {
-                    return Rows(config){ .rows = .{ .stmt = s } };
-                },
-            }
-        },
-    }
-}
-
-fn Args(query: std.meta.FieldEnum(Queries)) type {
-    var qs: Queries = undefined;
-    const config = @TypeOf(@field(qs, @tagName(query))).cfg;
-    return config.args;
-}
-
-fn Result(query: std.meta.FieldEnum(Queries)) type {
-    var qs: Queries = undefined;
-    const config = @TypeOf(@field(qs, @tagName(query))).cfg;
+fn Result(config: QueryConfig) type {
     return switch (config.kind) {
-        .row => Rows(config).Row,
+        .row => ?Rows(config).Row,
         .rows => Rows(config),
     };
 }
@@ -84,7 +46,18 @@ select_user_limits: Query(
         .kind = .row,
         .cols = &.{
             .{ .count, u64 },
-            .{ .max_id, u64 },
+            .{ .max_id, ?u64 },
+        },
+    },
+),
+select_max_id_channels: Query(
+    \\SELECT MAX(id), MAX(updated) FROM channels
+,
+    .{
+        .kind = .row,
+        .cols = &.{
+            .{ .max_id, ?u64 },
+            .{ .max_updated, ?u64 },
         },
     },
 ),
@@ -100,14 +73,32 @@ fn Query(sql: [:0]const u8, config: QueryConfig) type {
     if (config.ctx) |ctx| if (ctx != context) return void;
 
     return struct {
-        // We unwrap zqlite.Stmt to remove the redundant
-        // pointer to the database connection
-        stmt: *zqlite.c.sqlite3_stmt,
+        stmt: zqlite.Stmt,
 
-        pub var cfg = config;
+        pub const cfg = config;
         fn init(conn: zqlite.Conn) !@This() {
             const prep = conn.prepare(sql) catch fatalDb(conn);
-            return .{ .stmt = @ptrCast(prep.stmt) };
+            return .{ .stmt = prep };
+        }
+
+        pub fn run(q: *@This(), args: config.args) Result(config) {
+            const conn: zqlite.Conn = .{ .conn = q.stmt.conn };
+            q.stmt.reset() catch fatalDb(conn);
+
+            inline for (@typeInfo(config.args).@"struct".fields, 1..) |f, idx| {
+                q.stmt.bindValue(@field(args, f.name), idx) catch fatalDb(conn);
+            }
+
+            switch (config.kind) {
+                .row => {
+                    const one_row = q.stmt.step() catch fatalDb(conn);
+                    if (!one_row) return null;
+                    return Rows(config).Row{ .row = .{ .stmt = q.stmt } };
+                },
+                .rows => {
+                    return Rows(config){ .rows = .{ .stmt = q.stmt } };
+                },
+            }
         }
     };
 }
@@ -140,12 +131,21 @@ pub fn Rows(config: QueryConfig) type {
             pub fn get(r: Row, comptime col: @EnumLiteral()) ColType(col) {
                 inline for (config.cols, 0..) |def, idx| {
                     if (def[0] == col) {
+                        log.debug("{t} => {}", .{ col, idx });
                         switch (def[1]) {
-                            u64 => return @as(u64, @intCast(r.row.int(idx))),
+                            u64 => return @intCast(r.row.int(idx)),
+                            ?u64 => {
+                                const value = r.row.nullableInt(idx) orelse return null;
+                                log.debug("result: {}", .{value});
+                                return @intCast(value);
+                            },
                             []u8, []const u8 => @compileError("use text() or textNoDupe()"),
+                            else => @compileError("not supported"),
                         }
                     }
                 }
+
+                @compileError("column " ++ @tagName(col) ++ "does not exist in query");
             }
 
             /// Dupes the resulting value, use `textNoDupe` to avoid duping.

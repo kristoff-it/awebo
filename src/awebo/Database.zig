@@ -53,7 +53,15 @@ pub const Mode = enum(c_int) {
     read_only = zqlite.OpenFlags.ReadOnly,
 };
 
+export fn errLog(_: *anyopaque, error_code: c_int, msg: [*:0]const u8) void {
+    log.debug("sqlite err/warn log ({}): {s}", .{ error_code, msg });
+}
+
 pub fn init(db_path: [:0]const u8, mode: Mode) Database {
+    if (builtin.mode == .Debug) {
+        _ = zqlite.c.sqlite3_config(zqlite.c.SQLITE_CONFIG_LOG, &errLog, &errLog);
+    }
+
     var conn = zqlite.open(db_path, @intFromEnum(mode) | zqlite.OpenFlags.EXResCode) catch |err| {
         switch (mode) {
             .create => std.debug.print("error while creating database file: {s}\n", .{@errorName(err)}),
@@ -375,6 +383,7 @@ pub fn fatal(db: Database, src: std.builtin.SourceLocation) noreturn {
     if (builtin.mode == .Debug) @breakpoint();
     std.process.exit(1);
 }
+
 fn fatalDb(conn: zqlite.Conn) noreturn {
     log.err("fatal db error: {s}", .{conn.lastError()});
     if (builtin.mode == .Debug) @breakpoint();

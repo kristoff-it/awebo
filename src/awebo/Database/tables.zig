@@ -184,8 +184,8 @@ pub const sections: Table = .{
 pub const channels: Table = .{
     .schema =
     \\CREATE TABLE channels (
-    \\  id           INTEGER PRIMARY KEY ASC NOT NULL,
-    \\  updated      DATETIME NOT NULL,
+    \\  id           ID PRIMARY KEY ASC NOT NULL,
+    \\  updated      ID NOT NULL,
     \\  section      REFERENCES sections ON DELETE SET NULL,
     \\  sort         INTEGER NOT NULL,
     \\  name         TEXT UNIQUE NOT NULL,

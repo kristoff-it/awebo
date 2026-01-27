@@ -764,12 +764,14 @@ var ___state: struct {
         var latest_id: u64 = 0;
 
         const user_limits = blk: {
-            var r = db.conn.row("SELECT COUNT(*), MAX(id) FROM users", .{}) catch db.fatal(@src());
-            defer r.?.deinit();
+            // var r = db.conn.row("SELECT COUNT(*), MAX(id) FROM users", .{}) catch db.fatal(@src());
+            // defer r.?.deinit();
+            // const user_count: usize = @intCast(r.?.int(0));
+            // latest_id = @intCast(@max(latest_id, r.?.nullableInt(1) orelse 0));
 
-            const user_count: usize = @intCast(r.?.int(0));
-
-            latest_id = @intCast(@max(latest_id, r.?.nullableInt(1) orelse 0));
+            const r = db.queries.select_user_limits.run(.{}).?;
+            const user_count: u64 = r.get(.count);
+            latest_id = @intCast(@max(latest_id, r.get(.max_id) orelse 0));
 
             var user_limits: std.ArrayList(RateLimiter) = .empty;
 
@@ -804,11 +806,17 @@ var ___state: struct {
         const host: awebo.Host = host: {
             const channels = blk: {
                 {
-                    var r = db.conn.row("SELECT MAX(updated) FROM channels", .{}) catch db.fatal(@src());
-                    defer r.?.deinit();
+                    const r = db.queries.select_max_id_channels.run(.{}).?;
+                    defer r.deinit();
 
-                    latest_id = @intCast(@max(latest_id, r.?.nullableInt(0) orelse 0));
+                    latest_id = @max(latest_id, r.get(.max_id) orelse 0, r.get(.max_updated) orelse 0);
                 }
+                // {
+                //     var r = db.conn.row("SELECT MAX(id), MAX(updated) FROM channels", .{}) catch db.fatal(@src());
+                //     defer r.?.deinit();
+
+                //     latest_id = @intCast(@max(latest_id, r.?.nullableInt(0) orelse 0, r.?.nullableInt(1) orelse 0));
+                // }
                 {
                     var r = db.conn.row("SELECT MAX(id), MAX(updated) FROM messages", .{}) catch db.fatal(@src());
                     defer r.?.deinit();
