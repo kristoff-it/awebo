@@ -84,15 +84,6 @@ select_latest_id: Query(blk: {
     .cols = &.{.{ .max_uid, u64 }},
 }),
 
-select_user_limits: Query(
-    \\SELECT COUNT(*) FROM users;
-,
-    .{
-        .kind = .row,
-        .cols = &.{.{ .count, u64 }},
-    },
-),
-
 select_host_info: Query(
     \\SELECT key, value FROM host;
 ,
@@ -102,7 +93,7 @@ select_host_info: Query(
             .{ .key, []const u8 },
             .{ .value, void },
             // value has a different type per row,
-            // use .getAs() to coerce the type
+            // use .getAs() to specify the expected type
         },
     },
 ),
