@@ -8,6 +8,7 @@ pub const Host = @import("awebo/Host.zig");
 pub const Message = @import("awebo/Message.zig");
 pub const User = @import("awebo/User.zig");
 pub const Caller = @import("awebo/Caller.zig");
+pub const Invite = @import("awebo/Invite.zig");
 
 pub const IdGenerator = struct {
     last: u64,

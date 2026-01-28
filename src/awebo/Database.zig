@@ -181,6 +181,20 @@ pub fn Rows(comptime query: []const u8) type {
                 return r.row.int(idx);
             }
 
+            pub fn nullableInt(r: Row, comptime col: @EnumLiteral()) ?i64 {
+                const idx = comptime col_map.get(@tagName(col)) orelse {
+                    @compileError("column '" ++ @tagName(col) ++ "' not found in query");
+                };
+                return r.row.nullableInt(idx);
+            }
+
+            pub fn boolean(r: Row, comptime col: @EnumLiteral()) bool {
+                const idx = comptime col_map.get(@tagName(col)) orelse {
+                    @compileError("column '" ++ @tagName(col) ++ "' not found in query");
+                };
+                return r.row.boolean(idx);
+            }
+
             /// Dupes the resulting value, use `textNoDupe` to avoid duping.
             pub fn text(r: Row, gpa: Allocator, comptime col: @EnumLiteral()) ![]const u8 {
                 const idx = comptime col_map.get(@tagName(col)) orelse {

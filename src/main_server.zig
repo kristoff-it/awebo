@@ -11,6 +11,7 @@ pub const Resource = enum {
     user,
     message,
     role,
+    invite,
 
     // resourceless commands
     version,
@@ -44,6 +45,7 @@ pub fn main(init: process.Init) !void {
         .user => @import("server/cli/user.zig").run(init.io, gpa, &it),
         .message => @import("server/cli/message.zig").run(init.io, gpa, &it),
         .server => server.run(init.io, gpa, &it),
+        .invite => @import("server/cli/invite.zig").run(init.io, gpa, &it),
     }
 }
 
@@ -56,6 +58,7 @@ fn fatalHelp() noreturn {
         \\  server    Initialize and run a server, manage its settings.
         \\  user      List, create, update, ban, delete users.
         \\  role      List, create, update, delete roles.
+        \\  invite    List, create, update, delete invites.
         \\
         \\Use `awebo-server RESOURCE help` for resource-specific help information.
         \\

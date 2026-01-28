@@ -97,7 +97,7 @@ pub const invites: Table = .{
     \\  expiry         DATETIME NOT NULL,
     \\  creator        REFERENCES users ON DELETE CASCADE NOT NULL,
     \\  enabled        BOOL NOT NULL,
-    \\  remaining      INTEGER NOT NULL
+    \\  remaining      INTEGER NULL
     \\);
     ,
 };
