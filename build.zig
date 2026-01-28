@@ -165,10 +165,21 @@ pub fn setupGui(
     gui.root_module.linkLibrary(opus_tools.artifact("opus-tools"));
     addSqlite(gui, zqlite, .client);
 
-    if (target.result.os.tag == .windows) {
-        if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
-            gui.root_module.addImport("win32", win32_dep.module("win32"));
-        }
+    switch (target.result.os.tag) {
+        .windows => {
+            if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
+                gui.root_module.addImport("win32", win32_dep.module("win32"));
+            }
+        },
+        .linux => {
+            if (b.lazyDependency("pulseaudio", .{
+                .target = target,
+                .optimize = dep_optimize,
+            })) |dep| {
+                gui.root_module.addImport("pulseaudio", dep.module("pulseaudio"));
+            }
+        },
+        else => {},
     }
 
     const gui_test = b.addTest(.{
@@ -229,10 +240,21 @@ pub fn setupTui(
     tui.root_module.linkLibrary(opus.artifact("opus"));
     tui.root_module.linkLibrary(opus_tools.artifact("opus-tools"));
     addSqlite(tui, zqlite, .client);
-    if (target.result.os.tag == .windows) {
-        if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
-            tui.root_module.addImport("win32", win32_dep.module("win32"));
-        }
+    switch (target.result.os.tag) {
+        .windows => {
+            if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
+                tui.root_module.addImport("win32", win32_dep.module("win32"));
+            }
+        },
+        .linux => {
+            if (b.lazyDependency("pulseaudio", .{
+                .target = target,
+                .optimize = dep_optimize,
+            })) |dep| {
+                tui.root_module.addImport("pulseaudio", dep.module("pulseaudio"));
+            }
+        },
+        else => {},
     }
 
     const tui_test = b.addTest(.{
