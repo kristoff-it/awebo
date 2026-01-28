@@ -62,6 +62,12 @@ pub fn init(db_path: [:0]const u8, mode: Mode) Database {
         _ = zqlite.c.sqlite3_config(zqlite.c.SQLITE_CONFIG_LOG, &errLog, &errLog);
     }
 
+    // Uncomment to see the latest id selection query on client/server startup
+    // {
+    //     const q: Queries = undefined;
+    //     std.debug.print(@TypeOf(q.select_latest_id).sql, .{});
+    // }
+
     var conn = zqlite.open(db_path, @intFromEnum(mode) | zqlite.OpenFlags.EXResCode) catch |err| {
         switch (mode) {
             .create => std.debug.print("error while creating database file: {s}\n", .{@errorName(err)}),
@@ -211,13 +217,13 @@ pub const loadHost = switch (context) {
             }
 
             {
-                var rs = db.rows("SELECT id, handle, power, invited_by, display_name FROM users", .{}) catch db.fatal(@src());
+                var rs = db.rows("SELECT uid, handle, power, invited_by, display_name FROM users", .{}) catch db.fatal(@src());
                 defer rs.deinit();
 
                 var users: awebo.Host.Users = .{};
                 while (rs.next()) |r| {
                     const user: awebo.User = .{
-                        .id = @intCast(r.int(.id)),
+                        .id = @intCast(r.int(.uid)),
                         .handle = try r.text(gpa, .handle),
                         .power = @enumFromInt(r.int(.power)),
                         // arst
@@ -252,7 +258,7 @@ pub const loadHost = switch (context) {
 
                     if (channel.kind == .chat) {
                         var msgs = db.rows(
-                            \\SELECT id, origin, author, body FROM messages
+                            \\SELECT uid, origin, author, body FROM messages
                             \\WHERE channel = ? ORDER BY id DESC;
                         ,
                             .{channel.id},
@@ -261,7 +267,7 @@ pub const loadHost = switch (context) {
 
                         while (msgs.next()) |m| {
                             const msg: awebo.Message = .{
-                                .id = @intCast(m.int(.id)),
+                                .id = @intCast(m.int(.uid)),
                                 .origin = @intCast(m.int(.origin)),
                                 .author = @intCast(m.int(.author)),
                                 .text = try m.text(gpa, .body),
@@ -294,7 +300,7 @@ else
             username: []const u8,
             password: []const u8,
         ) error{ NotFound, Password }!awebo.User {
-            const maybe_pswd_row = db.row("SELECT pswd_hash, handle FROM users JOIN passwords ON users.id == passwords.id WHERE handle = ?", .{
+            const maybe_pswd_row = db.row("SELECT pswd_hash FROM passwords WHERE handle = ?", .{
                 username,
             }) catch db.fatal(@src());
             const pswd_row = maybe_pswd_row orelse {
@@ -312,14 +318,14 @@ else
             };
 
             const maybe_row = db.row(
-                \\SELECT id, display_name, power, invited_by, avatar FROM users
+                \\SELECT uid, display_name, power, invited_by, avatar FROM users
                 \\WHERE handle = ?;
             , .{username}) catch db.fatal(@src());
             const user_row = maybe_row orelse return error.NotFound;
             defer user_row.deinit();
 
             return .{
-                .id = @intCast(user_row.int(.id)),
+                .id = @intCast(user_row.int(.uid)),
                 .power = @enumFromInt(user_row.int(.power)),
                 .display_name = user_row.text(gpa, .display_name) catch oom(),
                 .avatar = user_row.text(gpa, .avatar) catch oom(),

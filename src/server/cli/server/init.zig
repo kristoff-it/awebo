@@ -408,29 +408,26 @@ fn seed(io: std.Io, gpa: Allocator, cmd: Command, conn: zqlite.Conn) !void {
         fatal("unable to hash admin password: {t}", .{err});
     };
 
-    const admin_id = id.new();
     const admin = std.fmt.comptimePrint(
         \\INSERT INTO users VALUES
-        \\  (0, 0,  0, 0, {}, 'deleted', 'Deleted User', NULL),
-        \\  (?1, 0, 0, ?1, {}, ?2, 'Admin', NULL)
+        \\  (?1, unixepoch(), ?1, ?1, {}, ?2, 'Admin', NULL)
         \\;
-    , .{ @intFromEnum(awebo.User.Power.banned), @intFromEnum(awebo.User.Power.owner) });
-    conn.exec(admin, .{ admin_id, cmd.owner.handle }) catch fatalDb(conn);
+    , .{@intFromEnum(awebo.User.Power.owner)});
+    conn.exec(admin, .{ id.new(), cmd.owner.handle }) catch fatalDb(conn, @src());
 
     const passwords =
         \\INSERT INTO passwords VALUES
-        \\  (0, 0, NULL, ''),
         \\  (?, 0, NULL, ?)
         \\;
     ;
 
-    conn.exec(passwords, .{ admin_id, pass_str }) catch fatalDb(conn);
+    conn.exec(passwords, .{ cmd.owner.handle, pass_str }) catch fatalDb(conn, @src());
 
     const channels = std.fmt.comptimePrint(
         \\INSERT INTO channels VALUES
-        \\  (?, 0, NULL, 0, 'Default Chat Channel', 0, {0}),
-        \\  (?, 0, NULL, 0, 'Second Chat Channel', 0, {0}),
-        \\  (?, 0, NULL, 0, 'Default Voice Channel', 1, {0})
+        \\  (?1, ?1, NULL, 0, 'Default Chat Channel', 0, {0}),
+        \\  (?2, ?2, NULL, 0, 'Second Chat Channel', 0, {0}),
+        \\  (?3, ?3, NULL, 0, 'Default Voice Channel', 1, {0})
         \\;
     , .{@intFromEnum(awebo.Channel.Privacy.private)});
 
@@ -438,14 +435,14 @@ fn seed(io: std.Io, gpa: Allocator, cmd: Command, conn: zqlite.Conn) !void {
         id.new(),
         id.new(),
         id.new(),
-    }) catch fatalDb(conn);
+    }) catch fatalDb(conn, @src());
 
     const roles =
-        \\INSERT INTO roles (id, updated, name, sort, prominent) VALUES
-        \\  (?,  0, 'Moderator', 2, true)
+        \\INSERT INTO roles (id, update_uid, name, sort, prominent) VALUES
+        \\  (?1,  ?1, 'Moderator', 2, true)
         \\;
     ;
-    conn.exec(roles, .{id.new()}) catch fatalDb(conn);
+    conn.exec(roles, .{id.new()}) catch fatalDb(conn, @src());
 
     const epoch = Io.Clock.real.now(io) catch @panic("server needs a clock");
     const settings: Settings = .{
@@ -460,7 +457,7 @@ fn seed(io: std.Io, gpa: Allocator, cmd: Command, conn: zqlite.Conn) !void {
     ;
 
     inline for (std.meta.fields(Settings)) |f| {
-        conn.exec(host_query, .{ f.name, @field(settings, f.name) }) catch fatalDb(conn);
+        conn.exec(host_query, .{ f.name, @field(settings, f.name) }) catch fatalDb(conn, @src());
     }
 
     // const owner_role =
@@ -561,8 +558,8 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(1);
 }
 
-fn fatalDb(conn: zqlite.Conn) noreturn {
-    log.err("fatal db error: {s}", .{conn.lastError()});
+pub fn fatalDb(conn: zqlite.Conn, src: std.builtin.SourceLocation) noreturn {
+    log.err("{s}:{}: fatal db error: {s}", .{ src.file, src.line, conn.lastError() });
     if (builtin.mode == .Debug) @breakpoint();
     std.process.exit(1);
 }

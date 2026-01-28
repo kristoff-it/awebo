@@ -13,7 +13,7 @@ name: []const u8,
 privacy: Privacy,
 kind: Kind,
 
-pub const Id = u32;
+pub const Id = u64;
 
 /// Number of messages clients will keep in cache per channel
 pub const window_size: u32 = std.math.maxInt(WindowSize) + 1;

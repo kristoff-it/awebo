@@ -17,27 +17,27 @@ pub const Table = struct {
 };
 
 pub fn init(conn: zqlite.Conn) void {
-    conn.transaction() catch fatalDb(conn, @src());
-    defer conn.commit() catch fatalDb(conn, @src());
+    conn.transaction() catch fatalDb(conn, "begin");
+    defer conn.commit() catch fatalDb(conn, "commit");
 
     inline for (comptime std.meta.declarations(@This())) |d| {
         const table = @field(@This(), d.name);
         if (@TypeOf(table) != @This().Table) continue;
         if (table.context) |ctx| if (ctx != context) continue;
 
-        conn.execNoArgs(table.schema) catch fatalDb(conn, @src());
+        conn.execNoArgs(table.schema) catch fatalDb(conn, d.name);
 
         for (table.indexes) |index| {
-            conn.execNoArgs(index) catch fatalDb(conn, @src());
+            conn.execNoArgs(index) catch fatalDb(conn, index);
         }
 
         for (table.triggers) |trigger| {
-            conn.execNoArgs(trigger) catch fatalDb(conn, @src());
+            conn.execNoArgs(trigger) catch fatalDb(conn, trigger);
         }
 
         if (context == .server) {
             for (table.server_only.triggers) |trigger| {
-                conn.execNoArgs(trigger) catch fatalDb(conn, @src());
+                conn.execNoArgs(trigger) catch fatalDb(conn, trigger);
             }
         }
     }
@@ -48,17 +48,20 @@ pub fn init(conn: zqlite.Conn) void {
 pub const host: Table = .{ .schema =
     \\CREATE TABLE host (
     \\  key          TEXT UNIQUE PRIMARY KEY NOT NULL,
-    \\  value        NOT NULL
+    \\  value        ANY NOT NULL
     \\);
 };
 
 pub const users: Table = .{
     .schema =
     \\CREATE TABLE users (
-    \\  id             INTEGER PRIMARY KEY ASC NOT NULL,
+    \\  uid            INTEGER PRIMARY KEY ASC NOT NULL,
     \\  created        DATETIME NOT NULL,
-    \\  updated        DATETIME NOT NULL,
-    \\  invited_by     REFERENCES users ON DELETE SET NULL,
+    \\  update_uid     INTEGER UNIQUE NOT NULL,
+    // Before deleting a user, we must manually "detatch" any
+    // invitee that we want to keep around, and make sure to
+    // also update `update_uid`.
+    \\  invited_by     REFERENCES users ON DELETE CASCADE NULL,
     //  awebo.User.Power
     \\  power          ENUM NOT NULL,
     \\  handle         TEXT UNIQUE NOT NULL,
@@ -75,7 +78,7 @@ pub const passwords: Table = .{
     .context = .server,
     .schema =
     \\CREATE TABLE passwords (
-    \\  id             REFERENCES users ON DELETE CASCADE PRIMARY KEY NOT NULL,
+    \\  handle         REFERENCES users(handle) ON DELETE CASCADE ON UPDATE CASCADE PRIMARY KEY NOT NULL,
     \\  updated        DATETIME NOT NULL,
     // ip address that requested a password change, null if admin action
     \\  ip             IP NULL,
@@ -102,11 +105,11 @@ pub const invites: Table = .{
 pub const roles: Table = .{
     .schema =
     \\CREATE TABLE roles (
-    \\  id           INTEGER PRIMARY KEY ASC AUTOINCREMENT,
-    \\  updated      DATETIME NOT NULL,
+    \\  id           INTEGER PRIMARY KEY ASC NOT NULL,
+    \\  update_uid   INTEGER UNIQUE NOT NULL,
     \\  name         TEXT UNIQUE NOT NULL,
     \\  sort         INTEGER UNIQUE NOT NULL,
-    \\  prominent    INTEGER NOT NULL
+    \\  prominent    BOOL NOT NULL
     \\);
     ,
 };
@@ -125,16 +128,14 @@ pub const user_permissions: Table = .{
     .context = .server,
     .schema =
     \\CREATE TABLE user_permissions (
-    \\  updated      INTEGER NOT NULL,
-    \\  user         REFERENCES users ON DELETE CASCADE NOT NULL,
     // PermissionResourceKind
     \\  kind         ENUM NOT NULL,
     \\  resource     INTEGER NOT NULL,
-    // ServerResource,
     \\  key          ENUM NOT NULL,
     \\  value        INTEGER NOT NULL,
+    \\  user         REFERENCES users ON DELETE CASCADE NOT NULL,
     \\
-    \\  PRIMARY KEY (user, kind, resource, key)
+    \\  PRIMARY KEY (kind, resource, key, user)
     \\) WITHOUT ROWID;
     ,
 };
@@ -143,16 +144,14 @@ pub const role_permissions: Table = .{
     .context = .server,
     .schema =
     \\CREATE TABLE role_permissions (
-    \\  updated      INTEGER NOT NULL,
-    \\  role         REFERENCES roles ON DELETE CASCADE NOT NULL,
     // PermissionResourceKind
     \\  kind         INTEGER NOT NULL,
     \\  resource     INTEGER NOT NULL,
-    // ServerResource,
     \\  key          INTEGER NOT NULL,
     \\  value        INTEGER NOT NULL,
+    \\  role         REFERENCES roles ON DELETE CASCADE NOT NULL,
     \\
-    \\  PRIMARY KEY (role, kind, resource, key)
+    \\  PRIMARY KEY (kind, resource, key, role)
     \\) WITHOUT ROWID;
     ,
 };
@@ -160,8 +159,8 @@ pub const role_permissions: Table = .{
 pub const sections: Table = .{
     .schema =
     \\CREATE TABLE sections (
-    \\  id           INTEGER PRIMARY KEY ASC AUTOINCREMENT,
-    \\  updated      INTEGER NOT NULL,
+    \\  id           INTEGER UNIQUE PRIMARY KEY ASC,
+    \\  update_uid   INTEGER UNIQUE NOT NULL,
     \\  sort         INTEGER UNIQUE NOT NULL,
     \\  name         TEXT UNIQUE,
     //  awebo.channels.Privacy
@@ -184,16 +183,20 @@ pub const sections: Table = .{
 pub const channels: Table = .{
     .schema =
     \\CREATE TABLE channels (
-    \\  id           ID PRIMARY KEY ASC NOT NULL,
-    \\  updated      ID NOT NULL,
-    \\  section      REFERENCES sections ON DELETE SET NULL,
+    \\  id           INTEGER PRIMARY KEY ASC NOT NULL,
+    \\  update_uid   INTEGER UNIQUE NOT NULL,
+    // Before deleting a section all connected channels
+    // must be detached first.
+    \\  section      REFERENCES sections ON DELETE CASCADE,
     \\  sort         INTEGER NOT NULL,
-    \\  name         TEXT UNIQUE NOT NULL,
+    \\  name         TEXT NOT NULL,
+    //  awebo.Channel.Kind.Enum
     \\  kind         INTEGER,
-    //  awebo.channels.Privacy
+    //  awebo.Channel.Privacy
     \\  privacy      ENUM NOT NULL,
     \\
-    \\  UNIQUE (section, sort)
+    \\  UNIQUE (section, sort),
+    \\  UNIQUE (section, name)
     \\);
     ,
 
@@ -212,19 +215,26 @@ pub const channels: Table = .{
 pub const messages: Table = .{
     .schema =
     \\CREATE TABLE messages (
-    \\  id           INTEGER PRIMARY KEY ASC,
+    \\  uid          INTEGER PRIMARY KEY ASC NOT NULL,
     \\  origin       INTEGER,
-    \\  updated      INTEGER,
-    \\  channel      REFERENCES channels ON DELETE CASCADE,
-    \\  author       REFERENCES users ON DELETE CASCADE,
+    \\  update_uid   INTEGER NULL,
+    \\  channel      REFERENCES channels ON DELETE CASCADE NOT NULL,
+    \\  author       REFERENCES users ON DELETE CASCADE NULL,
     \\  body         TEXT NOT NULL,
     \\  reactions    TEXT
-    \\) WITHOUT ROWID;
+    \\);
     ,
     .indexes = &.{
+        // For queries that search for newly updated messages
+        \\CREATE UNIQUE INDEX messages_by_update_uid ON messages (channel)
+        \\WHERE update_uid != NULL;
+        ,
         \\CREATE INDEX messages_by_channel ON messages (channel);
         ,
-        \\CREATE INDEX messages_by_author ON messages (author);
+        // Searching by author should ignore messages that
+        // have been assigned to 'deleted user' (i.e NULL)
+        \\CREATE INDEX messages_by_author ON messages (author)
+        \\WHERE author != NULL;
         ,
     },
 };
@@ -233,26 +243,26 @@ pub const messages_search: Table = .{
     .context = .server,
     .schema =
     \\CREATE VIRTUAL TABLE messages_search
-    \\USING fts5(channel, author, body, content=messages, content_rowid=id)
+    \\USING fts5(channel, author, body, content=messages, content_rowid=uid)
     ,
     .triggers = &.{
         \\CREATE TRIGGER messages_search_insert AFTER INSERT ON messages BEGIN
         \\  INSERT INTO messages_search(rowid, channel, author, body)
-        \\  VALUES (new.id, new.channel, new.author, new.body);
+        \\  VALUES (new.uid, new.channel, new.author, new.body);
         \\END;
         ,
 
         \\CREATE TRIGGER messages_search_delete AFTER DELETE ON messages BEGIN
         \\  INSERT INTO messages_search(messages_search, rowid, channel, author, body)
-        \\  VALUES ('delete', old.id, old.channel, old.author, old.body);
+        \\  VALUES ('delete', old.uid, old.channel, old.author, old.body);
         \\END;
         ,
         \\CREATE TRIGGER messages_search_update AFTER UPDATE ON messages BEGIN
         \\  INSERT INTO messages_search(messages_search, rowid, channel, author, body)
-        \\  VALUES ('delete', old.id, old.channel, old.author, old.body);
+        \\  VALUES ('delete', old.uid, old.channel, old.author, old.body);
         \\
         \\  INSERT INTO messages_search(rowid, channel, author, body)
-        \\  VALUES (new.id, new.channel, new.author, new.body);
+        \\  VALUES (new.uid, new.channel, new.author, new.body);
         \\END;
     },
 };
@@ -308,8 +318,8 @@ pub const emotes: Table = .{
     },
 };
 
-pub fn fatalDb(conn: zqlite.Conn, src: std.builtin.SourceLocation) noreturn {
-    log.err("{s}:{}: fatal db error: {s}", .{ src.file, src.line, conn.lastError() });
+pub fn fatalDb(conn: zqlite.Conn, sql: []const u8) noreturn {
+    log.err("fatal db error: {s} on table or query:\n{s}\n", .{ conn.lastError(), sql });
     if (builtin.mode == .Debug) @breakpoint();
     std.process.exit(1);
 }

@@ -581,7 +581,12 @@ const Client = struct {
             const state = locked.state;
 
             {
-                state.user_limits.items[client.authenticated.?].takeToken(io, .user_action) catch {
+                const gop = try state.user_limits.getOrPut(gpa, client.authenticated.?);
+                if (!gop.found_existing) gop.value_ptr.* = .init(io, .user_action);
+
+                const limiter = gop.value_ptr;
+
+                limiter.takeToken(io, .user_action) catch {
                     log.debug("user {} exceeded user action limit", .{client.authenticated.?});
                     const fail: awebo.protocol.server.ClientRequestReply = .{
                         .origin = cmd.origin,
@@ -638,7 +643,12 @@ const Client = struct {
         defer locked.unlock(io);
         const state = locked.state;
 
-        state.user_limits.items[client.authenticated.?].takeToken(io, .user_action) catch {
+        const gop = try state.user_limits.getOrPut(gpa, client.authenticated.?);
+        if (!gop.found_existing) gop.value_ptr.* = .init(io, .user_action);
+
+        const limiter = gop.value_ptr;
+
+        limiter.takeToken(io, .user_action) catch {
             log.debug("exceeded user action limit", .{});
             const fail: awebo.protocol.server.ClientRequestReply = .{
                 .origin = cms.origin,
@@ -727,7 +737,7 @@ var ___state: struct {
     settings: Settings = undefined,
     host: Host = .{},
     /// Per-user rate limiters, use User.Id to index into the array
-    user_limits: std.ArrayList(RateLimiter) = .empty,
+    user_limits: std.AutoHashMapUnmanaged(awebo.User.Id, RateLimiter) = .empty,
     clients: struct {
         head: ?*Client = null,
 
@@ -761,31 +771,16 @@ var ___state: struct {
     var client_id: u15 = 0;
 
     fn init(state: *State, io: Io, gpa: Allocator) !void {
-        var latest_id: u64 = 0;
-
-        const user_limits = blk: {
-            // var r = db.conn.row("SELECT COUNT(*), MAX(id) FROM users", .{}) catch db.fatal(@src());
-            // defer r.?.deinit();
-            // const user_count: usize = @intCast(r.?.int(0));
-            // latest_id = @intCast(@max(latest_id, r.?.nullableInt(1) orelse 0));
-
-            const r = db.queries.select_user_limits.run(.{}).?;
-            const user_count: u64 = r.get(.count);
-            latest_id = @intCast(@max(latest_id, r.get(.max_id) orelse 0));
-
-            var user_limits: std.ArrayList(RateLimiter) = .empty;
-
-            const elems = try user_limits.addManyAt(gpa, 0, user_count);
-            for (elems) |*e| e.* = .init(io, .user_action);
-
-            break :blk user_limits;
+        _ = io;
+        const latest_uid: u64 = blk: {
+            const r = db.queries.select_latest_id.run(.{}).?;
+            break :blk r.get(.max_uid);
         };
 
         const settings = blk: {
             var settings: Settings = undefined;
 
-            var rows = db.rows("SELECT key, value FROM host", .{}) catch db.fatal(@src());
-            defer rows.deinit();
+            var rows = db.queries.select_host_info.run(.{});
 
             outer: while (rows.next()) |r| {
                 const key = r.textNoDupe(.key);
@@ -793,8 +788,7 @@ var ___state: struct {
                     if (std.mem.eql(u8, f.name, key)) {
                         @field(settings, f.name) = switch (f.type) {
                             []const u8 => try r.text(gpa, .value),
-                            usize, u64, i64 => @intCast(r.int(.value)),
-                            else => @compileError("implement mapping for " ++ @typeName(f.type)),
+                            else => r.getAs(f.type, .value),
                         };
                         continue :outer;
                     }
@@ -805,34 +799,15 @@ var ___state: struct {
 
         const host: awebo.Host = host: {
             const channels = blk: {
-                {
-                    const r = db.queries.select_max_id_channels.run(.{}).?;
-                    defer r.deinit();
-
-                    latest_id = @max(latest_id, r.get(.max_id) orelse 0, r.get(.max_updated) orelse 0);
-                }
-                // {
-                //     var r = db.conn.row("SELECT MAX(id), MAX(updated) FROM channels", .{}) catch db.fatal(@src());
-                //     defer r.?.deinit();
-
-                //     latest_id = @intCast(@max(latest_id, r.?.nullableInt(0) orelse 0, r.?.nullableInt(1) orelse 0));
-                // }
-                {
-                    var r = db.conn.row("SELECT MAX(id), MAX(updated) FROM messages", .{}) catch db.fatal(@src());
-                    defer r.?.deinit();
-
-                    latest_id = @intCast(@max(latest_id, r.?.nullableInt(0) orelse 0, r.?.nullableInt(1) orelse 0));
-                }
-                var rs = db.rows("SELECT id, name, privacy, kind FROM channels", .{}) catch db.fatal(@src());
-                defer rs.deinit();
+                var rs = db.queries.select_channels.run(.{});
 
                 var channels: awebo.Host.Channels = .{};
                 while (rs.next()) |r| {
-                    const kind: awebo.Channel.Kind.Enum = @enumFromInt(r.int(.kind));
+                    const kind = r.get(.kind);
                     var channel: awebo.Channel = .{
-                        .id = @intCast(r.int(.id)),
+                        .id = r.get(.id),
                         .name = try r.text(gpa, .name),
-                        .privacy = @enumFromInt(r.int(.privacy)),
+                        .privacy = r.get(.privacy),
                         .kind = switch (kind) {
                             inline else => |tag| @unionInit(
                                 awebo.Channel.Kind,
@@ -843,19 +818,16 @@ var ___state: struct {
                     };
 
                     if (channel.kind == .chat) {
-                        var msgs = db.rows(
-                            \\SELECT id, origin, author, body FROM messages
-                            \\WHERE channel = ? ORDER BY id DESC LIMIT ?;
-                        ,
-                            .{ channel.id, awebo.Channel.window_size },
-                        ) catch db.fatal(@src());
-                        defer msgs.deinit();
+                        var msgs = db.queries.select_channel_messages.run(.{
+                            .channel = channel.id,
+                            .limit = awebo.Channel.window_size,
+                        });
 
                         while (msgs.next()) |m| {
                             const msg: awebo.Message = .{
-                                .id = @intCast(m.int(.id)),
-                                .origin = @intCast(m.int(.origin)),
-                                .author = @intCast(m.int(.author)),
+                                .id = m.get(.id),
+                                .origin = m.get(.origin),
+                                .author = m.get(.author),
                                 .text = try m.text(gpa, .body),
                             };
                             try channel.kind.chat.messages.backfill(gpa, msg);
@@ -876,13 +848,10 @@ var ___state: struct {
             };
         };
 
-        server_log.debug("latest_id = {} {f}", .{ latest_id, awebo.Clock.Tick.fromId(latest_id) });
-
         state.* = .{
-            .id = .init(latest_id),
+            .id = .init(latest_uid),
             .settings = settings,
             .host = host,
-            .user_limits = user_limits,
         };
     }
 

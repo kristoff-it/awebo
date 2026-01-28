@@ -61,13 +61,13 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const Host, user_id: User.Id) v
     }
     {
         const query =
-            \\INSERT INTO users(id, created, updated, invited_by, power, handle, display_name, avatar)
+            \\INSERT INTO users(uid, created, update_uid, invited_by, power, handle, display_name, avatar)
             \\VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-            \\ON CONFLICT(id) DO UPDATE
-            \\SET (created, updated, invited_by, power, handle, display_name, avatar)
+            \\ON CONFLICT(uid) DO UPDATE
+            \\SET (created, update_uid, invited_by, power, handle, display_name, avatar)
             \\ = (?2, ?3, ?4, ?5, ?6, ?7, ?8)
             \\ON CONFLICT(handle) DO UPDATE
-            \\SET (created, updated, invited_by, power, handle, display_name, avatar)
+            \\SET (created, update_uid, invited_by, power, handle, display_name, avatar)
             \\ = (?2, ?3, ?4, ?5, ?6, ?7, ?8)
         ;
 
@@ -96,10 +96,13 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const Host, user_id: User.Id) v
 
     {
         const query =
-            \\INSERT INTO channels(id, updated, section, sort, name, kind, privacy)
+            \\INSERT INTO channels(id, update_uid, section, sort, name, kind, privacy)
             \\VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             \\ON CONFLICT(id) DO UPDATE
-            \\SET (updated, section, sort, name, kind, privacy)
+            \\SET (update_uid, section, sort, name, kind, privacy)
+            \\ = (?2, ?3, ?4, ?5, ?6, ?7)
+            \\ON CONFLICT(update_uid) DO UPDATE
+            \\SET (update_uid, section, sort, name, kind, privacy)
             \\ = (?2, ?3, ?4, ?5, ?6, ?7)
         ;
 

@@ -116,7 +116,7 @@ const MessageWindow = struct {
         const idx: Channel.WindowSize = @intCast(@mod(tail_w + mw.len, Channel.window_size));
 
         const query =
-            \\INSERT INTO messages (id, origin, channel, author, body, reactions) VALUES
+            \\INSERT INTO messages (uid, origin, channel, author, body, reactions) VALUES
             \\  (?, ?, ?, ?, ?, ?)
             \\;
         ;
