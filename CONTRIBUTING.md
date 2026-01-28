@@ -24,3 +24,12 @@ zig build gui
 
 The first time you will be asked to add a remote server, after that the info will be cached in the local config directory.
 See logs to learn how to reset your local cache if needed.
+
+
+#### NixOS
+If you get a runtime SDL error that there are no devices, try:
+
+```
+nix-shell -p sdl3
+zig build gui -fsys=sdl3
+```
