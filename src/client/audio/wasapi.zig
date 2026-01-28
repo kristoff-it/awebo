@@ -1,3 +1,5 @@
+const Wasapi = @This();
+
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -12,7 +14,8 @@ fn u32FromHr(hr: i32) u32 {
     return @bitCast(hr);
 }
 
-pub fn processInit() !void {
+pub fn processInit(w: *Wasapi) !void {
+    _ = w;
     (try std.Thread.spawn(.{}, audioWarmup, .{})).detach();
 }
 pub fn threadInit() void {

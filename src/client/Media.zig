@@ -1,18 +1,19 @@
+const builtin = @import("builtin");
+
 const Media = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
-const builtin = @import("builtin");
+const log = std.log.scoped(.media);
+const assert = std.debug.assert;
+
 const awebo = @import("../awebo.zig");
 const audio = @import("audio.zig");
 const network = @import("Core/network.zig");
 const Core = @import("Core.zig");
 const StringPool = @import("StringPool.zig");
-
 const RingBuffer = @import("RingBuffer.zig");
-
-const log = std.log.scoped(.media);
 
 // Media streaming state
 playout: audio.Stream,
@@ -232,8 +233,8 @@ fn audioCallbackCapture(
     frame_count: usize,
 ) void {
     const stream: *audio.Stream = @ptrCast(@alignCast(userdata));
-    std.debug.assert(stream.direction == .capture);
-    const m: *Media = @fieldParentPtr("capture", stream);
+    assert(stream.direction == .capture);
+    const m: *Media = @alignCast(@fieldParentPtr("capture", stream));
     const io = m.io;
 
     const buffer_u8: [*]align(audio.buffer_align) u8 = @ptrCast(buffer);
@@ -257,8 +258,8 @@ fn audioCallbackPlayout(
     // const t = timer.read();
     // log.debug("playout callback took {}ns", .{t});
     // }
-    std.debug.assert(stream.direction == .playout);
-    const m: *Media = @fieldParentPtr("playout", stream);
+    assert(stream.direction == .playout);
+    const m: *Media = @alignCast(@fieldParentPtr("playout", stream));
 
     const buffer_u8: [*]align(audio.buffer_align) u8 = @ptrCast(buffer);
     const frame_len = stream.format.getFrameLen();
@@ -335,11 +336,11 @@ const CaptureBuffer = struct {
         while (remaining_data.len > 0) {
             const converted: []const f32 = switch (cb.format.sample_type) {
                 .f32 => blk: {
-                    std.debug.assert(opus_format.channel_count == 2);
+                    assert(opus_format.channel_count == 2);
                     const remaining_f32: []const f32 = std.mem.bytesAsSlice(f32, remaining_data);
                     switch (cb.format.channel_count) {
                         1 => {
-                            std.debug.assert(conversion_buffer.len > remaining_f32.len * 2);
+                            assert(conversion_buffer.len > remaining_f32.len * 2);
                             for (remaining_f32, 0..) |c, idx| {
                                 conversion_buffer[idx * 2] = c;
                                 conversion_buffer[(idx * 2) + 1] = c;
@@ -361,7 +362,7 @@ const CaptureBuffer = struct {
                     switch (cb.format.channel_count) {
                         1 => {
                             const sample_count = @divExact(remaining_data.len, @sizeOf(T));
-                            std.debug.assert(conversion_buffer.len >= sample_count * 2);
+                            assert(conversion_buffer.len >= sample_count * 2);
                             awebo.opus.signedToFloat(
                                 T,
                                 @sizeOf(T),
@@ -415,7 +416,7 @@ const CaptureBuffer = struct {
                     std.debug.panic("resampler error: {t}", .{err});
                 };
 
-                std.debug.assert(processed.input.len == converted.len);
+                assert(processed.input.len == converted.len);
                 break :blk processed.output;
             };
 
@@ -496,7 +497,7 @@ const PlayoutBuffer = struct {
                     std.debug.panic("resampler error: {}", .{err});
                 };
 
-                std.debug.assert(processed.input.len > 0);
+                assert(processed.input.len > 0);
                 remaining_data = remaining_data[0..processed.input.len];
                 break :blk processed.output;
             };
@@ -519,13 +520,13 @@ const PlayoutBuffer = struct {
                 },
             };
 
-            std.debug.assert(awebo.opus.CHANNELS == 2);
+            assert(awebo.opus.CHANNELS == 2);
             const available = pb.samples.data.len - pb.samples.len();
             switch (pb.out_format.channel_count) {
                 1 => {
                     // log.debug("mono, must be converted", .{});
                     const needed = @divExact(converted.len, 2);
-                    std.debug.assert(pb.samples.data.len >= needed);
+                    assert(pb.samples.data.len >= needed);
                     if (available < needed) {
                         log.warn("playout buffer was full, flushing", .{});
                         pb.samples.read_index = pb.samples.write_index;

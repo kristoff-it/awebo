@@ -10,14 +10,14 @@ const log = std.log.scoped(.persistence);
 var cfg_dir: ?std.Io.Dir = null;
 var cache_dir: ?std.Io.Dir = null;
 
-pub fn load(core: *Core) !void {
+pub fn load(core: *Core) error{Failed}!void {
     log.debug("begin loading state from disk", .{});
     defer log.debug("done loading state from disk", .{});
 
     loadImpl(core) catch |err| {
-        log.debug("encountered a fatal error when loading data from disk: {t}", .{err});
-        core.failure = "failed to load data from disk";
-        return err;
+        log.err("failed to load data from disk: {t}", .{err});
+        core.failure = .{ .db_load = err };
+        return error.Failed;
     };
     core.loaded = true;
 }
