@@ -19,10 +19,12 @@ const persistence = @import("Core/persistence.zig");
 gpa: Allocator,
 io: Io,
 environ: *std.process.Environ.Map,
+audio_backend: audio.Backend,
+/// Protects all the fields after this one.
 mutex: Io.Mutex = .init,
 /// Set to an error message when the core logic encounters an unrecoverable error.
 /// The application should show an error dialog and shutdown when this happens.
-failure: ?[]const u8 = null,
+failure: UnrecoverableFailure = .none,
 /// Set to true once data has been loaded from disk.
 loaded: bool = false,
 cache_path: []const u8 = undefined,
@@ -58,6 +60,12 @@ pub const Device = @import("Device.zig");
 pub const StringPool = @import("StringPool.zig");
 
 pub const RefreshFn = fn (core: *Core, src: std.builtin.SourceLocation, id: ?u64) void;
+
+pub const UnrecoverableFailure = union(enum) {
+    none,
+    audio_process_init: anyerror,
+    db_load: anyerror,
+};
 
 pub const Hosts = struct {
     last_id: u32 = 0,
@@ -118,6 +126,7 @@ pub fn init(
         .command_queue = .init(command_queue_buffer),
         .media = undefined,
         .string_pool = .{},
+        .audio_backend = undefined,
     };
 }
 
@@ -139,11 +148,13 @@ pub fn run(core: *Core) void {
     defer log.debug("goodbye", .{});
 
     log.debug("starting audio support", .{});
-    audio.processInit() catch {
+    audio.processInit(&core.audio_backend) catch |err| {
+        log.err("failed to initialize audio: {t}", .{err});
+
         var locked = lockState(core);
         defer locked.unlock();
 
-        core.failure = "error starting audio";
+        core.failure = .{ .audio_process_init = err };
         return;
     };
 

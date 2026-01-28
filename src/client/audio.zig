@@ -8,13 +8,14 @@ const Core = @import("Core.zig");
 const Device = @import("Device.zig");
 const StringPool = @import("StringPool.zig");
 
-pub const backend = switch (native_os) {
+pub const Backend = switch (native_os) {
     .windows => @import("audio/wasapi.zig"),
+    .linux => @import("audio/PulseAudio.zig"),
     else => @import("audio/dummy.zig"),
 };
 pub const Direction = enum { capture, playout };
 
-pub const Stream = backend.Stream;
+pub const Stream = Backend.Stream;
 pub const CallbackFn = fn (
     stream: *anyopaque,
     buffer: *align(buffer_align) anyopaque,
@@ -88,31 +89,25 @@ pub const Format = struct {
     }
 };
 
-// An audio buffer that is aligned to handle any audio format
-pub const AnyFormatBuffer = struct {
-    frame_count: usize,
-    ptr: *align(buffer_align) anyopaque,
-};
 pub const Buffer = struct {
     frame_count: usize,
     ptr: *anyopaque,
 };
 
 /// One-time initialization for any process that uses audio.
-pub const processInit = backend.processInit;
-
+pub const processInit = Backend.processInit;
 /// One-time initiailialization for any thread that uses audio.
-pub const threadInit = backend.threadInit;
+pub const threadInit = Backend.threadInit;
 /// Always call once for every call to threadInit
-pub const threadDeinit = backend.threadDeinit;
+pub const threadDeinit = Backend.threadDeinit;
 
 fn iteration(comptime direction: Core.audio.Direction) type {
     return struct {
-        pub const DeviceIteratorError = backend.DeviceIteratorError;
+        pub const DeviceIteratorError = Backend.DeviceIteratorError;
         pub const DeviceIterator = struct {
-            it: backend.DeviceIterator,
+            it: Backend.DeviceIterator,
             pub fn init(err: *DeviceIteratorError) error{DeviceIterator}!DeviceIterator {
-                return .{ .it = try backend.DeviceIterator.init(direction, err) };
+                return .{ .it = try Backend.DeviceIterator.init(direction, err) };
             }
             pub fn deinit(self: *DeviceIterator) void {
                 self.it.deinit();
@@ -131,7 +126,7 @@ pub const Directional = struct {
 
     pub const UpdateDevicesResult = union(enum) {
         locked: void,
-        result: ?backend.DeviceIteratorError,
+        result: ?Backend.DeviceIteratorError,
     };
     pub fn updateDevices(
         self: *Directional,

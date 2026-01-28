@@ -113,7 +113,7 @@ pub const App = struct {
 
         const core = &app.core;
 
-        if (core.failure != null) return .close;
+        if (core.failure != .none) return .close;
         if (!core.loaded) return loadingFrame();
         try guiFrame(app);
         return .ok;

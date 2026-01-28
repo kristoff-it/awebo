@@ -1,14 +1,16 @@
-const builtin = @import("builtin");
+const Dummy = @This();
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+
 const audio = @import("../audio.zig");
 const StringPool = @import("../StringPool.zig");
 const Device = @import("../Device.zig");
 
-pub const kind: audio.Kind = .new_hotness;
-
-pub fn processInit() !void {}
+pub fn processInit(d: *Dummy) !void {
+    _ = d;
+}
 pub fn threadInit() void {}
 pub fn threadDeinit() void {}
 
