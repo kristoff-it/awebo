@@ -8,6 +8,11 @@
             .url = "git+https://github.com/david-vanderson/dvui?ref=zig16-dev#dabe22e6d2f014c4719d4e14f005d84d2860b6e9",
             .hash = "dvui-0.4.0-dev-AQFJmayi2gAKE7FeJoF61v5U1IV9-SupoEcFutIZYpkC",
         },
+        .pulseaudio = .{
+            .url = "https://github.com/andrewrk/pulseaudio/archive/6c5437104c91ba171e436dcf3b9c7c205536f649.tar.gz",
+            .hash = "pulseaudio-16.1.1-7-mk_62PVWNwBgUrv1b_PUmPklhPtlKi-YlgjhNoMKwhAS",
+            .lazy = true,
+        },
         .opus = .{
             .url = "git+https://github.com/allyourcodebase/opus#4fb42992aed6d8184873dec7ee38607cbc4e2601",
             .hash = "opus-0.0.2-vuF-cMAkAADVsm707MYCtPmqmRs0gzg84Sz0qGbb5E3w",
