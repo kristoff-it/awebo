@@ -3,15 +3,14 @@ const zon = @import("build.zig.zon");
 
 const Context = enum { client, server };
 
-const Audio = enum {
-    portaudio,
-    wasapi,
-    dummy,
-};
-
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const dep_optimize = b.option(
+        std.builtin.OptimizeMode,
+        "dep-optimize",
+        "optimization mode of most dependencies",
+    ) orelse .ReleaseFast;
 
     const slow = b.option(
         bool,
@@ -37,13 +36,13 @@ pub fn build(b: *std.Build) void {
         "Overrides the client version of awebo",
     ) orelse zon.version;
 
-    const server, const server_test = setupServer(b, target, optimize, slow, echo, server_version);
+    const server, const server_test = setupServer(b, target, optimize, dep_optimize, slow, echo, server_version);
     b.installArtifact(server);
 
-    const gui, const gui_test = setupGui(b, target, optimize);
+    const gui, const gui_test = setupGui(b, target, optimize, dep_optimize);
     b.installArtifact(gui);
 
-    const tui, const tui_test = setupTui(b, target, optimize, client_version);
+    const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, client_version);
     b.installArtifact(tui);
 
     const server_step = b.step("server", "Launch the server executable");
@@ -61,7 +60,7 @@ pub fn build(b: *std.Build) void {
     runArtifact(b, test_step, tui_test);
 
     const ci_step = b.step("ci", "build for all platforms and then run all tests");
-    setupCi(b, ci_step);
+    setupCi(b, ci_step, dep_optimize);
     ci_step.dependOn(test_step);
 
     const check = b.step("check", "check everything");
@@ -74,6 +73,7 @@ pub fn setupServer(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    dep_optimize: std.builtin.OptimizeMode,
     slow: bool,
     echo: bool,
     version: []const u8,
@@ -89,12 +89,12 @@ pub fn setupServer(
 
     const folders = b.dependency("known_folders", .{
         .target = target,
-        .optimize = optimize,
+        .optimize = dep_optimize,
     });
 
     const zqlite = b.dependency("zqlite", .{
         .target = target,
-        .optimize = optimize,
+        .optimize = dep_optimize,
     });
 
     const options = b.addOptions();
@@ -119,6 +119,7 @@ pub fn setupGui(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    dep_optimize: std.builtin.OptimizeMode,
 ) struct { *std.Build.Step.Compile, *std.Build.Step.Compile } {
     const dvui = b.dependency("dvui", .{
         .target = target,
@@ -137,22 +138,22 @@ pub fn setupGui(
 
     const opus = b.dependency("opus", .{
         .target = target,
-        .optimize = optimize,
+        .optimize = dep_optimize,
     });
 
     const opus_tools = b.dependency("opus_tools", .{
         .target = target,
-        .optimize = optimize,
+        .optimize = dep_optimize,
     });
 
     const folders = b.dependency("known_folders", .{
         .target = target,
-        .optimize = optimize,
+        .optimize = dep_optimize,
     });
 
     const zqlite = b.dependency("zqlite", .{
         .target = target,
-        .optimize = optimize,
+        .optimize = dep_optimize,
     });
 
     const options = b.addOptions();
@@ -182,11 +183,12 @@ pub fn setupTui(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    dep_optimize: std.builtin.OptimizeMode,
     version: []const u8,
 ) struct { *std.Build.Step.Compile, *std.Build.Step.Compile } {
     const vaxis = b.dependency("vaxis", .{
         .target = target,
-        .optimize = optimize,
+        .optimize = dep_optimize,
     });
 
     const tui = b.addExecutable(.{
@@ -200,22 +202,22 @@ pub fn setupTui(
 
     const opus = b.dependency("opus", .{
         .target = target,
-        .optimize = optimize,
+        .optimize = dep_optimize,
     });
 
     const opus_tools = b.dependency("opus_tools", .{
         .target = target,
-        .optimize = optimize,
+        .optimize = dep_optimize,
     });
 
     const folders = b.dependency("known_folders", .{
         .target = target,
-        .optimize = optimize,
+        .optimize = dep_optimize,
     });
 
     const zqlite = b.dependency("zqlite", .{
         .target = target,
-        .optimize = optimize,
+        .optimize = dep_optimize,
     });
 
     const options = b.addOptions();
@@ -241,7 +243,7 @@ pub fn setupTui(
     return .{ tui, tui_test };
 }
 
-pub fn setupCi(b: *std.Build, step: *std.Build.Step) void {
+pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.OptimizeMode) void {
     const targets: []const std.Target.Query = &.{
         // .{ .cpu_arch = .aarch64, .os_tag = .macos },
         .{ .cpu_arch = .aarch64, .os_tag = .linux },
@@ -254,9 +256,9 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step) void {
         const target = b.resolveTargetQuery(t);
         const optimize = .Debug;
 
-        const server, const server_test = setupServer(b, target, optimize, false, false, zon.version);
-        const gui, const gui_test = setupGui(b, target, optimize);
-        const tui, const tui_test = setupTui(b, target, optimize, zon.version);
+        const server, const server_test = setupServer(b, target, optimize, dep_optimize, false, false, zon.version);
+        const gui, const gui_test = setupGui(b, target, optimize, dep_optimize);
+        const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, zon.version);
 
         step.dependOn(&server.step);
         step.dependOn(&server_test.step);
