@@ -72,10 +72,13 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
 
     server_log.info("loading database", .{});
     db = .init(cmd.db_path, .read_write);
-    if (builtin.mode == .Debug) db.close();
+    defer if (builtin.mode == .Debug) db.close();
     qs = db.initQueries(Queries);
-    if (builtin.mode == .Debug) db.deinitQueries(Queries, &qs);
     cqs = db.initQueries(Database.CommonQueries);
+    defer if (builtin.mode == .Debug) {
+        db.deinitQueries(Queries, &qs);
+        db.deinitQueries(Database.CommonQueries, &cqs);
+    };
     ___state.init(io, gpa) catch |err| {
         cli.fatal("unable to load state from database: {t}", .{err});
     };
