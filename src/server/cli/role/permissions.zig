@@ -8,11 +8,11 @@ const cli = @import("../../../cli.zig");
 pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     _ = io;
     _ = gpa;
-    if (it.next()) |arg| {
-        const eql = std.mem.eql;
-        if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) exitHelp(0);
 
-        cli.fatal("unknown argument: '{s}'\n\n", .{arg});
+    var args: cli.Args = .init(it);
+    if (args.peek()) |current_arg| {
+        if (args.help()) exitHelp(0);
+        cli.fatal("unknown argument '{s}'", .{current_arg});
     }
 
     std.debug.print("-- server-level permissions --\n\n", .{});
@@ -35,7 +35,7 @@ fn exitHelp(status: u8) noreturn {
         \\List permissions that can be granted or denied to a role.
         \\
         \\Optional arguments:
-        \\ --help, -h                 Show this menu and exit.
+        \\  --help, -h    Show this menu and exit.
         \\
     , .{});
 

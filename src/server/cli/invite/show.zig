@@ -83,32 +83,28 @@ const Command = struct {
         var port: ?u16 = null;
         var db_path: ?[:0]const u8 = null;
 
-        const invite_slug = it.next() orelse {
+        var args: cli.Args = .init(it);
+
+        if (args.help()) exitHelp(0);
+        const invite_slug = args.next() orelse {
             std.debug.print("error: missing INVITE_SLUG for show\n", .{});
             exitHelp(1);
         };
 
-        const eql = std.mem.eql;
-        if (eql(u8, invite_slug, "--help") or eql(u8, invite_slug, "-h")) exitHelp(0);
-        while (it.next()) |arg| {
-            if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) exitHelp(0);
-            if (eql(u8, arg, "--address")) {
-                if (address != null) cli.fatal("duplicate --address flag", .{});
-                const address_arg = it.next() orelse cli.fatal("missing value for --address", .{});
-                address = Invite.Address.parse(address_arg) catch {
-                    cli.fatal("invalid value for --address (hostname or IP address): '{s}'", .{address_arg});
+        while (args.peek()) |current_arg| {
+            if (args.help()) exitHelp(0);
+            if (args.option("address")) |address_opt| {
+                address = Invite.Address.parse(address_opt) catch {
+                    cli.fatal("invalid value for --address (hostname or IP address): '{s}'", .{address_opt});
                 };
-            } else if (eql(u8, arg, "--port")) {
-                if (port != null) cli.fatal("duplicate --port flag", .{});
-                const port_arg = it.next() orelse cli.fatal("missing value for --port", .{});
-                port = std.fmt.parseInt(u16, port_arg, 10) catch {
-                    cli.fatal("invalid value for --port (integer): '{s}'", .{port_arg});
+            } else if (args.option("port")) |port_opt| {
+                port = std.fmt.parseInt(u16, port_opt, 10) catch {
+                    cli.fatal("invalid value for --port (integer): '{s}'", .{port_opt});
                 };
-            } else if (eql(u8, arg, "--db-path")) {
-                if (db_path != null) cli.fatal("duplicate --db-path flag", .{});
-                db_path = it.next() orelse cli.fatal("missing value for --db-path", .{});
+            } else if (args.option("db-path")) |db_path_opt| {
+                db_path = db_path_opt;
             } else {
-                cli.fatal("unknown argument '{s}'", .{arg});
+                cli.fatal("unknown argument '{s}'", .{current_arg});
             }
         }
 
@@ -131,11 +127,11 @@ fn exitHelp(status: u8) noreturn {
         \\Show information about a specific invite.
         \\
         \\Optional arguments:
-        \\  --address ADDRESS     Address to display in the `awebo://` invite. Defaults to 127.0.0.1
-        \\  --port PORT           port to display in the `awebo://` invite. Defaults to 1991
-        \\  --db-path DB_PATH     Path to the SQLite database to be used.
-        \\                        Defaults to 'awebo.db'.
-        \\  --help, -h            Show this menu and exit.
+        \\  --address ADDRESS    Address to display in the `awebo://` invite. Defaults to 127.0.0.1
+        \\  --port PORT          Port to display in the `awebo://` invite. Defaults to 1991
+        \\  --db-path DB_PATH    Path to the SQLite database to be used.
+        \\                       Defaults to 'awebo.db'.
+        \\  --help, -h           Show this menu and exit.
         \\
     , .{});
 

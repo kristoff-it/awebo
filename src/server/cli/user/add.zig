@@ -81,23 +81,20 @@ const Command = struct {
         var display_name: ?[]const u8 = null;
         var db_path: ?[:0]const u8 = null;
 
-        const eql = std.mem.eql;
-        while (it.next()) |arg| {
-            if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) exitHelp(0);
-            if (eql(u8, arg, "--handle")) {
-                if (handle != null) cli.fatal("duplicate --handle flag", .{});
-                handle = it.next() orelse cli.fatal("missing value for --handle", .{});
-            } else if (eql(u8, arg, "--password")) {
-                if (password != null) cli.fatal("duplicate --password flag", .{});
-                password = it.next() orelse cli.fatal("missing value for --password", .{});
-            } else if (eql(u8, arg, "--display-name")) {
-                if (display_name != null) cli.fatal("duplicate --display-name flag", .{});
-                display_name = it.next() orelse cli.fatal("missing value for --display-name", .{});
-            } else if (eql(u8, arg, "--db-path")) {
-                if (db_path != null) cli.fatal("duplicate --db-path flag", .{});
-                db_path = it.next() orelse cli.fatal("missing value for --db-path", .{});
+        var args: cli.Args = .init(it);
+
+        while (args.peek()) |current_arg| {
+            if (args.help()) exitHelp(0);
+            if (args.option("handle")) |handle_opt| {
+                handle = handle_opt;
+            } else if (args.option("password")) |password_opt| {
+                password = password_opt;
+            } else if (args.option("display-name")) |display_name_opq| {
+                display_name = display_name_opq;
+            } else if (args.option("db-path")) |db_path_opq| {
+                db_path = db_path_opq;
             } else {
-                cli.fatal("unknown argument '{s}'", .{arg});
+                cli.fatal("unknown argument '{s}'", .{current_arg});
             }
         }
 
@@ -121,14 +118,14 @@ fn exitHelp(status: u8) noreturn {
         \\Add a new user.
         \\
         \\Required arguments:
-        \\ --handle HANDLE            User's new '@handle'
-        \\ --password PASSWORD        User password
+        \\  --handle HANDLE        User's new '@handle'
+        \\  --password PASSWORD    User password
         \\
         \\Optional arguments:
-        \\ --display-name NAME        User's display name, defaults to the handle value.
-        \\ --db-path DB_PATH          Path where to find the SQLite database.
-        \\                            Defaults to 'awebo.db'.
-        \\ --help, -h                 Show this menu and exit.
+        \\  --display-name NAME    User's display name, defaults to the handle value.
+        \\  --db-path DB_PATH      Path where to find the SQLite database.
+        \\                         Defaults to 'awebo.db'.
+        \\  --help, -h             Show this menu and exit.
         \\
     , .{});
 

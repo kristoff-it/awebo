@@ -55,12 +55,12 @@ fn exitHelp(status: u8) noreturn {
         \\Add a server to the configuration.
         \\
         \\Required arguments:
-        \\ --identity IDENTITY        Server identity to add
-        \\ --username USERNAME        Server username
-        \\ --password PASSWORD        Server password
+        \\  --identity IDENTITY    Server identity to add
+        \\  --username USERNAME    Server username
+        \\  --password PASSWORD    Server password
         \\
         \\Optional arguments:
-        \\ --help, -h                 Show this menu and exit.
+        \\  --help, -h    Show this menu and exit.
         \\
     , .{});
 

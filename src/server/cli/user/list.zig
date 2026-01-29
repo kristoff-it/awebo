@@ -40,14 +40,14 @@ const Command = struct {
     fn parse(it: *std.process.Args.Iterator) Command {
         var db_path: ?[:0]const u8 = null;
 
-        const eql = std.mem.eql;
-        while (it.next()) |arg| {
-            if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) exitHelp(0);
-            if (eql(u8, arg, "--db-path")) {
-                if (db_path != null) cli.fatal("duplicate --db-path flag", .{});
-                db_path = it.next() orelse cli.fatal("missing value for --db-path", .{});
+        var args: cli.Args = .init(it);
+
+        while (args.peek()) |current_arg| {
+            if (args.help()) exitHelp(0);
+            if (args.option("db-path")) |db_path_opt| {
+                db_path = db_path_opt;
             } else {
-                cli.fatal("unknown argument '{s}'", .{arg});
+                cli.fatal("unknown argument '{s}'", .{current_arg});
             }
         }
 
@@ -62,9 +62,9 @@ fn exitHelp(status: u8) noreturn {
         \\List users.
         \\
         \\Optional arguments:
-        \\ --db-path DB_PATH     Path to the SQLite database to be used.
+        \\  --db-path DB_PATH    Path to the SQLite database to be used.
         \\                       Defaults to 'awebo.db'.
-        \\ --help, -h            Show this menu and exit.
+        \\  --help, -h           Show this menu and exit.
         \\
     , .{});
 

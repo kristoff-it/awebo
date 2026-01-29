@@ -68,8 +68,8 @@ fn exitHelp(status: u8) noreturn {
         \\
         \\Resource-less commands:
         \\
-        \\  version  Print the awebo-server version and exit
-        \\  help     Show this menu and exit
+        \\  version    Print the awebo-server version and exit
+        \\  help       Show this menu and exit
         \\
         \\
     , .{});
