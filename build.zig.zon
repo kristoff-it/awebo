@@ -31,8 +31,8 @@
             .lazy = true,
         },
         .known_folders = .{
-            .url = "git+https://github.com/ziglibs/known-folders#8465ba6cfc49fe941f95c75b3ae48c03aa6125b5",
-            .hash = "known_folders-0.0.0-Fy-PJqrJAACSvJM3Ux3aJi3wu5hOUYBRvcTM-9NTelui",
+            .url = "git+https://github.com/ziglibs/known-folders#82027007c0eb199a3242c167a5cffd83b6ee571b",
+            .hash = "known_folders-0.0.0-Fy-PJqHJAAB43zDJmOdlr3nViu69IFI9pNFt7hkHjKk4",
         },
         .vaxis = .{
             .url = "git+https://github.com/neurocyte/libvaxis?ref=awebo#62f75158347d6640cdc9969c9d9490cdc9b1b574",
