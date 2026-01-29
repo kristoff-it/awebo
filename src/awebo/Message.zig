@@ -7,7 +7,7 @@ const Message = @This();
 pub const Id = u64;
 
 id: Id,
-origin: u32,
+origin: u64,
 author: User.Id,
 text: []const u8,
 

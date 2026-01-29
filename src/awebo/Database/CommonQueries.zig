@@ -106,7 +106,7 @@ select_channel_messages: Query(
     .kind = .rows,
     .cols = struct {
         uid: u64,
-        origin: u32,
+        origin: u64,
         author: awebo.User.Id,
         body: []const u8,
     },
@@ -191,7 +191,7 @@ insert_message: Query(
     .kind = .exec,
     .args = struct {
         uid: u64,
-        origin: u32,
+        origin: u64,
         channel: awebo.Channel.Id,
         author: ?awebo.User.Id,
         body: []const u8,

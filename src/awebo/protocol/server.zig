@@ -142,7 +142,7 @@ pub const MediaConnectionDetails = struct {
 };
 
 pub const ChatMessageNew = struct {
-    origin: u32,
+    origin: u64,
     channel: Channel.Id,
     msg: Message,
 

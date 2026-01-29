@@ -624,7 +624,7 @@ pub fn callLeave(core: *Core) !void {
     ac.disconnect(core);
 }
 
-pub fn now(core: *Core) u32 {
+pub fn now(core: *Core) u64 {
     const n = std.time.Instant.now() catch @panic("need a working clock");
     return @intCast(n.since(core.start_time));
 }
