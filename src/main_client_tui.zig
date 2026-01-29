@@ -25,20 +25,20 @@ pub fn main(init: process.Init) !void {
     const resource = it.next() orelse "tui";
 
     const resource_enum = std.meta.stringToEnum(Resource, resource) orelse {
-        std.debug.print("fatal error: invalid resource '{s}'\n", .{resource});
-        fatalHelp();
+        std.debug.print("error: invalid resource '{s}'\n", .{resource});
+        exitHelp(1);
     };
 
     switch (resource_enum) {
         .version => exitVersion(),
-        .help, .@"--help", .@"-h" => fatalHelp(),
+        .help, .@"--help", .@"-h" => exitHelp(0),
 
         .server => @import("client/cli/server.zig").run(init.io, gpa, environ, &it),
         .tui => @import("client/tui.zig").run(init.io, gpa, &it),
     }
 }
 
-fn fatalHelp() noreturn {
+fn exitHelp(status: u8) noreturn {
     std.debug.print(
         \\Usage: awebo RESOURCE COMMAND [ARGUMENTS]
         \\
@@ -59,7 +59,7 @@ fn fatalHelp() noreturn {
         \\
     , .{});
 
-    std.process.exit(1);
+    std.process.exit(status);
 }
 
 fn exitVersion() noreturn {

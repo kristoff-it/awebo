@@ -6,6 +6,7 @@ const Allocator = std.mem.Allocator;
 const awebo = @import("../../../awebo.zig");
 const Database = awebo.Database;
 const Query = Database.Query;
+const cli = @import("../../../cli.zig");
 
 const log = std.log.scoped(.db);
 
@@ -67,45 +68,49 @@ const Command = struct {
         var user_limit_value: ?u64 = null;
         var db_path: ?[:0]const u8 = null;
 
-        const invite_slug = it.next() orelse fatalHelp();
+        const invite_slug = it.next() orelse {
+            std.debug.print("error: missing INVITE_SLUG for edit\n", .{});
+            exitHelp(1);
+        };
 
         const eql = std.mem.eql;
-        if (eql(u8, invite_slug, "--help") or eql(u8, invite_slug, "-h")) fatalHelp();
+        if (eql(u8, invite_slug, "--help") or eql(u8, invite_slug, "-h")) exitHelp(0);
         while (it.next()) |arg| {
-            if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) fatalHelp();
+            if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) exitHelp(0);
             if (eql(u8, arg, "--expiry")) {
-                if (expiry != null) fatal("duplicate --expiry flag", .{});
-                const expiry_arg = it.next() orelse fatal("missing value for --expiry", .{});
+                if (expiry != null) cli.fatal("duplicate --expiry flag", .{});
+                const expiry_arg = it.next() orelse cli.fatal("missing value for --expiry", .{});
                 expiry = std.fmt.parseInt(i64, expiry_arg, 10) catch {
-                    fatal("invalid value for --expiry (integer): '{s}'", .{expiry_arg});
+                    cli.fatal("invalid value for --expiry (integer): '{s}'", .{expiry_arg});
                 };
             } else if (eql(u8, arg, "--enabled")) {
-                if (enabled != null) fatal("duplicate --enabled flag", .{});
-                const enabled_arg = it.next() orelse fatal("missing value for --enabled", .{});
+                if (enabled != null) cli.fatal("duplicate --enabled flag", .{});
+                const enabled_arg = it.next() orelse cli.fatal("missing value for --enabled", .{});
                 if (eql(u8, enabled_arg, "true")) {
                     enabled = true;
                 } else if (eql(u8, enabled_arg, "false")) {
                     enabled = false;
                 } else {
-                    fatal("invalid value for --enabled (boolean): '{s}'", .{enabled_arg});
+                    cli.fatal("invalid value for --enabled (boolean): '{s}'", .{enabled_arg});
                 }
             } else if (eql(u8, arg, "--user-limit")) {
-                if (user_limit_set != null) fatal("duplicate --user-limit flag", .{});
+                if (user_limit_set != null) cli.fatal("duplicate --user-limit flag", .{});
                 user_limit_set = true;
 
-                const user_limit_arg = it.next() orelse fatal("missing value for --user-limit", .{});
+                const user_limit_arg = it.next() orelse cli.fatal("missing value for --user-limit", .{});
+
                 if (std.ascii.eqlIgnoreCase(user_limit_arg, "null")) {
                     user_limit_value = null;
                 } else {
                     user_limit_value = std.fmt.parseInt(u32, user_limit_arg, 10) catch {
-                        fatal("invalid value for --user-limit (integer or 'null'): '{s}'", .{user_limit_arg});
+                        cli.fatal("invalid value for --user-limit (integer or 'null'): '{s}'", .{user_limit_arg});
                     };
                 }
-            } else if (eql(u8, arg, "--db_path")) {
-                if (db_path != null) fatal("duplicate --db_path flag", .{});
-                db_path = it.next() orelse fatal("missing value for --db_path", .{});
+            } else if (eql(u8, arg, "--db-path")) {
+                if (db_path != null) cli.fatal("duplicate --db-path flag", .{});
+                db_path = it.next() orelse cli.fatal("missing value for --db-path", .{});
             } else {
-                fatal("unknown argument '{s}'", .{arg});
+                cli.fatal("unknown argument '{s}'", .{arg});
             }
         }
 
@@ -127,11 +132,11 @@ const Command = struct {
             if (@field(cmd, f.name) != null) return cmd;
         }
 
-        fatal("at least one invite editing argument must be specified", .{});
+        cli.fatal("at least one invite editing argument must be specified", .{});
     }
 };
 
-fn fatalHelp() noreturn {
+fn exitHelp(status: u8) noreturn {
     std.debug.print(
         \\Usage: awebo-server invite edit INVITE_SLUG EDIT_ARGS [OPTIONAL_ARGS]
         \\
@@ -139,7 +144,6 @@ fn fatalHelp() noreturn {
         \\
         \\Invite editing arguments (at least one must be specified):
         \\  --expiry EXPIRY          Change the invite's expiration time
-        \\  --creator-handle HANDLE  Change the invite's creator
         \\  --enabled ENABLED        Enable/disable the invite
         \\  --user-limit LIMIT       Change the invite's user limit
         \\
@@ -150,13 +154,7 @@ fn fatalHelp() noreturn {
         \\
     , .{});
 
-    std.process.exit(1);
-}
-
-fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
-    std.debug.print("fatal error: " ++ fmt ++ "\n", args);
-    if (builtin.mode == .Debug) @breakpoint();
-    std.process.exit(1);
+    std.process.exit(status);
 }
 
 test "invite edit queries" {

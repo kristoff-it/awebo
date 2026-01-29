@@ -14,23 +14,26 @@ const Subcommand = enum {
 };
 
 pub fn run(io: Io, gpa: Allocator, environ: *std.process.Environ.Map, it: *std.process.Args.Iterator) void {
-    const raw_subcmd = it.next() orelse fatalHelp();
+    const subcmd_arg = it.next() orelse {
+        std.debug.print("error: missing subcommand for server resource\n", .{});
+        exitHelp(1);
+    };
 
-    const subcmd = std.meta.stringToEnum(Subcommand, raw_subcmd) orelse {
-        std.debug.print("unknown command '{s}' for user resource\n", .{raw_subcmd});
-        fatalHelp();
+    const subcmd = std.meta.stringToEnum(Subcommand, subcmd_arg) orelse {
+        std.debug.print("error: unknown subcommand for server resource: '{s}'\n", .{subcmd_arg});
+        exitHelp(1);
     };
 
     switch (subcmd) {
+        .help, .@"-h", .@"--help" => exitHelp(0),
         .add => return @import("server/add.zig").run(io, gpa, environ, it),
         .remove => @panic("not implemented"), //return @import("server/add.zig").run(io, gpa, it),
         .list => return @import("server/list.zig").run(io, gpa, environ, it),
         .show => return @import("server/show.zig").run(io, gpa, environ, it),
-        .help, .@"-h", .@"--help" => fatalHelp(),
     }
 }
 
-fn fatalHelp() noreturn {
+fn exitHelp(status: u8) noreturn {
     std.debug.print(
         \\Usage: awebo server COMMAND [ARGUMENTS]
         \\
@@ -48,11 +51,5 @@ fn fatalHelp() noreturn {
         \\
     , .{});
 
-    std.process.exit(1);
-}
-
-fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
-    std.debug.print("fatal error: " ++ fmt ++ "\n", args);
-    if (builtin.mode == .Debug) @breakpoint();
-    std.process.exit(1);
+    std.process.exit(status);
 }

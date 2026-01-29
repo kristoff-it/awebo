@@ -6,6 +6,7 @@ const Allocator = std.mem.Allocator;
 const awebo = @import("../../../awebo.zig");
 const Database = awebo.Database;
 const Query = Database.Query;
+const cli = @import("../../../cli.zig");
 
 const log = std.log.scoped(.db);
 
@@ -32,7 +33,7 @@ const Command = struct {
     }
 };
 
-fn fatalHelp() noreturn {
+fn exitHelp(status: u8) noreturn {
     std.debug.print(
         \\Usage: awebo-server role add REQUIRED_ARGS [OPTIONAL_ARGS]
         \\
@@ -50,13 +51,7 @@ fn fatalHelp() noreturn {
         \\
     , .{});
 
-    std.process.exit(1);
-}
-
-fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
-    std.debug.print("fatal error: " ++ fmt ++ "\n", args);
-    if (builtin.mode == .Debug) @breakpoint();
-    std.process.exit(1);
+    std.process.exit(status);
 }
 
 test "role add queries" {

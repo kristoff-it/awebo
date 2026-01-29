@@ -6,6 +6,7 @@ const Allocator = std.mem.Allocator;
 const awebo = @import("../../../awebo.zig");
 const Database = awebo.Database;
 const Query = Database.Query;
+const cli = @import("../../../cli.zig");
 
 const alphnumeric_ascii = std.ascii.letters ++ "0123456789";
 
@@ -66,7 +67,7 @@ pub fn run(io: Io, _: Allocator, it: *std.process.Args.Iterator) void {
 
     const creator_id = if (creator_id_row) |r| r.get(.creator) else {
         // In this case, no rows were returned by the SELECT statement, so no rows were inserted
-        fatal("no user with handle '{s}'", .{cmd.creator_handle});
+        cli.fatal("no user with handle '{s}'", .{cmd.creator_handle});
     };
 
     std.debug.print(
@@ -95,52 +96,52 @@ const Command = struct {
 
         const eql = std.mem.eql;
         while (it.next()) |arg| {
-            if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) fatalHelp();
+            if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) exitHelp(0);
             if (eql(u8, arg, "--slug")) {
-                if (slug != null) fatal("duplicate --slug flag", .{});
-                slug = it.next() orelse fatal("missing value for --slug", .{});
+                if (slug != null) cli.fatal("duplicate --slug flag", .{});
+                slug = it.next() orelse cli.fatal("missing value for --slug", .{});
             } else if (eql(u8, arg, "--expiry")) {
-                if (expiry != null) fatal("duplicate --expiry flag", .{});
-                const expiry_arg = it.next() orelse fatal("missing value for --expiry", .{});
+                if (expiry != null) cli.fatal("duplicate --expiry flag", .{});
+                const expiry_arg = it.next() orelse cli.fatal("missing value for --expiry", .{});
                 expiry = std.fmt.parseInt(i64, expiry_arg, 10) catch {
-                    fatal("invalid value for --expiry (integer): '{s}'", .{expiry_arg});
+                    cli.fatal("invalid value for --expiry (integer): '{s}'", .{expiry_arg});
                 };
             } else if (eql(u8, arg, "--creator-handle")) {
-                if (creator != null) fatal("duplicate --creator-handle flag", .{});
-                creator = it.next() orelse fatal("missing value for --creator-handle", .{});
+                if (creator != null) cli.fatal("duplicate --creator-handle flag", .{});
+                creator = it.next() orelse cli.fatal("missing value for --creator-handle", .{});
             } else if (eql(u8, arg, "--enabled")) {
-                if (enabled != null) fatal("duplicate --enabled flag", .{});
-                const enabled_arg = it.next() orelse fatal("missing value for --enabled", .{});
+                if (enabled != null) cli.fatal("duplicate --enabled flag", .{});
+                const enabled_arg = it.next() orelse cli.fatal("missing value for --enabled", .{});
                 if (eql(u8, enabled_arg, "true")) {
                     enabled = true;
-                } else if (eql(u8, enabled_arg, "true")) {
+                } else if (eql(u8, enabled_arg, "false")) {
                     enabled = false;
                 } else {
-                    fatal("invalid value for --enabled (boolean): '{s}'", .{enabled_arg});
+                    cli.fatal("invalid value for --enabled (boolean): '{s}'", .{enabled_arg});
                 }
             } else if (eql(u8, arg, "--user-limit")) {
-                if (user_limit != .unset) fatal("duplicate --user-limit flag", .{});
-                const user_limit_arg = it.next() orelse fatal("missing value for --user-limit", .{});
+                if (user_limit != .unset) cli.fatal("duplicate --user-limit flag", .{});
+                const user_limit_arg = it.next() orelse cli.fatal("missing value for --user-limit", .{});
                 if (std.ascii.eqlIgnoreCase(user_limit_arg, "null")) {
                     user_limit = .no_limit;
                 } else {
                     user_limit = .{
                         .limit = std.fmt.parseInt(u32, user_limit_arg, 10) catch {
-                            fatal("invalid value for --user-limit (integer or 'null'): '{s}'", .{user_limit_arg});
+                            cli.fatal("invalid value for --user-limit (integer or 'null'): '{s}'", .{user_limit_arg});
                         },
                     };
                 }
             } else if (eql(u8, arg, "--db-path")) {
-                if (db_path != null) fatal("duplicate --db-path flag", .{});
-                db_path = it.next() orelse fatal("missing value for --db-path", .{});
+                if (db_path != null) cli.fatal("duplicate --db-path flag", .{});
+                db_path = it.next() orelse cli.fatal("missing value for --db-path", .{});
             } else {
-                fatal("unknown argument '{s}'", .{arg});
+                cli.fatal("unknown argument '{s}'", .{arg});
             }
         }
 
         return .{
             .slug = slug,
-            .creator_handle = creator orelse fatal("--creator-handle argument is required", .{}),
+            .creator_handle = creator orelse cli.fatal("--creator-handle argument is required", .{}),
             .expiry = expiry,
             .enabled = enabled orelse true,
             .user_limit = switch (user_limit) {
@@ -153,7 +154,7 @@ const Command = struct {
     }
 };
 
-fn fatalHelp() noreturn {
+fn exitHelp(status: u8) noreturn {
     std.debug.print(
         \\Usage: awebo-server invite add REQUIRED_ARGS [OPTIONAL_ARGS]
         \\
@@ -172,13 +173,7 @@ fn fatalHelp() noreturn {
         \\
     , .{});
 
-    std.process.exit(1);
-}
-
-fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
-    std.debug.print("fatal error: " ++ fmt ++ "\n", args);
-    if (builtin.mode == .Debug) @breakpoint();
-    std.process.exit(1);
+    std.process.exit(status);
 }
 
 test "invite add queries" {
