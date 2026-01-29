@@ -26,9 +26,16 @@ pub const Kind = union(Enum) {
     pub const Enum = enum(u8) { chat, voice };
     pub const protocol = struct {};
 
-    pub fn sync(kind: *Kind, gpa: Allocator, db: Database, id: Channel.Id, new: *const Kind) void {
+    pub fn sync(
+        kind: *Kind,
+        gpa: Allocator,
+        db: Database,
+        qs: *Database.CommonQueries,
+        id: Channel.Id,
+        new: *const Kind,
+    ) void {
         switch (kind.*) {
-            inline else => |*k| k.sync(gpa, db, id, new),
+            inline else => |*k| k.sync(gpa, db, qs, id, new),
         }
     }
 };
@@ -54,13 +61,19 @@ pub fn deinit(c: *Channel, gpa: Allocator) void {
 }
 
 /// See awebo.Host.sync for code that updates other channel metadata.
-pub fn sync(c: *Channel, gpa: Allocator, db: Database, new: *const Channel) void {
+pub fn sync(
+    c: *Channel,
+    gpa: Allocator,
+    db: Database,
+    qs: *Database.CommonQueries,
+    new: *const Channel,
+) void {
     c.shallowDeinit(gpa);
 
     c.name = new.name;
     c.privacy = new.privacy;
 
-    c.kind.sync(gpa, db, c.id, &new.kind);
+    c.kind.sync(gpa, db, qs, c.id, &new.kind);
 }
 
 pub fn format(c: Channel, w: *Io.Writer) !void {

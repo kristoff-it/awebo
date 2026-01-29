@@ -163,13 +163,15 @@ pub fn initHostDb(gpa: Allocator, cache_path: []const u8, h: *awebo.Host) !void 
     defer gpa.free(db_path);
 
     const db: awebo.Database = .init(db_path, .create);
-    db.loadHost(gpa, h);
+    const qs = db.initQueries(awebo.Database.CommonQueries);
+    db.loadHost(gpa, &qs, h);
 
     h.client.identity = identity;
     h.client.host_id = id;
     h.client.username = username;
     h.client.password = password;
     h.client.db = db;
+    h.client.qs = qs;
 }
 
 pub fn updateHosts(io: Io, hosts: []const awebo.Host) !void {

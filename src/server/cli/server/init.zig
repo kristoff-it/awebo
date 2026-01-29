@@ -2,15 +2,22 @@ const builtin = @import("builtin");
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
-const zeit = @import("zeit");
-
+const zqlite = @import("zqlite");
 const Settings = @import("../../Settings.zig");
-
 const awebo = @import("../../../awebo.zig");
 const Database = awebo.Database;
-const zqlite = @import("zqlite");
+const Query = Database.Query;
+const user_add = @import("../user/add.zig");
 
 const log = std.log.scoped(.db);
+
+pub const Queries = struct {
+    insert_user: @FieldType(Database.CommonQueries, "insert_user"),
+    insert_channels: @FieldType(Database.CommonQueries, "insert_channels"),
+    insert_roles: @FieldType(Database.CommonQueries, "insert_roles"),
+    insert_host_kv: @FieldType(Database.CommonQueries, "insert_host_kv"),
+    insert_password: @FieldType(user_add.Queries, "insert_password"),
+};
 
 pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     const cmd: Command = .parse(it);
@@ -18,7 +25,70 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     const db: Database = .init(cmd.db_path, .create);
     defer db.conn.close();
 
-    try seed(io, gpa, cmd, db.conn);
+    const qs = db.initQueries(Queries);
+    defer db.deinitQueries(Queries, &qs);
+
+    try seed(io, gpa, cmd, db, &qs);
+}
+
+fn seed(
+    io: std.Io,
+    gpa: Allocator,
+    cmd: Command,
+    db: Database,
+    qs: *const Queries,
+) !void {
+    var id: awebo.IdGenerator = .init(0);
+
+    var out: [4096]u8 = undefined;
+    const pass_str = std.crypto.pwhash.argon2.strHash(cmd.owner.password, .{
+        .allocator = gpa,
+        .params = .interactive_2id,
+    }, &out, io) catch |err| {
+        fatal("unable to hash admin password: {t}", .{err});
+    };
+
+    _ = qs.insert_user.run(db, .{
+        .created = 0,
+        .update_uid = id.new(),
+        .handle = cmd.owner.handle,
+        .invited_by = 1,
+        .power = .owner,
+        .display_name = "Admin",
+    }).?;
+
+    qs.insert_password.run(db, .{
+        .handle = cmd.owner.handle,
+        .hash = pass_str,
+    });
+
+    qs.insert_channels.run(db, .{
+        id.new(),
+        id.new(),
+        id.new(),
+    });
+
+    qs.insert_roles.run(db, .{id.new()});
+
+    const epoch = Io.Clock.real.now(io) catch @panic("server needs a clock");
+    const settings: Settings = .{
+        .name = cmd.server.name,
+        .epoch = epoch.toMilliseconds(),
+    };
+
+    inline for (std.meta.fields(Settings)) |f| {
+        qs.insert_host_kv.run(db, .{
+            .key = f.name,
+            .value = .init(@field(settings, f.name)),
+        });
+    }
+
+    std.debug.print(
+        \\Database initialized correctly, you can now start your awebo server:
+        \\$ awebo-server server run
+        \\
+        \\
+    , .{});
 }
 
 // Map table/index names to sql string
@@ -397,85 +467,6 @@ pub fn migrateSchema(gpa: Allocator, conn: zqlite.Conn) !void {
         log.info("No changes made to DB schema", .{});
 }
 
-fn seed(io: std.Io, gpa: Allocator, cmd: Command, conn: zqlite.Conn) !void {
-    var id: awebo.IdGenerator = .init(0);
-
-    var out: [4096]u8 = undefined;
-    const pass_str = std.crypto.pwhash.argon2.strHash(cmd.owner.password, .{
-        .allocator = gpa,
-        .params = .interactive_2id,
-    }, &out, io) catch |err| {
-        fatal("unable to hash admin password: {t}", .{err});
-    };
-
-    const admin = std.fmt.comptimePrint(
-        \\INSERT INTO users VALUES
-        \\  (?1, unixepoch(), ?1, ?1, {}, ?2, 'Admin', NULL)
-        \\;
-    , .{@intFromEnum(awebo.User.Power.owner)});
-    conn.exec(admin, .{ id.new(), cmd.owner.handle }) catch fatalDb(conn, @src());
-
-    const passwords =
-        \\INSERT INTO passwords VALUES
-        \\  (?, 0, NULL, ?)
-        \\;
-    ;
-
-    conn.exec(passwords, .{ cmd.owner.handle, pass_str }) catch fatalDb(conn, @src());
-
-    const channels = std.fmt.comptimePrint(
-        \\INSERT INTO channels VALUES
-        \\  (?1, ?1, NULL, 0, 'Default Chat Channel', 0, {0}),
-        \\  (?2, ?2, NULL, 0, 'Second Chat Channel', 0, {0}),
-        \\  (?3, ?3, NULL, 0, 'Default Voice Channel', 1, {0})
-        \\;
-    , .{@intFromEnum(awebo.Channel.Privacy.private)});
-
-    conn.exec(channels, .{
-        id.new(),
-        id.new(),
-        id.new(),
-    }) catch fatalDb(conn, @src());
-
-    const roles =
-        \\INSERT INTO roles (id, update_uid, name, sort, prominent) VALUES
-        \\  (?1,  ?1, 'Moderator', 2, true)
-        \\;
-    ;
-    conn.exec(roles, .{id.new()}) catch fatalDb(conn, @src());
-
-    const epoch = Io.Clock.real.now(io) catch @panic("server needs a clock");
-    const settings: Settings = .{
-        .name = cmd.server.name,
-        .epoch = epoch.toMilliseconds(),
-    };
-
-    const host_query =
-        \\INSERT INTO host VALUES
-        \\  (?, ?)
-        \\;
-    ;
-
-    inline for (std.meta.fields(Settings)) |f| {
-        conn.exec(host_query, .{ f.name, @field(settings, f.name) }) catch fatalDb(conn, @src());
-    }
-
-    // const owner_role =
-    //     // Give Owner role to first user.
-    //     \\INSERT INTO user_roles (user, role) VALUES
-    //     \\  (0, 0)
-    //     \\;
-    // ;
-    // conn.exec(owner_role, .{}) catch fatalDb(conn);
-
-    std.debug.print(
-        \\Database initialized correctly, you can now start your awebo server:
-        \\$ awebo-server server run
-        \\
-        \\
-    , .{});
-}
-
 const Command = struct {
     server: struct { name: []const u8 },
     owner: struct {
@@ -562,4 +553,10 @@ pub fn fatalDb(conn: zqlite.Conn, src: std.builtin.SourceLocation) noreturn {
     log.err("{s}:{}: fatal db error: {s}", .{ src.file, src.line, conn.lastError() });
     if (builtin.mode == .Debug) @breakpoint();
     std.process.exit(1);
+}
+
+test "server init queries" {
+    const _db: awebo.Database = .init(":memory:", .create);
+    defer _db.close();
+    _ = _db.initQueries(Queries);
 }

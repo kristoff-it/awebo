@@ -310,7 +310,7 @@ fn chatMessageNew(core: *Core, host_id: HostId, cmn: awebo.protocol.server.ChatM
     const c = &h.channels.get(cmn.channel).?.kind.chat;
     const db = h.client.db;
     db.conn.transaction() catch db.fatal(@src());
-    c.messages.add(core.gpa, h.client.db, cmn.channel, cmn.msg) catch oom();
+    c.messages.add(core.gpa, h.client.db, &h.client.qs, cmn.channel, cmn.msg) catch oom();
     db.conn.commit() catch db.fatal(@src());
 
     if (cmn.origin != 0) {
@@ -624,9 +624,9 @@ pub fn callLeave(core: *Core) !void {
     ac.disconnect(core);
 }
 
-pub fn now(core: *Core) u64 {
+pub fn now(core: *Core) u32 {
     const n = std.time.Instant.now() catch @panic("need a working clock");
-    return n.since(core.start_time);
+    return @intCast(n.since(core.start_time));
 }
 
 pub fn audioDirectional(core: *Core, direction: audio.Direction) *audio.Directional {

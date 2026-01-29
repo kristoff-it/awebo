@@ -4,9 +4,28 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const awebo = @import("../../../awebo.zig");
 const Database = awebo.Database;
-const zqlite = @import("zqlite");
+const Query = Database.Query;
 
 const log = std.log.scoped(.db);
+
+pub const Queries = struct {
+    select_invites: Query(
+        \\SELECT slug, expiry, creator, handle, enabled, remaining
+        \\FROM invites
+        \\JOIN users
+        \\ON users.id = invites.creator;
+    , .{
+        .kind = .rows,
+        .cols = struct {
+            slug: []const u8,
+            expiry: u64,
+            creator: awebo.User.Id,
+            handle: []const u8,
+            enabled: bool,
+            remaining: ?u64,
+        },
+    }),
+};
 
 pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     _ = io;
@@ -14,15 +33,12 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     const cmd: Command = .parse(it);
 
     const db: Database = .init(cmd.db_path, .read_only);
+    defer db.close();
 
-    var rows = db.rows(
-        \\SELECT slug, expiry, creator, handle, enabled, remaining
-        \\FROM invites
-        \\JOIN users
-        \\ON users.id = invites.creator;
-    , .{}) catch db.fatal(@src());
-    defer rows.deinit();
+    const qs = db.initQueries(Queries);
+    defer db.deinitQueries(Queries, &qs);
 
+    var rows = qs.select_invites.run(db, .{});
     var no_invites = true;
     while (rows.next()) |r| {
         no_invites = false;
@@ -30,17 +46,17 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
             \\Invite ({s}):
             \\  expiry: @{d}
             \\  creator: {s} ({d})
-            \\  enabled: {s}
+            \\  enabled: {}
             \\  remaining: {?d}
             \\
             \\
         , .{
             r.textNoDupe(.slug),
-            r.int(.expiry),
+            r.get(.expiry),
             r.textNoDupe(.handle), // Creator handle
-            r.int(.creator),
-            if (r.boolean(.enabled)) "true" else "false",
-            r.nullableInt(.remaining),
+            r.get(.creator),
+            r.get(.enabled),
+            r.get(.remaining),
         });
     }
     if (no_invites) {
@@ -89,4 +105,10 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.print("fatal error: " ++ fmt ++ "\n", args);
     if (builtin.mode == .Debug) @breakpoint();
     std.process.exit(1);
+}
+
+test "invite list queries" {
+    const _db: awebo.Database = .init(":memory:", .create);
+    defer _db.close();
+    _ = _db.initQueries(Queries);
 }

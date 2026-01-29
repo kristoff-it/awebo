@@ -5,41 +5,83 @@ const Allocator = std.mem.Allocator;
 
 const awebo = @import("../../../awebo.zig");
 const Database = awebo.Database;
-const zqlite = @import("zqlite");
+const Query = Database.Query;
 
 const log = std.log.scoped(.db);
+
+const Queries = struct {
+    update_password: Query(
+        \\UPDATE passwords
+        \\SET
+        \\    updated = unixepoch(),
+        \\    hash = ?2,
+        \\    ip = ?3
+        \\WHERE handle = (SELECT handle FROM users WHERE id = ?1);
+    , .{
+        .kind = .exec,
+        .args = struct {
+            id: awebo.User.Id,
+            hash: []const u8,
+            ip: ?[]const u8,
+        },
+    }),
+    update_user: Query(std.fmt.comptimePrint(
+        \\UPDATE users 
+        \\SET 
+        \\    handle = COALESCE(?3, handle),
+        \\    display_name = COALESCE(?4, display_name),
+        \\    update_uid = ({s})
+        \\WHERE id = ?1;
+    , .{@FieldType(Database.CommonQueries, "select_max_uid").sql}), .{
+        .kind = .exec,
+        .args = struct {
+            id: awebo.User.Id,
+            // update_uid: u64,
+            handle: ?[]const u8,
+            display_name: ?[]const u8,
+        },
+    }),
+};
 
 pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     const cmd: Command = .parse(it);
 
     const db: Database = .init(cmd.db_path, .read_write);
+    defer db.close();
+
+    const qs = db.initQueries(Queries);
+    defer db.deinitQueries(Queries, &qs);
 
     db.conn.transaction() catch db.fatal(@src());
 
-    if (cmd.handle) |handle| {
-        db.conn.exec("UPDATE users SET handle = ? WHERE id = ?", .{ handle, cmd.user_id }) catch db.fatal(@src());
-    }
-
     if (cmd.password) |password| {
         var out: [4096]u8 = undefined;
-        const pswd_hash = std.crypto.pwhash.argon2.strHash(password, .{
+        const hash = std.crypto.pwhash.argon2.strHash(password, .{
             .allocator = gpa,
             .params = .interactive_2id,
         }, &out, io) catch |err| {
             fatal("unable to hash user password: {t}", .{err});
         };
-        db.conn.exec("UPDATE users SET pswd_hash = ? WHERE id = ?", .{ pswd_hash, cmd.user_id }) catch db.fatal(@src());
+
+        qs.update_password.run(db, .{
+            .id = cmd.user_id,
+            .hash = hash,
+            .ip = null,
+        });
     }
 
-    if (cmd.display_name) |display_name| {
-        db.conn.exec("UPDATE users SET display_name = ? WHERE id = ?", .{ display_name, cmd.user_id }) catch db.fatal(@src());
-    }
+    qs.update_user.run(db, .{
+        .id = cmd.user_id,
+        // .update_uid = latest_uid + 1,
+        .handle = cmd.handle,
+        .display_name = cmd.display_name,
+    });
 
     db.conn.commit() catch db.fatal(@src());
 }
 
 const Command = struct {
-    user_id: []const u8, // string representing a number
+    user_id: awebo.User.Id,
     db_path: [:0]const u8,
 
     /// Editing arguments, at least one must be specified
@@ -53,7 +95,12 @@ const Command = struct {
         var display_name: ?[]const u8 = null;
         var db_path: ?[:0]const u8 = null;
 
-        const user_id = it.next() orelse fatalHelp();
+        const user_id = blk: {
+            const str = it.next() orelse fatalHelp();
+            break :blk std.fmt.parseInt(awebo.User.Id, str, 10) catch {
+                fatal("unable to parse user id as a number", .{});
+            };
+        };
 
         const eql = std.mem.eql;
         while (it.next()) |arg| {
@@ -117,4 +164,10 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.print("fatal error: " ++ fmt ++ "\n", args);
     if (builtin.mode == .Debug) @breakpoint();
     std.process.exit(1);
+}
+
+test "user edit queries" {
+    const _db: awebo.Database = .init(":memory:", .create);
+    defer _db.close();
+    _ = _db.initQueries(Queries);
 }

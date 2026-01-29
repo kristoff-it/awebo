@@ -3,6 +3,11 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
+const add = @import("user/add.zig");
+const edit = @import("user/edit.zig");
+const delete = @import("user/delete.zig");
+const list = @import("user/list.zig");
+
 const Subcommand = enum {
     ban,
     add,
@@ -26,9 +31,9 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     };
 
     switch (subcmd) {
-        .add => @import("user/add.zig").run(io, gpa, it),
-        .edit => @import("user/edit.zig").run(io, gpa, it),
-        .list => @import("user/list.zig").run(io, gpa, it),
+        .add => add.run(io, gpa, it),
+        .edit => edit.run(io, gpa, it),
+        .list => list.run(io, gpa, it),
         .ban,
         .delete,
         .show,
@@ -64,4 +69,11 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.print("fatal error: " ++ fmt ++ "\n", args);
     if (builtin.mode == .Debug) @breakpoint();
     std.process.exit(1);
+}
+
+test {
+    _ = add;
+    _ = edit;
+    _ = delete;
+    _ = list;
 }

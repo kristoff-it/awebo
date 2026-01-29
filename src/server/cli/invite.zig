@@ -3,6 +3,12 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
+const add = @import("invite/add.zig");
+const edit = @import("invite/edit.zig");
+const list = @import("invite/list.zig");
+const show = @import("invite/show.zig");
+const delete = @import("invite/delete.zig");
+
 const Subcommand = enum {
     add,
     edit,
@@ -26,10 +32,10 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     };
 
     switch (subcmd) {
-        .add => @import("invite/add.zig").run(io, gpa, it),
-        .edit => @import("invite/edit.zig").run(io, gpa, it),
-        .list => @import("invite/list.zig").run(io, gpa, it),
-        .show => @import("invite/show.zig").run(io, gpa, it),
+        .add => add.run(io, gpa, it),
+        .edit => edit.run(io, gpa, it),
+        .list => list.run(io, gpa, it),
+        .show => show.run(io, gpa, it),
         inline .delete => |subcommand| @panic("TODO: invite " ++ @tagName(subcommand)),
         .help, .@"-h", .@"--help" => fatalHelp(),
     }
@@ -61,4 +67,12 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.print("fatal error: " ++ fmt ++ "\n", args);
     if (builtin.mode == .Debug) @breakpoint();
     std.process.exit(1);
+}
+
+test {
+    _ = add;
+    _ = edit;
+    _ = list;
+    _ = show;
+    _ = delete;
 }

@@ -5,20 +5,45 @@ const Allocator = std.mem.Allocator;
 
 const awebo = @import("../../../awebo.zig");
 const Database = awebo.Database;
-const zqlite = @import("zqlite");
+const Query = Database.Query;
 
 const alphnumeric_ascii = std.ascii.letters ++ "0123456789";
 
 const log = std.log.scoped(.db);
 
+const Queries = struct {
+    insert_invite: Query(
+        \\INSERT INTO invites
+        \\  (slug, created,     updated,     expiry, enabled, remaining, creator)
+        \\SELECT
+        \\  ?1,    unixepoch(), unixepoch(), ?2,     ?3,      ?4,        users.id
+        \\FROM users
+        \\WHERE users.handle = ?5
+        \\RETURNING creator;
+    , .{
+        .kind = .row,
+        .cols = struct { creator: awebo.User.Id },
+        .args = struct {
+            slug: []const u8,
+            expiry: i64,
+            enabled: bool,
+            remaining: ?u64,
+            handle: []const u8,
+        },
+    }),
+};
+
 pub fn run(io: Io, _: Allocator, it: *std.process.Args.Iterator) void {
     const cmd: Command = .parse(it);
 
     const db: Database = .init(cmd.db_path, .read_write);
+    defer db.close();
+
+    const qs = db.initQueries(Queries);
+    defer db.deinitQueries(Queries, &qs);
 
     var slug_buf: [16]u8 = undefined;
     const slug = cmd.slug orelse blk: {
-        // HACK: This is kind of hacky...
         // is there a simpler way of getting a random ascii string?
         const now = std.Io.Clock.real.now(io) catch @panic("clock is required for PRNG seed");
         const nanoseconds_bits: u96 = @bitCast(now.nanoseconds);
@@ -29,28 +54,17 @@ pub fn run(io: Io, _: Allocator, it: *std.process.Args.Iterator) void {
         }
         break :blk &slug_buf;
     };
-    const invite =
-        \\INSERT INTO invites
-        \\  (slug, created,     updated,     expiry, enabled, remaining, creator)
-        \\SELECT
-        \\  $1,    unixepoch(), unixepoch(), $2,     $3,      $4,        users.id
-        \\FROM users
-        \\WHERE users.handle = $5
-        \\RETURNING creator;
-    ;
-    const now = std.Io.Clock.real.now(io) catch @panic("unable to get current time");
-    const creator_id_row = db.conn.row(invite, .{
-        slug,
-        cmd.expiry orelse now.toSeconds(),
-        cmd.enabled,
-        cmd.user_limit,
-        cmd.creator_handle,
-    }) catch db.fatal(@src());
 
-    const creator_id = if (creator_id_row) |r| blk: {
-        defer r.deinit();
-        break :blk r.int(0);
-    } else {
+    const now = std.Io.Clock.real.now(io) catch @panic("unable to get current time");
+    const creator_id_row = qs.insert_invite.run(db, .{
+        .slug = slug,
+        .expiry = cmd.expiry orelse now.toSeconds(),
+        .enabled = cmd.enabled,
+        .remaining = cmd.user_limit,
+        .handle = cmd.creator_handle,
+    });
+
+    const creator_id = if (creator_id_row) |r| r.get(.creator) else {
         // In this case, no rows were returned by the SELECT statement, so no rows were inserted
         fatal("no user with handle '{s}'", .{cmd.creator_handle});
     };
@@ -68,7 +82,7 @@ const Command = struct {
     expiry: ?i64,
     creator_handle: []const u8,
     enabled: bool,
-    user_limit: ?u32,
+    user_limit: ?u64,
     db_path: [:0]const u8,
 
     fn parse(it: *std.process.Args.Iterator) Command {
@@ -165,4 +179,10 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.print("fatal error: " ++ fmt ++ "\n", args);
     if (builtin.mode == .Debug) @breakpoint();
     std.process.exit(1);
+}
+
+test "invite add queries" {
+    const _db: awebo.Database = .init(":memory:", .create);
+    defer _db.close();
+    _ = _db.initQueries(Queries);
 }

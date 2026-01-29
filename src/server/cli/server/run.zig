@@ -8,6 +8,7 @@ const Settings = @import("../../Settings.zig");
 const RateLimiter = @import("../../RateLimiter.zig");
 const awebo = @import("../../../awebo.zig");
 const Database = awebo.Database;
+const Query = Database.Query;
 const Host = awebo.Host;
 const Header = awebo.protocol.media.Header;
 const OpenStream = awebo.protocol.media.OpenStream;
@@ -70,6 +71,10 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
 
     server_log.info("loading database", .{});
     db = .init(cmd.db_path, .read_write);
+    if (builtin.mode == .Debug) db.close();
+    qs = db.initQueries(Queries);
+    if (builtin.mode == .Debug) db.deinitQueries(Queries, &qs);
+    cqs = db.initQueries(Database.CommonQueries);
     ___state.init(io, gpa) catch |err| {
         fatal("unable to load state from database: {t}", .{err});
     };
@@ -460,7 +465,7 @@ const Client = struct {
         const cmd = try awebo.protocol.client.Authenticate.deserializeAlloc(gpa, reader);
         defer cmd.deinit(gpa);
 
-        const user = db.getUserByLogin(io, gpa, cmd.method.login.username, cmd.method.login.password) catch |err| switch (err) {
+        const user = getUserByLogin(io, gpa, cmd.method.login.username, cmd.method.login.password) catch |err| switch (err) {
             error.NotFound, error.Password => {
                 log.debug("failed auth attempt for user '{s}': {t}", .{ cmd.method.login.username, err });
                 const reply: awebo.protocol.server.AuthenticateReply = .{
@@ -676,7 +681,7 @@ const Client = struct {
             .text = cms.text,
         };
 
-        try channel.kind.chat.messages.add(gpa, db, channel.id, new);
+        try channel.kind.chat.messages.add(gpa, db, &cqs, channel.id, new);
 
         {
             const cmn: awebo.protocol.server.ChatMessageNew = .{
@@ -729,6 +734,8 @@ pub const Locked = struct {
 };
 
 var db: Database = undefined;
+var qs: Queries = undefined;
+var cqs: Database.CommonQueries = undefined;
 
 pub const State = @TypeOf(___state);
 var ___state: struct {
@@ -772,15 +779,11 @@ var ___state: struct {
 
     fn init(state: *State, io: Io, gpa: Allocator) !void {
         _ = io;
-        const latest_uid: u64 = blk: {
-            const r = db.queries.select_latest_id.run(.{}).?;
-            break :blk r.get(.max_uid);
-        };
-
+        const latest_uid = cqs.select_max_uid.run(db, .{}).?.get(.max_uid);
         const settings = blk: {
             var settings: Settings = undefined;
 
-            var rows = db.queries.select_host_info.run(.{});
+            var rows = cqs.select_host_info.run(db, .{});
 
             outer: while (rows.next()) |r| {
                 const key = r.textNoDupe(.key);
@@ -799,7 +802,7 @@ var ___state: struct {
 
         const host: awebo.Host = host: {
             const channels = blk: {
-                var rs = db.queries.select_channels.run(.{});
+                var rs = cqs.select_channels.run(db, .{});
 
                 var channels: awebo.Host.Channels = .{};
                 while (rs.next()) |r| {
@@ -818,14 +821,14 @@ var ___state: struct {
                     };
 
                     if (channel.kind == .chat) {
-                        var msgs = db.queries.select_channel_messages.run(.{
+                        var msgs = cqs.select_channel_messages.run(db, .{
                             .channel = channel.id,
                             .limit = awebo.Channel.window_size,
                         });
 
                         while (msgs.next()) |m| {
                             const msg: awebo.Message = .{
-                                .id = m.get(.id),
+                                .id = m.get(.uid),
                                 .origin = m.get(.origin),
                                 .author = m.get(.author),
                                 .text = try m.text(gpa, .body),
@@ -987,6 +990,10 @@ const Command = struct {
     }
 };
 
+fn oom() noreturn {
+    fatal("oom", .{});
+}
+
 fn fatalIo(err: anyerror) noreturn {
     fatal("unable to perform I/O operation: {t}", .{err});
 }
@@ -1018,6 +1025,79 @@ fn fatalHelp() noreturn {
     std.process.exit(1);
 }
 
+/// Returns a user given its username and password.
+/// Validation logic is part of this function to make efficient use of the memory returned from sqlite,
+/// which becomes invalid as soon as the relative `Row` is deinited.
+/// On success dupes `username`.
+fn getUserByLogin(
+    io: Io,
+    gpa: Allocator,
+    username: []const u8,
+    password: []const u8,
+) error{ NotFound, Password }!awebo.User {
+    const maybe_pswd_row = qs.select_password.run(db, .{ .handle = username });
+    const pswd_row = maybe_pswd_row orelse {
+        std.crypto.pwhash.argon2.strVerify("bananarama123", password, .{ .allocator = gpa }, io) catch {};
+        return error.NotFound;
+    };
+
+    const pswd_hash = pswd_row.textNoDupe(.hash);
+
+    std.crypto.pwhash.argon2.strVerify(pswd_hash, password, .{ .allocator = gpa }, io) catch |err| switch (err) {
+        error.PasswordVerificationFailed => return error.Password,
+        error.OutOfMemory => oom(),
+        else => fatalIo(err),
+    };
+
+    const maybe_row = qs.select_user_by_handle.run(db, .{
+        .handle = username,
+    });
+    const user_row = maybe_row orelse return error.NotFound;
+
+    return .{
+        .id = user_row.get(.uid),
+        .power = user_row.get(.power),
+        .display_name = user_row.text(gpa, .display_name) catch oom(),
+        .avatar = user_row.text(gpa, .avatar) catch oom(),
+        .handle = gpa.dupe(u8, username) catch oom(),
+        .invited_by = user_row.get(.invited_by),
+        .server = .{
+            .pswd_hash = gpa.dupe(u8, pswd_hash) catch oom(),
+        },
+    };
+}
+
+pub const Queries = struct {
+    select_password: Query(
+        \\SELECT hash FROM passwords WHERE handle = ?
+    , .{
+        .kind = .row,
+        .cols = struct { hash: []const u8 },
+        .args = struct { handle: []const u8 },
+    }),
+
+    select_user_by_handle: Query(
+        \\SELECT id, display_name, power, invited_by, avatar FROM users
+        \\WHERE handle = ?;
+    , .{
+        .kind = .row,
+        .cols = struct {
+            uid: u64,
+            display_name: []const u8,
+            power: awebo.User.Power,
+            invited_by: awebo.User.Id,
+            avatar: []const u8,
+        },
+        .args = struct { handle: []const u8 },
+    }),
+};
+
 test {
     _ = awebo;
+}
+
+test "server run queries" {
+    const _db: awebo.Database = .init(":memory:", .create);
+    defer _db.close();
+    _ = _db.initQueries(Queries);
 }

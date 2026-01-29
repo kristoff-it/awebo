@@ -8,30 +8,29 @@ const zqlite = @import("zqlite");
 
 const log = std.log.scoped(.db);
 
+pub const Queries = struct {
+    select_users: @FieldType(Database.CommonQueries, "select_users"),
+};
+
 pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     _ = io;
     _ = gpa;
     const cmd: Command = .parse(it);
 
     const db: Database = .init(cmd.db_path, .read_only);
+    const qs = db.initQueries(Queries);
 
-    var rows = db.rows("SELECT id, handle, display_name FROM users", .{}) catch db.fatal(@src());
-    defer rows.deinit();
+    var rows = qs.select_users.run(db, .{});
 
-    // var wbuf: [4096]u8 = undefined;
-    // var writer_state = Io.File.stdout().writer(&wbuf);
-    // const w = &writer_state.interface;
-
-    std.debug.print("id\thandle\tdisplay_name\t\n\n", .{});
+    std.debug.print("id\tupdate_uid\thandle\tdisplay_name\t\n\n", .{});
     while (rows.next()) |row| {
-        std.debug.print("{}\t{s}\t{s}\n", .{
-            row.int(.id),
+        std.debug.print("{}\t{}\t{s}\t{s}\n", .{
+            row.get(.id),
+            row.get(.update_uid),
             row.textNoDupe(.handle),
             row.textNoDupe(.display_name),
         });
     }
-
-    // try w.flush();
 }
 
 const Command = struct {
@@ -75,4 +74,10 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.print("fatal error: " ++ fmt ++ "\n", args);
     if (builtin.mode == .Debug) @breakpoint();
     std.process.exit(1);
+}
+
+test "user list queries" {
+    const _db: awebo.Database = .init(":memory:", .create);
+    defer _db.close();
+    _ = _db.initQueries(Queries);
 }

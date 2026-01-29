@@ -42,10 +42,10 @@ const awebo = @import("../awebo.zig");
 const log = std.log.scoped(.db);
 
 conn: zqlite.Conn,
-queries: Queries,
 
 pub const tables = @import("Database/tables.zig");
-pub const Queries = @import("Database/Queries.zig");
+
+pub const CommonQueries = @import("Database/CommonQueries.zig");
 
 pub const Mode = enum(c_int) {
     create = zqlite.OpenFlags.Create | zqlite.OpenFlags.Exclusive,
@@ -77,6 +77,8 @@ pub fn init(db_path: [:0]const u8, mode: Mode) Database {
     };
     errdefer conn.close();
 
+    const db: Database = .{ .conn = conn };
+
     const pragmas = switch (mode) {
         .read_only =>
         \\PRAGMA query_only = true;
@@ -89,159 +91,102 @@ pub fn init(db_path: [:0]const u8, mode: Mode) Database {
         \\PRAGMA temp_store = memory;
         ,
     };
-    conn.execNoArgs(pragmas) catch fatalDb(conn);
+    conn.execNoArgs(pragmas) catch db.fatal(@src());
 
-    if (isEmpty(conn)) {
-        tables.init(conn);
+    if (db.isEmpty()) {
+        db.initTables();
     }
 
-    const db: Database = .{
-        .conn = conn,
-        .queries = .init(conn),
-    };
-
     return db;
+}
+
+pub fn initTables(db: Database) void {
+    tables.init(db) catch db.fatal(@src());
+}
+
+/// Initializes a "Queries" type.
+/// A Queries type is a struct whose fields are all of type Query.
+/// Queries should be passed around by pointer.
+/// Queries should be deinited when disconnecting from the database.
+pub fn initQueries(db: Database, Queries: type) Queries {
+    var qs: Queries = undefined;
+    inline for (@typeInfo(Queries).@"struct".fields) |f| {
+        @field(qs, f.name) = f.type.init(db) catch {
+            log.err("Error caused by {s}, query name: {s}", .{
+                @typeName(Queries),
+                f.name,
+            });
+            db.fatal(@src());
+        };
+    }
+    return qs;
+}
+
+pub inline fn deinitQueries(db: Database, Queries: type, qs: *const Queries) void {
+    _ = db;
+    inline for (@typeInfo(Queries).@"struct".fields) |f| {
+        @field(qs, f.name).deinit();
+    }
 }
 
 pub fn close(db: Database) void {
     db.conn.close();
 }
 
-fn isEmpty(conn: zqlite.Conn) bool {
+pub fn isEmpty(db: Database) bool {
+    // This query runs before we prepare CommonQueries
+    // And it doesn't run too often, on top of the fact
+    // that it only refers to sqlite internal tables,
+    // meaning that we're not going to break it.
+    // For these reasons we don't try to make a prepared
+    // statement out of it.
     const query =
         \\SELECT name FROM sqlite_master 
         \\WHERE type='table' AND name='host';
     ;
 
-    const r = conn.row(query, .{}) catch fatalDb(conn);
+    const r = db.conn.row(query, .{}) catch db.fatal(@src());
     return r == null;
-}
-
-/// See docs for `rows`
-pub fn row(db: Database, comptime query: []const u8, args: anytype) !?Rows(query).Row {
-    return .{ .row = (try db.conn.row(query, args)) orelse return null };
-}
-
-/// Wrapper around zqlite's rows function. Returns wrappers around zqlite.Rows and zqlite.Row.
-/// The wrappers have slightly modified member functions that use enum literals instead of indices
-/// to refer to columns (e.g. zqlite.row.text(0) -> db.row.text(.body)).
-/// Column name validation and mapping happens at comptime.
-/// Validation is somewhat simplistic so for advanced queries consider using the original API
-/// available by calling `db.conn.rows` directly.
-pub fn rows(db: Database, comptime query: []const u8, args: anytype) !Rows(query) {
-    return .{ .rows = try db.conn.rows(query, args) };
-}
-
-pub fn Rows(comptime query: []const u8) type {
-    @setEvalBranchQuota(900000);
-    const columns = blk: {
-        var columns: []const struct { []const u8, u8 } = &.{};
-
-        var it = std.mem.tokenizeAny(u8, query, " ,\n");
-        if (!std.mem.eql(u8, it.next() orelse "", "SELECT")) {
-            @compileError("query must start with SELECT");
-        }
-
-        var idx: u8 = 0; // on overflow, before bumping, ask yourself: who's in the wrong, the code or you?
-        while (it.next()) |tok| : (idx += 1) {
-            if (std.mem.eql(u8, tok, "*")) {
-                @compileError("never do SELECT *, always write column names explicitly");
-            }
-            if (std.mem.eql(u8, tok, "FROM")) break;
-            columns = columns ++ .{.{ tok, idx }};
-        } else @compileError("query missing uppecase 'FROM' keyword");
-
-        break :blk columns;
-    };
-
-    const col_map: std.StaticStringMap(u8) = .initComptime(columns);
-
-    return struct {
-        rows: zqlite.Rows,
-
-        pub fn next(self: *@This()) ?Row {
-            return .{ .row = self.rows.next() orelse return null };
-        }
-
-        pub fn deinit(self: @This()) void {
-            self.rows.deinit();
-        }
-
-        pub const Row = struct {
-            row: zqlite.Row,
-
-            pub fn deinit(self: Row) void {
-                self.row.deinit();
-            }
-
-            pub fn int(r: Row, comptime col: @EnumLiteral()) i64 {
-                const idx = comptime col_map.get(@tagName(col)) orelse {
-                    @compileError("column '" ++ @tagName(col) ++ "' not found in query");
-                };
-                return r.row.int(idx);
-            }
-
-            pub fn nullableInt(r: Row, comptime col: @EnumLiteral()) ?i64 {
-                const idx = comptime col_map.get(@tagName(col)) orelse {
-                    @compileError("column '" ++ @tagName(col) ++ "' not found in query");
-                };
-                return r.row.nullableInt(idx);
-            }
-
-            pub fn boolean(r: Row, comptime col: @EnumLiteral()) bool {
-                const idx = comptime col_map.get(@tagName(col)) orelse {
-                    @compileError("column '" ++ @tagName(col) ++ "' not found in query");
-                };
-                return r.row.boolean(idx);
-            }
-
-            /// Dupes the resulting value, use `textNoDupe` to avoid duping.
-            pub fn text(r: Row, gpa: Allocator, comptime col: @EnumLiteral()) ![]const u8 {
-                const idx = comptime col_map.get(@tagName(col)) orelse {
-                    @compileError("column '" ++ @tagName(col) ++ "' not found in query");
-                };
-                return gpa.dupe(u8, r.row.text(idx));
-            }
-            pub fn textNoDupe(r: Row, comptime col: @EnumLiteral()) []const u8 {
-                const idx = comptime col_map.get(@tagName(col)) orelse {
-                    @compileError("column '" ++ @tagName(col) ++ "' not found in query");
-                };
-                return r.row.text(idx);
-            }
-        };
-    };
 }
 
 pub const loadHost = switch (context) {
     .server => @compileError("client only"),
     .client => struct {
-        fn impl(db: Database, gpa: Allocator, h: *awebo.Host) void {
-            loadData(db, gpa, h) catch oom();
+        fn impl(
+            db: Database,
+            gpa: Allocator,
+            qs: *const awebo.Database.CommonQueries,
+            h: *awebo.Host,
+        ) void {
+            loadData(db, gpa, qs, h) catch oom();
         }
 
-        fn loadData(db: Database, gpa: Allocator, h: *awebo.Host) !void {
-            {
-                const query = "SELECT value FROM host WHERE key = 'name'";
-                const maybe_row = db.row(query, .{}) catch db.fatal(@src());
-                const r = maybe_row orelse {
-                    h.* = .{};
-                    return;
-                };
-                h.name = try r.text(gpa, .value);
-            }
+        fn loadData(
+            db: Database,
+            gpa: Allocator,
+            qs: *const awebo.Database.CommonQueries,
+            h: *awebo.Host,
+        ) !void {
+            // {
+            //     const query = "SELECT value FROM host WHERE key = 'name'";
+            //     const maybe_row = db.row(query, .{}) catch db.fatal(@src());
+            //     const r = maybe_row orelse {
+            //         h.* = .{};
+            //         return;
+            //     };
+            //     h.name = try r.text(gpa, .value);
+            h.name = try gpa.dupe(u8, "banana");
+            // }
 
             {
-                var rs = db.rows("SELECT uid, handle, power, invited_by, display_name FROM users", .{}) catch db.fatal(@src());
-                defer rs.deinit();
-
+                var rs = qs.select_users.run(db, .{});
                 var users: awebo.Host.Users = .{};
                 while (rs.next()) |r| {
                     const user: awebo.User = .{
-                        .id = @intCast(r.int(.uid)),
+                        .id = r.get(.id),
                         .handle = try r.text(gpa, .handle),
-                        .power = @enumFromInt(r.int(.power)),
-                        // arst
-                        .invited_by = @intCast(r.int(.invited_by)),
+                        .power = r.get(.power),
+                        .invited_by = r.get(.invited_by),
                         .display_name = try r.text(gpa, .display_name),
                         .avatar = "arst",
                     };
@@ -251,16 +196,14 @@ pub const loadHost = switch (context) {
             }
 
             {
-                var rs = db.rows("SELECT id, name, privacy, kind FROM channels", .{}) catch db.fatal(@src());
-                defer rs.deinit();
-
+                var rs = qs.select_channels.run(db, .{});
                 var channels: awebo.Host.Channels = .{};
                 while (rs.next()) |r| {
-                    const kind: awebo.Channel.Kind.Enum = @enumFromInt(r.int(.kind));
+                    const kind = r.get(.kind);
                     var channel: awebo.Channel = .{
-                        .id = @intCast(r.int(.id)),
+                        .id = r.get(.id),
                         .name = try r.text(gpa, .name),
-                        .privacy = @enumFromInt(r.int(.privacy)),
+                        .privacy = r.get(.privacy),
                         .kind = switch (kind) {
                             inline else => |tag| @unionInit(
                                 awebo.Channel.Kind,
@@ -271,19 +214,16 @@ pub const loadHost = switch (context) {
                     };
 
                     if (channel.kind == .chat) {
-                        var msgs = db.rows(
-                            \\SELECT uid, origin, author, body FROM messages
-                            \\WHERE channel = ? ORDER BY id DESC;
-                        ,
-                            .{channel.id},
-                        ) catch db.fatal(@src());
-                        defer msgs.deinit();
+                        var msgs = qs.select_channel_messages.run(db, .{
+                            .channel = channel.id,
+                            .limit = 64,
+                        });
 
                         while (msgs.next()) |m| {
                             const msg: awebo.Message = .{
-                                .id = @intCast(m.int(.uid)),
-                                .origin = @intCast(m.int(.origin)),
-                                .author = @intCast(m.int(.author)),
+                                .id = m.get(.uid),
+                                .origin = m.get(.origin),
+                                .author = m.get(.author),
                                 .text = try m.text(gpa, .body),
                             };
                             try channel.kind.chat.messages.backfill(gpa, msg);
@@ -298,59 +238,6 @@ pub const loadHost = switch (context) {
         }
     }.impl,
 };
-
-/// Returns a user given its username and password.
-/// Validation logic is part of this function to make efficient use of the memory returned from sqlite,
-/// which becomes invalid as soon as the relative `Row` is deinited.
-/// On success dupes `username`.
-pub const getUserByLogin = if (context == .client)
-    @compileError("server only")
-else
-    struct {
-        fn impl(
-            db: Database,
-            io: Io,
-            gpa: Allocator,
-            username: []const u8,
-            password: []const u8,
-        ) error{ NotFound, Password }!awebo.User {
-            const maybe_pswd_row = db.row("SELECT pswd_hash FROM passwords WHERE handle = ?", .{
-                username,
-            }) catch db.fatal(@src());
-            const pswd_row = maybe_pswd_row orelse {
-                std.crypto.pwhash.argon2.strVerify("bananarama123", password, .{ .allocator = gpa }, io) catch {};
-                return error.NotFound;
-            };
-            defer pswd_row.deinit();
-
-            const pswd_hash = pswd_row.textNoDupe(.pswd_hash);
-
-            std.crypto.pwhash.argon2.strVerify(pswd_hash, password, .{ .allocator = gpa }, io) catch |err| switch (err) {
-                error.PasswordVerificationFailed => return error.Password,
-                error.OutOfMemory => oom(),
-                else => fatalErr(err),
-            };
-
-            const maybe_row = db.row(
-                \\SELECT uid, display_name, power, invited_by, avatar FROM users
-                \\WHERE handle = ?;
-            , .{username}) catch db.fatal(@src());
-            const user_row = maybe_row orelse return error.NotFound;
-            defer user_row.deinit();
-
-            return .{
-                .id = @intCast(user_row.int(.uid)),
-                .power = @enumFromInt(user_row.int(.power)),
-                .display_name = user_row.text(gpa, .display_name) catch oom(),
-                .avatar = user_row.text(gpa, .avatar) catch oom(),
-                .handle = gpa.dupe(u8, username) catch oom(),
-                .invited_by = @intCast(user_row.int(.invited_by)),
-                .server = .{
-                    .pswd_hash = gpa.dupe(u8, pswd_hash) catch oom(),
-                },
-            };
-        }
-    }.impl;
 
 pub const serverPermission = if (context == .client)
     @compileError("server only")
@@ -404,12 +291,6 @@ pub fn fatal(db: Database, src: std.builtin.SourceLocation) noreturn {
     std.process.exit(1);
 }
 
-fn fatalDb(conn: zqlite.Conn) noreturn {
-    log.err("fatal db error: {s}", .{conn.lastError()});
-    if (builtin.mode == .Debug) @breakpoint();
-    std.process.exit(1);
-}
-
 fn fatalErr(err: anyerror) noreturn {
     log.err("fatal error: {t}", .{err});
     if (builtin.mode == .Debug) @breakpoint();
@@ -420,8 +301,157 @@ fn oom() noreturn {
     std.process.fatal("oom", .{});
 }
 
-test "test all queries" {
+test "test common queries" {
     // Initializes the database and then prepares all queries
     const db: awebo.Database = .init(":memory:", .create);
     defer db.close();
+
+    _ = db.initQueries(CommonQueries);
 }
+
+fn Result(config: QueryConfig) type {
+    return switch (config.kind) {
+        .row => ?Rows(config).Row,
+        .rows => Rows(config),
+        .exec => void,
+    };
+}
+
+const QueryConfig = struct {
+    kind: enum { row, rows, exec },
+    cols: type = struct {},
+    args: type = struct {},
+};
+
+pub fn Query(sql_query: [:0]const u8, config: QueryConfig) type {
+    return struct {
+        stmt: *zqlite.c.sqlite3_stmt,
+
+        pub const cfg = config;
+        pub const sql = sql_query;
+
+        fn init(db: Database) !@This() {
+            const prep = try db.conn.prepare(sql_query);
+            return .{ .stmt = @ptrCast(prep.stmt) };
+        }
+
+        fn deinit(q: *const @This()) void {
+            _ = zqlite.c.sqlite3_finalize(q.stmt);
+        }
+
+        pub fn run(q: *const @This(), db: Database, args: config.args) Result(config) {
+            const stmt: zqlite.Stmt = .{
+                .conn = db.conn.conn,
+                .stmt = @ptrCast(q.stmt),
+            };
+
+            stmt.reset() catch db.fatal(@src());
+
+            inline for (@typeInfo(config.args).@"struct".fields, 0..) |f, idx| {
+                if (f.type == AnyArg) {
+                    switch (@field(args, f.name)) {
+                        inline else => |v| stmt.bindValue(v, idx) catch db.fatal(@src()),
+                    }
+                } else switch (@typeInfo(f.type)) {
+                    .@"enum" => {
+                        const value: u64 = @intFromEnum(@field(args, f.name));
+                        stmt.bindValue(value, idx) catch db.fatal(@src());
+                    },
+                    else => stmt.bindValue(@field(args, f.name), idx) catch db.fatal(@src()),
+                }
+            }
+
+            switch (config.kind) {
+                .row => {
+                    const one_row = stmt.step() catch db.fatal(@src());
+                    if (!one_row) return null;
+                    return Rows(config).Row{ .row = .{ .stmt = stmt } };
+                },
+                .rows => {
+                    return Rows(config){ .rows = .{ .stmt = stmt, .err = null } };
+                },
+                .exec => {
+                    stmt.stepToCompletion() catch db.fatal(@src());
+                },
+            }
+        }
+    };
+}
+
+pub fn Rows(config: QueryConfig) type {
+    return struct {
+        rows: zqlite.Rows,
+
+        pub fn next(self: *@This()) ?Row {
+            return .{ .row = self.rows.next() orelse return null };
+        }
+
+        pub const Row = struct {
+            row: zqlite.Row,
+
+            pub fn get(r: Row, comptime col: std.meta.FieldEnum(config.cols)) ColType(col) {
+                const C = ColType(col);
+                if (C == void) {
+                    @compileError("column doesn't specify type, use .getAs()");
+                }
+                return r.coerce(C, @intFromEnum(col));
+            }
+
+            pub fn getAs(r: Row, T: type, comptime col: std.meta.FieldEnum(config.cols)) T {
+                const C = ColType(col);
+                if (C != void) {
+                    @compileError("column has a specified type, use .get()");
+                }
+                return r.coerce(T, @intFromEnum(col));
+            }
+
+            fn coerce(r: Row, T: type, idx: usize) T {
+                switch (T) {
+                    u32, u64, i64 => return @intCast(r.row.int(idx)),
+                    ?u64 => {
+                        const value = r.row.nullableInt(idx) orelse return null;
+                        log.debug("result: {}", .{value});
+                        return @intCast(value);
+                    },
+                    []u8, []const u8 => @compileError("use text() or textNoDupe()"),
+                    bool => return r.row.boolean(idx),
+                    else => switch (@typeInfo(T)) {
+                        .@"enum" => {
+                            return @enumFromInt(r.row.int(idx));
+                        },
+                        else => @compileError("type " ++ @typeName(T) ++ " not supported"),
+                    },
+                }
+            }
+
+            /// Dupes the resulting value, use `textNoDupe` to avoid duping.
+            pub fn text(r: Row, gpa: Allocator, col: std.meta.FieldEnum(config.cols)) ![]const u8 {
+                return gpa.dupe(u8, r.row.text(@intFromEnum(col)));
+            }
+
+            pub fn textNoDupe(r: Row, col: std.meta.FieldEnum(config.cols)) []const u8 {
+                return r.row.text(@intFromEnum(col));
+            }
+
+            fn ColType(col: std.meta.FieldEnum(config.cols)) type {
+                const c: config.cols = undefined;
+                return @TypeOf(@field(c, @tagName(col)));
+            }
+        };
+    };
+}
+
+pub const AnyArg = union(enum) {
+    string: []const u8,
+    num: i64,
+
+    pub fn init(value: anytype) AnyArg {
+        const T = @TypeOf(value);
+        switch (T) {
+            []const u8 => return .{ .string = value },
+            i64, u64, usize => return .{ .num = @intCast(value) },
+            bool => .{ .num = @intFromBool(value) },
+            else => @compileError("type " ++ @typeName(T) ++ " not supported"),
+        }
+    }
+};

@@ -18,12 +18,14 @@ pub fn sync(
     v: *Voice,
     gpa: Allocator,
     db: Database,
+    qs: *Database.CommonQueries,
     id: Channel.Id,
     new: *const Channel.Kind,
 ) void {
     _ = v;
     _ = gpa;
     _ = db;
+    _ = qs;
     _ = id;
     assert(new.* == Channel.Kind.Enum.voice);
 }

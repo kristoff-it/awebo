@@ -5,9 +5,30 @@ const Allocator = std.mem.Allocator;
 
 const awebo = @import("../../../awebo.zig");
 const Database = awebo.Database;
-const zqlite = @import("zqlite");
+const Query = Database.Query;
 
 const log = std.log.scoped(.db);
+
+const Queries = struct {
+    update_invite: Query(
+        \\UPDATE invites 
+        \\SET 
+        \\    updated = unixepoch(),
+        \\    expiry  = COALESCE(?2, expiry),
+        \\    enabled = COALESCE(?3, enabled),
+        \\    remaining = IIF(?4, ?5, remaining)
+        \\WHERE slug = ?1;
+    , .{
+        .kind = .exec,
+        .args = struct {
+            slug: []const u8,
+            expiry: ?i64,
+            enabled: ?bool,
+            remaining_set: bool,
+            remaining_value: ?u64,
+        },
+    }),
+};
 
 pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     _ = io;
@@ -15,37 +36,18 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     const cmd: Command = .parse(it);
 
     const db: Database = .init(cmd.db_path, .read_write);
+    defer db.close();
 
-    db.conn.transaction() catch db.fatal(@src());
+    const qs = db.initQueries(Queries);
+    defer db.deinitQueries(Queries, &qs);
 
-    if (cmd.expiry) |expiry| {
-        db.conn.exec(
-            \\UPDATE invites SET expiry = ? WHERE slug = ?;
-        , .{ expiry, cmd.slug }) catch db.fatal(@src());
-    }
-
-    if (cmd.enabled) |enabled| {
-        db.conn.exec(
-            \\UPDATE invites SET enabled = ? WHERE slug = ?;
-        , .{ enabled, cmd.slug }) catch db.fatal(@src());
-    }
-
-    if (cmd.user_limit) |user_limit| {
-        const remaining = switch (user_limit) {
-            .limit => |l| l,
-            .no_limit => null,
-        };
-        db.conn.exec(
-            \\UPDATE invites SET remaining = ? WHERE slug = ?;
-        , .{ remaining, cmd.slug }) catch db.fatal(@src());
-    }
-
-    // Change `updated` column to current time
-    db.conn.exec(
-        \\UPDATE invites SET updated = unixepoch() WHERE slug = ?;
-    , .{cmd.slug}) catch db.fatal(@src());
-
-    db.conn.commit() catch db.fatal(@src());
+    qs.update_invite.run(db, .{
+        .slug = cmd.slug,
+        .expiry = cmd.expiry,
+        .enabled = cmd.enabled,
+        .remaining_set = cmd.user_limit_set,
+        .remaining_value = cmd.user_limit_value,
+    });
 }
 
 const Command = struct {
@@ -55,14 +57,14 @@ const Command = struct {
     /// Editing arguments, at least one must be specified
     expiry: ?i64,
     enabled: ?bool,
-    user_limit: ?UserLimit,
-
-    const UserLimit = union(enum) { limit: u32, no_limit };
+    user_limit_set: bool,
+    user_limit_value: ?u64,
 
     fn parse(it: *std.process.Args.Iterator) Command {
         var expiry: ?i64 = null;
         var enabled: ?bool = null;
-        var user_limit: ?UserLimit = null;
+        var user_limit_set: ?bool = null;
+        var user_limit_value: ?u64 = null;
         var db_path: ?[:0]const u8 = null;
 
         const invite_slug = it.next() orelse fatalHelp();
@@ -88,15 +90,15 @@ const Command = struct {
                     fatal("invalid value for --enabled (boolean): '{s}'", .{enabled_arg});
                 }
             } else if (eql(u8, arg, "--user-limit")) {
-                if (user_limit != null) fatal("duplicate --user-limit flag", .{});
+                if (user_limit_set != null) fatal("duplicate --user-limit flag", .{});
+                user_limit_set = true;
+
                 const user_limit_arg = it.next() orelse fatal("missing value for --user-limit", .{});
                 if (std.ascii.eqlIgnoreCase(user_limit_arg, "null")) {
-                    user_limit = .no_limit;
+                    user_limit_value = null;
                 } else {
-                    user_limit = .{
-                        .limit = std.fmt.parseInt(u32, user_limit_arg, 10) catch {
-                            fatal("invalid value for --user-limit (integer or 'null'): '{s}'", .{user_limit_arg});
-                        },
+                    user_limit_value = std.fmt.parseInt(u32, user_limit_arg, 10) catch {
+                        fatal("invalid value for --user-limit (integer or 'null'): '{s}'", .{user_limit_arg});
                     };
                 }
             } else if (eql(u8, arg, "--db_path")) {
@@ -111,12 +113,17 @@ const Command = struct {
             .slug = invite_slug,
             .expiry = expiry,
             .enabled = enabled,
-            .user_limit = user_limit,
+            .user_limit_set = user_limit_set orelse false,
+            .user_limit_value = user_limit_value,
             .db_path = db_path orelse "awebo.db",
         };
 
         // at least one invite editing argument must be specified
         inline for (@typeInfo(Command).@"struct".fields[2..]) |f| {
+            if (@FieldType(Command, f.name) == bool) {
+                if (@field(cmd, f.name)) return cmd;
+                continue;
+            }
             if (@field(cmd, f.name) != null) return cmd;
         }
 
@@ -150,4 +157,10 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.print("fatal error: " ++ fmt ++ "\n", args);
     if (builtin.mode == .Debug) @breakpoint();
     std.process.exit(1);
+}
+
+test "invite edit queries" {
+    const _db: awebo.Database = .init(":memory:", .create);
+    defer _db.close();
+    _ = _db.initQueries(Queries);
 }

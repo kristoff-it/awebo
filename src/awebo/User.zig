@@ -9,7 +9,7 @@ const context = @import("options").context;
 // - u4 max 16 clients connected
 // - u2 max 4 media streams (cam, voice, screenshare, screenshare audio)
 
-pub const Id = u32;
+pub const Id = u64;
 
 id: Id,
 created: u32 = 0,

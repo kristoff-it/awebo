@@ -5,6 +5,10 @@ const process = std.process;
 const Io = std.Io;
 
 const server = @import("server/cli/server.zig");
+const message = @import("server/cli/message.zig");
+const invite = @import("server/cli/invite.zig");
+const user = @import("server/cli/user.zig");
+const role = @import("server/cli/role.zig");
 
 pub const Resource = enum {
     server,
@@ -41,11 +45,11 @@ pub fn main(init: process.Init) !void {
         .version => exitVersion(),
         .help, .@"--help", .@"-h" => fatalHelp(),
 
-        .role => @import("server/cli/role.zig").run(init.io, gpa, &it),
-        .user => @import("server/cli/user.zig").run(init.io, gpa, &it),
-        .message => @import("server/cli/message.zig").run(init.io, gpa, &it),
+        .role => role.run(init.io, gpa, &it),
+        .user => user.run(init.io, gpa, &it),
+        .message => message.run(init.io, gpa, &it),
         .server => server.run(init.io, gpa, &it),
-        .invite => @import("server/cli/invite.zig").run(init.io, gpa, &it),
+        .invite => invite.run(init.io, gpa, &it),
     }
 }
 
@@ -86,4 +90,8 @@ fn exitVersion() noreturn {
 
 test {
     _ = server;
+    _ = message;
+    _ = invite;
+    _ = user;
+    _ = role;
 }

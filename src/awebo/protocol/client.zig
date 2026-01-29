@@ -6,7 +6,7 @@ const Host = @import("../Host.zig");
 const Message = @import("../Message.zig");
 const Channel = @import("../Channel.zig");
 
-pub const OriginId = u64;
+pub const OriginId = u32;
 
 /// This is the first request that the client sends before even knowing
 /// which version of the protocol the server uses. It's important we

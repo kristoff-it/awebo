@@ -47,30 +47,18 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const Host, user_id: User.Id) v
     host.client.connection_status = .synced;
 
     const db = host.client.db;
+    const qs = &host.client.qs;
 
     {
         gpa.free(host.name);
         host.name = delta.name;
 
-        const query =
-            \\INSERT INTO host(key, value) VALUES ('name', ?1)
-            \\ON CONFLICT(key) DO UPDATE SET value = ?1
-        ;
-
-        db.conn.exec(query, .{host.name}) catch db.fatal(@src());
+        qs.upsert_host_kv.run(db, .{
+            .key = "name",
+            .value = .init(host.name),
+        });
     }
     {
-        const query =
-            \\INSERT INTO users(uid, created, update_uid, invited_by, power, handle, display_name, avatar)
-            \\VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-            \\ON CONFLICT(uid) DO UPDATE
-            \\SET (created, update_uid, invited_by, power, handle, display_name, avatar)
-            \\ = (?2, ?3, ?4, ?5, ?6, ?7, ?8)
-            \\ON CONFLICT(handle) DO UPDATE
-            \\SET (created, update_uid, invited_by, power, handle, display_name, avatar)
-            \\ = (?2, ?3, ?4, ?5, ?6, ?7, ?8)
-        ;
-
         for (delta.users.items.values()) |new_user| {
             if (host.users.get(new_user.id)) |u| {
                 u.deinit(gpa);
@@ -81,48 +69,38 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const Host, user_id: User.Id) v
 
             std.log.debug("upsert {f}", .{new_user});
 
-            db.conn.exec(query, .{
-                new_user.id,
-                0, // u.created,
-                0, //u.updated,
-                new_user.invited_by,
-                @intFromEnum(new_user.power),
-                new_user.handle,
-                new_user.display_name,
-                "",
-            }) catch db.fatal(@src());
+            qs.upsert_user.run(db, .{
+                .id = new_user.id,
+                .created = 0,
+                // .update_uid = new_user.update_id,
+                .update_uid = new_user.id,
+                .invited_by = new_user.invited_by,
+                .power = new_user.power,
+                .handle = new_user.handle,
+                .display_name = new_user.display_name,
+                .avatar = null,
+            });
         }
     }
 
     {
-        const query =
-            \\INSERT INTO channels(id, update_uid, section, sort, name, kind, privacy)
-            \\VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-            \\ON CONFLICT(id) DO UPDATE
-            \\SET (update_uid, section, sort, name, kind, privacy)
-            \\ = (?2, ?3, ?4, ?5, ?6, ?7)
-            \\ON CONFLICT(update_uid) DO UPDATE
-            \\SET (update_uid, section, sort, name, kind, privacy)
-            \\ = (?2, ?3, ?4, ?5, ?6, ?7)
-        ;
-
         for (delta.channels.items.values()) |new_ch| {
             if (host.channels.get(new_ch.id)) |ch| {
                 assert(@as(Channel.Kind.Enum, ch.kind) == new_ch.kind);
-                ch.sync(gpa, db, &new_ch);
+                ch.sync(gpa, db, qs, &new_ch);
             } else {
                 host.channels.set(gpa, new_ch) catch @panic("oom");
             }
 
-            db.conn.exec(query, .{
-                new_ch.id,
-                0, // ch.updated,
-                null, // ch.section,
-                0, // ch.sort,
-                new_ch.name,
-                @intFromEnum(new_ch.kind),
-                @intFromEnum(new_ch.privacy),
-            }) catch db.fatal(@src());
+            qs.upsert_channel.run(db, .{
+                .id = new_ch.id,
+                .update_uid = new_ch.id,
+                .section = null,
+                .sort = 0,
+                .name = new_ch.name,
+                .kind = new_ch.kind,
+                .privacy = new_ch.privacy,
+            });
         }
     }
 }
@@ -139,6 +117,7 @@ pub const ClientOnly = struct {
     username: []const u8 = undefined,
     password: []const u8 = undefined,
     db: Database = undefined,
+    qs: Database.CommonQueries = undefined,
 
     callers: Callers = .{},
 

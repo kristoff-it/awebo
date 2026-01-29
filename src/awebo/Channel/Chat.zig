@@ -61,12 +61,13 @@ const MessageWindow = struct {
         mw: *MessageWindow,
         gpa: std.mem.Allocator,
         db: Database,
+        qs: *Database.CommonQueries,
         chat_id: Channel.Id,
         msg: Message,
     ) !void {
         const gop = try mw.indexes.id.getOrPut(gpa, msg.id);
         if (!gop.found_existing) {
-            gop.value_ptr.* = mw.pushNew(gpa, db, chat_id, msg);
+            gop.value_ptr.* = mw.pushNew(gpa, db, qs, chat_id, msg);
         }
     }
 
@@ -109,27 +110,27 @@ const MessageWindow = struct {
         mw: *MessageWindow,
         gpa: Allocator,
         db: Database,
+        qs: *Database.CommonQueries,
         chat_id: Channel.Id,
         msg: Message,
     ) usize {
         const tail_w: u32 = mw.tail;
         const idx: Channel.WindowSize = @intCast(@mod(tail_w + mw.len, Channel.window_size));
 
-        const query =
-            \\INSERT INTO messages (uid, origin, channel, author, body, reactions) VALUES
-            \\  (?, ?, ?, ?, ?, ?)
-            \\;
-        ;
-
         log.debug("adding msg author {} chat_id {}", .{ msg.author, chat_id });
 
-        db.conn.exec(query, .{ msg.id, msg.origin, chat_id, msg.author, msg.text, "" }) catch {
-            db.fatal(@src());
-        };
+        // TODO: investigate if a single upsert could be better!
+
+        qs.insert_message.run(db, .{
+            .uid = msg.id,
+            .origin = msg.origin,
+            .channel = chat_id,
+            .author = msg.author,
+            .body = msg.text,
+        });
 
         if (idx == mw.tail and mw.len == Channel.window_size) {
-            const delete_query = "DELETE FROM messages WHERE id = ?";
-            db.conn.exec(delete_query, .{mw.buffer[idx].id}) catch db.fatal(@src());
+            qs.delete_message.run(db, .{mw.buffer[idx].id});
             mw.buffer[idx].deinit(gpa);
             mw.tail +%= 1;
         } else {
@@ -171,6 +172,7 @@ pub fn sync(
     chat: *Chat,
     gpa: Allocator,
     db: Database,
+    qs: *Database.CommonQueries,
     chat_id: Channel.Id,
     new_kind: *const Channel.Kind,
 ) void {
@@ -180,7 +182,7 @@ pub fn sync(
 
     const slices = new_chat.messages.slices();
     for (slices) |s| for (s) |message| {
-        chat.messages.add(gpa, db, chat_id, message) catch @panic("oom");
+        chat.messages.add(gpa, db, qs, chat_id, message) catch @panic("oom");
     };
 
     // const msg_query =

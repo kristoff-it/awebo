@@ -16,31 +16,37 @@ pub const Table = struct {
     } = .{},
 };
 
-pub fn init(conn: zqlite.Conn) void {
-    conn.transaction() catch fatalDb(conn, "begin");
-    defer conn.commit() catch fatalDb(conn, "commit");
+pub fn init(db: awebo.Database) !void {
+    try db.conn.transaction();
 
     inline for (comptime std.meta.declarations(@This())) |d| {
         const table = @field(@This(), d.name);
         if (@TypeOf(table) != @This().Table) continue;
         if (table.context) |ctx| if (ctx != context) continue;
 
-        conn.execNoArgs(table.schema) catch fatalDb(conn, d.name);
+        errdefer log.err("error creating table {s}", .{d.name});
 
-        for (table.indexes) |index| {
-            conn.execNoArgs(index) catch fatalDb(conn, index);
+        try db.conn.execNoArgs(table.schema);
+
+        for (table.indexes, 0..) |index, i| {
+            errdefer log.err("error creating index #{}", .{i});
+            db.conn.execNoArgs(index) catch db.fatal(@src());
         }
 
-        for (table.triggers) |trigger| {
-            conn.execNoArgs(trigger) catch fatalDb(conn, trigger);
+        for (table.triggers, 0..) |trigger, i| {
+            errdefer log.err("error creating trigger #{}", .{i});
+            db.conn.execNoArgs(trigger) catch db.fatal(@src());
         }
 
         if (context == .server) {
-            for (table.server_only.triggers) |trigger| {
-                conn.execNoArgs(trigger) catch fatalDb(conn, trigger);
+            for (table.server_only.triggers, 0..) |trigger, i| {
+                errdefer log.err("error creating server-only trigger #{}", .{i});
+                db.conn.execNoArgs(trigger) catch db.fatal(@src());
             }
         }
     }
+
+    try db.conn.commit();
 }
 
 /// Contains host metadata such as the name and the creation datetime.
@@ -55,7 +61,7 @@ pub const host: Table = .{ .schema =
 pub const users: Table = .{
     .schema =
     \\CREATE TABLE users (
-    \\  uid            INTEGER PRIMARY KEY ASC NOT NULL,
+    \\  id             INTEGER PRIMARY KEY ASC NOT NULL,
     \\  created        DATETIME NOT NULL,
     \\  update_uid     INTEGER UNIQUE NOT NULL,
     // Before deleting a user, we must manually "detatch" any
@@ -80,9 +86,9 @@ pub const passwords: Table = .{
     \\CREATE TABLE passwords (
     \\  handle         REFERENCES users(handle) ON DELETE CASCADE ON UPDATE CASCADE PRIMARY KEY NOT NULL,
     \\  updated        DATETIME NOT NULL,
+    \\  hash           TEXT NOT NULL,
     // ip address that requested a password change, null if admin action
-    \\  ip             IP NULL,
-    \\  pswd_hash      TEXT NOT NULL
+    \\  ip             IP NULL
     \\);
     ,
 };
@@ -159,7 +165,7 @@ pub const role_permissions: Table = .{
 pub const sections: Table = .{
     .schema =
     \\CREATE TABLE sections (
-    \\  id           INTEGER UNIQUE PRIMARY KEY ASC,
+    \\  id           INTEGER PRIMARY KEY ASC,
     \\  update_uid   INTEGER UNIQUE NOT NULL,
     \\  sort         INTEGER UNIQUE NOT NULL,
     \\  name         TEXT UNIQUE,
@@ -217,7 +223,8 @@ pub const messages: Table = .{
     \\CREATE TABLE messages (
     \\  uid          INTEGER PRIMARY KEY ASC NOT NULL,
     \\  origin       INTEGER,
-    \\  update_uid   INTEGER NULL,
+    \\  created      DATETIME NOT NULL DEFAULT (unixepoch()),
+    \\  update_uid   INTEGER NULL DEFAULT NULL,
     \\  channel      REFERENCES channels ON DELETE CASCADE NOT NULL,
     \\  author       REFERENCES users ON DELETE CASCADE NULL,
     \\  body         TEXT NOT NULL,
@@ -317,9 +324,3 @@ pub const emotes: Table = .{
         ,
     },
 };
-
-pub fn fatalDb(conn: zqlite.Conn, sql: []const u8) noreturn {
-    log.err("fatal db error: {s} on table or query:\n{s}\n", .{ conn.lastError(), sql });
-    if (builtin.mode == .Debug) @breakpoint();
-    std.process.exit(1);
-}
