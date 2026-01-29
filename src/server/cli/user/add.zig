@@ -6,6 +6,7 @@ const Allocator = std.mem.Allocator;
 const awebo = @import("../../../awebo.zig");
 const Database = awebo.Database;
 const Query = Database.Query;
+const cli = @import("../../../cli.zig");
 
 const log = std.log.scoped(.db);
 
@@ -39,7 +40,7 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
         .allocator = gpa,
         .params = .interactive_2id,
     }, &out, io) catch |err| {
-        fatal("unable to hash user password: {t}", .{err});
+        cli.fatal("unable to hash user password: {t}", .{err});
     };
 
     db.conn.transaction() catch db.fatal(@src());
@@ -82,38 +83,38 @@ const Command = struct {
 
         const eql = std.mem.eql;
         while (it.next()) |arg| {
-            if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) fatalHelp();
+            if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) exitHelp(0);
             if (eql(u8, arg, "--handle")) {
-                if (handle != null) fatal("duplicate --handle flag", .{});
-                handle = it.next() orelse fatal("missing value for --handle", .{});
+                if (handle != null) cli.fatal("duplicate --handle flag", .{});
+                handle = it.next() orelse cli.fatal("missing value for --handle", .{});
             } else if (eql(u8, arg, "--password")) {
-                if (password != null) fatal("duplicate --password flag", .{});
-                password = it.next() orelse fatal("missing value for --password", .{});
+                if (password != null) cli.fatal("duplicate --password flag", .{});
+                password = it.next() orelse cli.fatal("missing value for --password", .{});
             } else if (eql(u8, arg, "--display-name")) {
-                if (display_name != null) fatal("duplicate --display-name flag", .{});
-                display_name = it.next() orelse fatal("missing value for --display-name", .{});
+                if (display_name != null) cli.fatal("duplicate --display-name flag", .{});
+                display_name = it.next() orelse cli.fatal("missing value for --display-name", .{});
             } else if (eql(u8, arg, "--db-path")) {
-                if (db_path != null) fatal("duplicate --db-path flag", .{});
-                db_path = it.next() orelse fatal("missing value for --db-path", .{});
+                if (db_path != null) cli.fatal("duplicate --db-path flag", .{});
+                db_path = it.next() orelse cli.fatal("missing value for --db-path", .{});
             } else {
-                fatal("unknown argument '{s}'", .{arg});
+                cli.fatal("unknown argument '{s}'", .{arg});
             }
         }
 
         const h = handle orelse {
-            std.debug.print("fatal error: missing --handle\n", .{});
-            fatalHelp();
+            std.debug.print("error: missing --handle\n", .{});
+            exitHelp(1);
         };
         return .{
             .handle = h,
-            .password = password orelse fatal("missing --password", .{}),
+            .password = password orelse cli.fatal("missing --password", .{}),
             .display_name = display_name orelse h,
             .db_path = db_path orelse "awebo.db",
         };
     }
 };
 
-fn fatalHelp() noreturn {
+fn exitHelp(status: u8) noreturn {
     std.debug.print(
         \\Usage: awebo-server user add REQUIRED_ARGS [OPTIONAL_ARGS]
         \\
@@ -131,13 +132,7 @@ fn fatalHelp() noreturn {
         \\
     , .{});
 
-    std.process.exit(1);
-}
-
-fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
-    std.debug.print("fatal error: " ++ fmt ++ "\n", args);
-    if (builtin.mode == .Debug) @breakpoint();
-    std.process.exit(1);
+    std.process.exit(status);
 }
 
 test "user add queries" {

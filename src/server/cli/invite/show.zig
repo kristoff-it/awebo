@@ -6,7 +6,7 @@ const awebo = @import("../../../awebo.zig");
 const Invite = awebo.Invite;
 const Database = awebo.Database;
 const Query = Database.Query;
-const zqlite = @import("zqlite");
+const cli = @import("../../../cli.zig");
 
 const log = std.log.scoped(.db);
 
@@ -83,29 +83,32 @@ const Command = struct {
         var port: ?u16 = null;
         var db_path: ?[:0]const u8 = null;
 
-        const invite_slug = it.next() orelse fatalHelp();
+        const invite_slug = it.next() orelse {
+            std.debug.print("error: missing INVITE_SLUG for show\n", .{});
+            exitHelp(1);
+        };
 
         const eql = std.mem.eql;
-        if (eql(u8, invite_slug, "--help") or eql(u8, invite_slug, "-h")) fatalHelp();
+        if (eql(u8, invite_slug, "--help") or eql(u8, invite_slug, "-h")) exitHelp(0);
         while (it.next()) |arg| {
-            if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) fatalHelp();
+            if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) exitHelp(0);
             if (eql(u8, arg, "--address")) {
-                if (address != null) fatal("duplicate --address flag", .{});
-                const address_arg = it.next() orelse fatal("missing value for --address", .{});
+                if (address != null) cli.fatal("duplicate --address flag", .{});
+                const address_arg = it.next() orelse cli.fatal("missing value for --address", .{});
                 address = Invite.Address.parse(address_arg) catch {
-                    fatal("invalid value for --address (hostname or IP address): '{s}'", .{address_arg});
+                    cli.fatal("invalid value for --address (hostname or IP address): '{s}'", .{address_arg});
                 };
             } else if (eql(u8, arg, "--port")) {
-                if (port != null) fatal("duplicate --port flag", .{});
-                const port_arg = it.next() orelse fatal("missing value for --port", .{});
+                if (port != null) cli.fatal("duplicate --port flag", .{});
+                const port_arg = it.next() orelse cli.fatal("missing value for --port", .{});
                 port = std.fmt.parseInt(u16, port_arg, 10) catch {
-                    fatal("invalid value for --port (integer): '{s}'", .{port_arg});
+                    cli.fatal("invalid value for --port (integer): '{s}'", .{port_arg});
                 };
             } else if (eql(u8, arg, "--db-path")) {
-                if (db_path != null) fatal("duplicate --db-path flag", .{});
-                db_path = it.next() orelse fatal("missing value for --db-path", .{});
+                if (db_path != null) cli.fatal("duplicate --db-path flag", .{});
+                db_path = it.next() orelse cli.fatal("missing value for --db-path", .{});
             } else {
-                fatal("unknown argument '{s}'", .{arg});
+                cli.fatal("unknown argument '{s}'", .{arg});
             }
         }
 
@@ -121,7 +124,7 @@ const Command = struct {
     }
 };
 
-fn fatalHelp() noreturn {
+fn exitHelp(status: u8) noreturn {
     std.debug.print(
         \\Usage: awebo-server invite show INVITE_SLUG [OPTIONAL_ARGS]
         \\
@@ -136,13 +139,7 @@ fn fatalHelp() noreturn {
         \\
     , .{});
 
-    std.process.exit(1);
-}
-
-fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
-    std.debug.print("fatal error: " ++ fmt ++ "\n", args);
-    if (builtin.mode == .Debug) @breakpoint();
-    std.process.exit(1);
+    std.process.exit(status);
 }
 
 test "invite show queries" {

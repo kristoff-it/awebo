@@ -7,6 +7,8 @@ const awebo = @import("../../awebo.zig");
 const Database = awebo.Database;
 const Query = Database.Query;
 
+const cli = @import("../../cli.zig");
+
 const Subcommand = enum {
     search,
     help,
@@ -44,22 +46,22 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     _ = io;
     _ = gpa;
 
-    const raw_subcmd = it.next() orelse {
-        std.debug.print("missing command for user resource\n", .{});
-        fatalHelp();
+    const subcmd_arg = it.next() orelse {
+        std.debug.print("error: missing subcommand for message resource\n", .{});
+        exitHelp(1);
     };
 
-    const subcmd = std.meta.stringToEnum(Subcommand, raw_subcmd) orelse {
-        std.debug.print("unknown command '{s}' for user resource\n", .{raw_subcmd});
-        fatalHelp();
+    const subcmd = std.meta.stringToEnum(Subcommand, subcmd_arg) orelse {
+        std.debug.print("error: unknown subcommand for message resource: '{s}'\n", .{subcmd_arg});
+        exitHelp(1);
     };
 
     switch (subcmd) {
-        .help, .@"-h", .@"--help" => fatalHelp(),
+        .help, .@"-h", .@"--help" => exitHelp(0),
         .search => {},
     }
 
-    const query = it.next() orelse fatal("missing rearch term", .{});
+    const query = it.next() orelse cli.fatal("missing search term", .{});
 
     const db: Database = .init("awebo.db", .read_write);
     defer db.close();
@@ -77,7 +79,7 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     }
 }
 
-fn fatalHelp() noreturn {
+fn exitHelp(status: u8) noreturn {
     std.debug.print(
         \\Usage: awebo-server message search QUERY
         \\
@@ -92,13 +94,7 @@ fn fatalHelp() noreturn {
         \\
     , .{});
 
-    std.process.exit(1);
-}
-
-fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
-    std.debug.print("fatal error: " ++ fmt ++ "\n", args);
-    if (builtin.mode == .Debug) @breakpoint();
-    std.process.exit(1);
+    std.process.exit(status);
 }
 
 test "message search queries" {

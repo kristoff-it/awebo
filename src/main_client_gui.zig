@@ -8,6 +8,7 @@ const awebo = @import("awebo.zig");
 const gui = @import("client/gui.zig");
 const Host = awebo.Host;
 const Voice = awebo.VoiceChannel;
+const cli = @import("cli.zig");
 
 const log = std.log.scoped(.client);
 
@@ -85,7 +86,7 @@ pub const App = struct {
             environ = mi.environ_map;
 
             var it = std.process.Args.Iterator.initAllocator(mi.minimal.args, gpa) catch {
-                fatal("unable to allocate cli arguments", .{});
+                cli.fatal("unable to allocate cli arguments", .{});
             };
 
             while (it.next()) |arg| {
@@ -100,7 +101,7 @@ pub const App = struct {
             .environ = environ, // TODO: get from dvui
             .core = .init(gpa, io, environ, refresh, &app.command_queue_buffer),
             .core_future = io.concurrent(Core.run, .{&app.core}) catch |err| {
-                std.process.fatal("unable to start awebo client core: {t}", .{err});
+                cli.fatal("unable to start awebo client core: {t}", .{err});
             },
         };
     }
@@ -189,12 +190,6 @@ fn loadingFrame() !dvui.App.Result {
         .font = .theme(.title),
     });
     return .ok;
-}
-
-fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
-    std.debug.print("fatal error: " ++ fmt ++ "\n", args);
-    if (builtin.mode == .Debug) @breakpoint();
-    std.process.exit(1);
 }
 
 test {

@@ -3,14 +3,16 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const awebo = @import("../../../awebo.zig");
+const cli = @import("../../../cli.zig");
 
 pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     _ = io;
     _ = gpa;
     if (it.next()) |arg| {
-        if (!std.mem.eql(u8, arg, "--help") and !std.mem.eql(u8, arg, "-h"))
-            std.debug.print("unknown argument: '{s}'\n\n", .{arg});
-        fatalHelp();
+        const eql = std.mem.eql;
+        if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) exitHelp(0);
+
+        cli.fatal("unknown argument: '{s}'\n\n", .{arg});
     }
 
     std.debug.print("-- server-level permissions --\n\n", .{});
@@ -26,7 +28,7 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     }
 }
 
-fn fatalHelp() noreturn {
+fn exitHelp(status: u8) noreturn {
     std.debug.print(
         \\Usage: awebo-server role permissions [--help]
         \\
@@ -37,11 +39,5 @@ fn fatalHelp() noreturn {
         \\
     , .{});
 
-    std.process.exit(1);
-}
-
-fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
-    std.debug.print("fatal error: " ++ fmt ++ "\n", args);
-    if (builtin.mode == .Debug) @breakpoint();
-    std.process.exit(1);
+    std.process.exit(status);
 }

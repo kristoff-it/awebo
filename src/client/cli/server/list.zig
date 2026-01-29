@@ -4,19 +4,20 @@ const Allocator = std.mem.Allocator;
 
 const Core = @import("../../Core.zig");
 const persistence = @import("../../Core/persistence.zig");
+const cli = @import("../../../cli.zig");
 
 pub fn run(io: Io, gpa: Allocator, environ: *std.process.Environ.Map, it: *std.process.Args.Iterator) void {
     const eql = std.mem.eql;
     while (it.next()) |arg| {
-        if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) fatalHelp();
-        fatal("unknown argument '{s}'", .{arg});
+        if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) exitHelp(0);
+        cli.fatal("unknown argument '{s}'", .{arg});
     }
 
     var core: Core = .init(gpa, io, environ, noopRefresh, &.{});
     defer core.deinit();
 
     persistence.load(&core) catch |e| {
-        std.log.err("failed to load configuration: {t} \n", .{e});
+        std.log.err("failed to load configuration: {t}\n", .{e});
         return;
     };
 
@@ -36,7 +37,7 @@ pub fn run(io: Io, gpa: Allocator, environ: *std.process.Environ.Map, it: *std.p
 
 pub fn noopRefresh(_: *Core, _: std.builtin.SourceLocation, _: ?u64) void {}
 
-fn fatalHelp() noreturn {
+fn exitHelp(status: u8) noreturn {
     std.debug.print(
         \\Usage: awebo server list REQUIRED_ARGS [OPTIONAL_ARGS]
         \\
@@ -47,10 +48,5 @@ fn fatalHelp() noreturn {
         \\
     , .{});
 
-    std.process.exit(1);
-}
-
-fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
-    std.debug.print("fatal error: " ++ fmt ++ "\n", args);
-    std.process.exit(1);
+    std.process.exit(status);
 }

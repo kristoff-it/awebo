@@ -12,6 +12,7 @@ const Query = Database.Query;
 const Host = awebo.Host;
 const Header = awebo.protocol.media.Header;
 const OpenStream = awebo.protocol.media.OpenStream;
+const cli = @import("../../../cli.zig");
 
 const server_log = std.log.scoped(.server);
 
@@ -76,7 +77,7 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     if (builtin.mode == .Debug) db.deinitQueries(Queries, &qs);
     cqs = db.initQueries(Database.CommonQueries);
     ___state.init(io, gpa) catch |err| {
-        fatal("unable to load state from database: {t}", .{err});
+        cli.fatal("unable to load state from database: {t}", .{err});
     };
     defer ___state.deinit(gpa);
 
@@ -87,7 +88,7 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
 
     server_log.info("starting tcp interface at {f}", .{cmd.tcp});
     var tcp = cmd.tcp.listen(io, .{ .reuse_address = true }) catch |err| {
-        fatal("unable to listen to '{f}': {t}", .{ cmd.tcp, err });
+        cli.fatal("unable to listen to '{f}': {t}", .{ cmd.tcp, err });
     };
     defer tcp.deinit(io);
 
@@ -99,7 +100,7 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
 
     server_log.info("starting udp interface at {f}", .{cmd.udp});
     const udp = cmd.udp.bind(io, .{ .mode = .dgram }) catch |err| {
-        fatal("unable to bind '{f}': {t}", .{ cmd.tcp, err });
+        cli.fatal("unable to bind '{f}': {t}", .{ cmd.tcp, err });
     };
     defer udp.close(io);
 
@@ -954,29 +955,30 @@ const Command = struct {
 
         const eql = std.mem.eql;
         while (it.next()) |arg| {
+            if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) exitHelp(0);
             if (eql(u8, arg, "--tcp")) {
-                if (tcp != null) fatal("duplicate --tcp argument", .{});
-                const ip = it.next() orelse fatal("missing argument to --tcp", .{});
+                if (tcp != null) cli.fatal("duplicate --tcp argument", .{});
+                const ip = it.next() orelse cli.fatal("missing argument to --tcp", .{});
                 tcp = Io.net.IpAddress.parseLiteral(ip) catch |err| {
-                    fatal(
+                    cli.fatal(
                         "unable to parse '{s}' as an ip address: {t}",
                         .{ arg, err },
                     );
                 };
             } else if (eql(u8, arg, "--udp")) {
-                if (udp != null) fatal("duplicate --udp argument", .{});
-                const ip = it.next() orelse fatal("missing argument to --udp", .{});
+                if (udp != null) cli.fatal("duplicate --udp argument", .{});
+                const ip = it.next() orelse cli.fatal("missing argument to --udp", .{});
                 udp = Io.net.IpAddress.parseLiteral(ip) catch |err| {
-                    fatal(
+                    cli.fatal(
                         "unable to parse '{s}' as an ip address with port: {t}",
                         .{ arg, err },
                     );
                 };
             } else if (eql(u8, arg, "--db-path")) {
-                if (db_path != null) fatal("duplicate --db-path argument", .{});
+                if (db_path != null) cli.fatal("duplicate --db-path argument", .{});
                 db_path = arg;
             } else {
-                fatalHelp();
+                cli.fatal("unknown argument: '{s}'", .{arg});
             }
         }
 
@@ -991,20 +993,14 @@ const Command = struct {
 };
 
 fn oom() noreturn {
-    fatal("oom", .{});
+    cli.fatal("oom", .{});
 }
 
 fn fatalIo(err: anyerror) noreturn {
-    fatal("unable to perform I/O operation: {t}", .{err});
+    cli.fatal("unable to perform I/O operation: {t}", .{err});
 }
 
-fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
-    server_log.err("fatal error: " ++ fmt ++ "\n", args);
-    if (builtin.mode == .Debug) @breakpoint();
-    std.process.exit(1);
-}
-
-fn fatalHelp() noreturn {
+fn exitHelp(status: u8) noreturn {
     std.debug.print(
         \\Usage: awebo-server server run [OPTIONAL_ARGS]
         \\
@@ -1022,7 +1018,7 @@ fn fatalHelp() noreturn {
         \\
     , .{});
 
-    std.process.exit(1);
+    std.process.exit(status);
 }
 
 /// Returns a user given its username and password.

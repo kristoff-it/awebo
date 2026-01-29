@@ -31,19 +31,19 @@ pub fn main(init: process.Init) !void {
     var it = try init.minimal.args.iterateAllocator(arena);
     _ = it.skip();
 
-    const resource = it.next() orelse {
-        std.debug.print("fatal error: missing resource kind\n", .{});
-        fatalHelp();
+    const resource_arg = it.next() orelse {
+        std.debug.print("error: missing resource kind\n", .{});
+        exitHelp(1);
     };
 
-    const resource_enum = std.meta.stringToEnum(Resource, resource) orelse {
-        std.debug.print("fatal error: invalid resource '{s}'\n", .{resource});
-        fatalHelp();
+    const resource = std.meta.stringToEnum(Resource, resource_arg) orelse {
+        std.debug.print("error: invalid resource '{s}'\n", .{resource_arg});
+        exitHelp(1);
     };
 
-    switch (resource_enum) {
+    switch (resource) {
         .version => exitVersion(),
-        .help, .@"--help", .@"-h" => fatalHelp(),
+        .help, .@"--help", .@"-h" => exitHelp(0),
 
         .role => role.run(init.io, gpa, &it),
         .user => user.run(init.io, gpa, &it),
@@ -53,7 +53,7 @@ pub fn main(init: process.Init) !void {
     }
 }
 
-fn fatalHelp() noreturn {
+fn exitHelp(status: u8) noreturn {
     std.debug.print(
         \\Usage: awebo-server RESOURCE COMMAND [ARGUMENTS]
         \\
@@ -74,13 +74,7 @@ fn fatalHelp() noreturn {
         \\
     , .{});
 
-    std.process.exit(1);
-}
-
-fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
-    std.debug.print("fatal error: " ++ fmt, args);
-    if (builtin.mode == .Debug) @breakpoint();
-    std.process.exit(1);
+    std.process.exit(status);
 }
 
 fn exitVersion() noreturn {

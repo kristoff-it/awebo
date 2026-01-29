@@ -19,18 +19,20 @@ const Subcommand = enum {
     @"-h",
     @"--help",
 };
+
 pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
-    const raw_subcmd = it.next() orelse {
-        std.debug.print("missing command for user resource\n", .{});
-        fatalHelp();
+    const subcmd_arg = it.next() orelse {
+        std.debug.print("error: missing subcommand for user resource\n", .{});
+        exitHelp(1);
     };
 
-    const subcmd = std.meta.stringToEnum(Subcommand, raw_subcmd) orelse {
-        std.debug.print("unknown command '{s}' for user resource\n", .{raw_subcmd});
-        fatalHelp();
+    const subcmd = std.meta.stringToEnum(Subcommand, subcmd_arg) orelse {
+        std.debug.print("error: unknown subcommand for user resource: '{s}'\n", .{subcmd_arg});
+        exitHelp(1);
     };
 
     switch (subcmd) {
+        .help, .@"-h", .@"--help" => exitHelp(0),
         .add => add.run(io, gpa, it),
         .edit => edit.run(io, gpa, it),
         .list => list.run(io, gpa, it),
@@ -38,11 +40,10 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
         .delete,
         .show,
         => @panic("TODO"),
-        .help, .@"-h", .@"--help" => fatalHelp(),
     }
 }
 
-fn fatalHelp() noreturn {
+fn exitHelp(status: u8) noreturn {
     std.debug.print(
         \\Usage: awebo-server user COMMAND [ARGUMENTS]
         \\
@@ -62,13 +63,7 @@ fn fatalHelp() noreturn {
         \\
     , .{});
 
-    std.process.exit(1);
-}
-
-fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
-    std.debug.print("fatal error: " ++ fmt ++ "\n", args);
-    if (builtin.mode == .Debug) @breakpoint();
-    std.process.exit(1);
+    std.process.exit(status);
 }
 
 test {

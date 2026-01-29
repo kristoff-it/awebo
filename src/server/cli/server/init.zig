@@ -8,6 +8,7 @@ const awebo = @import("../../../awebo.zig");
 const Database = awebo.Database;
 const Query = Database.Query;
 const user_add = @import("../user/add.zig");
+const cli = @import("../../../cli.zig");
 
 const log = std.log.scoped(.db);
 
@@ -45,7 +46,7 @@ fn seed(
         .allocator = gpa,
         .params = .interactive_2id,
     }, &out, io) catch |err| {
-        fatal("unable to hash admin password: {t}", .{err});
+        cli.fatal("unable to hash admin password: {t}", .{err});
     };
 
     _ = qs.insert_user.run(db, .{
@@ -333,7 +334,7 @@ pub fn migrateSchema(gpa: Allocator, conn: zqlite.Conn) !void {
         // foreign_keys=OFF.
         try conn.execNoArgs("PRAGMA foreign_keys=OFF");
         defer conn.execNoArgs("PRAGMA foreign_keys=ON") catch |err|
-            fatal("Failed to enable foreign keys: {t}", .{err});
+            cli.fatal("Failed to enable foreign keys: {t}", .{err});
 
         // Start a transaction.
         try conn.transaction();
@@ -350,7 +351,7 @@ pub fn migrateSchema(gpa: Allocator, conn: zqlite.Conn) !void {
             // desired revised format of table X. Make sure that the name "new_X"
             // does not collide with any existing table name, of course.
             const sql = pristine_tables.get(table_name).?;
-            const idx = std.mem.find(u8, sql, table_name) orelse fatal("Table name not found in sql: name={s}, sql={s}", .{
+            const idx = std.mem.find(u8, sql, table_name) orelse cli.fatal("Table name not found in sql: name={s}, sql={s}", .{
                 table_name,
                 sql,
             });
@@ -485,44 +486,44 @@ const Command = struct {
         while (it.next()) |arg| {
             if (eql(u8, arg, "--server-name")) {
                 if (server_name != null) {
-                    fatal("duplicate --server-name argument", .{});
+                    cli.fatal("duplicate --server-name argument", .{});
                 }
-                server_name = it.next() orelse fatal("missing argument to --server-name", .{});
+                server_name = it.next() orelse cli.fatal("missing argument to --server-name", .{});
             } else if (eql(u8, arg, "--owner-handle")) {
                 if (owner_handle != null) {
-                    fatal("duplicate --owner-handle argument", .{});
+                    cli.fatal("duplicate --owner-handle argument", .{});
                 }
-                owner_handle = it.next() orelse fatal("missing argument to --owner-handle", .{});
+                owner_handle = it.next() orelse cli.fatal("missing argument to --owner-handle", .{});
             } else if (eql(u8, arg, "--owner-pass")) {
                 if (owner_pass != null) {
-                    fatal("duplicate --owner-pass argument", .{});
+                    cli.fatal("duplicate --owner-pass argument", .{});
                 }
-                owner_pass = it.next() orelse fatal("missing argument to --owner-pass", .{});
+                owner_pass = it.next() orelse cli.fatal("missing argument to --owner-pass", .{});
             } else if (eql(u8, arg, "--db-path")) {
                 if (db_path != null) {
-                    fatal("duplicate --db-path argument", .{});
+                    cli.fatal("duplicate --db-path argument", .{});
                 }
-                db_path = it.next() orelse fatal("missing argument to --db-path", .{});
+                db_path = it.next() orelse cli.fatal("missing argument to --db-path", .{});
             } else if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) {
-                fatalHelp();
+                exitHelp(0);
             } else {
-                std.debug.print("unknown argument '{s}'\n", .{arg});
-                fatalHelp();
+                std.debug.print("error: unknown argument '{s}'\n", .{arg});
+                exitHelp(1);
             }
         }
 
         return .{
-            .server = .{ .name = server_name orelse fatal("missing --server-name argument", .{}) },
+            .server = .{ .name = server_name orelse cli.fatal("missing --server-name argument", .{}) },
             .owner = .{
-                .handle = owner_handle orelse fatal("missing --owner-handle argument", .{}),
-                .password = owner_pass orelse fatal("missing --owner-pass argument", .{}),
+                .handle = owner_handle orelse cli.fatal("missing --owner-handle argument", .{}),
+                .password = owner_pass orelse cli.fatal("missing --owner-pass argument", .{}),
             },
             .db_path = db_path orelse "awebo.db",
         };
     }
 };
 
-fn fatalHelp() noreturn {
+fn exitHelp(status: u8) noreturn {
     std.debug.print(
         \\Usage: awebo-server server init REQUIRED_ARGS [OPTIONAL_ARGS]
         \\
@@ -540,13 +541,7 @@ fn fatalHelp() noreturn {
         \\
     , .{});
 
-    std.process.exit(1);
-}
-
-fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
-    std.debug.print("fatal error: " ++ fmt ++ "\n", args);
-    if (builtin.mode == .Debug) @breakpoint();
-    std.process.exit(1);
+    std.process.exit(status);
 }
 
 pub fn fatalDb(conn: zqlite.Conn, src: std.builtin.SourceLocation) noreturn {
