@@ -47,7 +47,7 @@ active_call: ?ActiveCall = null,
 // integrated with the call lifecycle.
 screenshare_intent: bool = false,
 
-command_queue: Io.Queue(NetworkCommand),
+command_queue: Io.Queue(Event),
 refresh: *const RefreshFn,
 start_time: std.time.Instant,
 
@@ -115,7 +115,7 @@ pub fn init(
     io: Io,
     environ: *std.process.Environ.Map,
     refreshFn: *const RefreshFn,
-    command_queue_buffer: []NetworkCommand,
+    command_queue_buffer: []Event,
 ) Core {
     return .{
         .gpa = gpa,
@@ -172,58 +172,74 @@ pub fn run(core: *Core) void {
     }
 
     while (true) {
-        const msg = core.command_queue.getOne(io) catch return;
-        log.debug("from host {} got {any}", .{ msg.host_id, msg.cmd });
-        switch (msg.cmd) {
-            .host_connection_update => |hcu| hostConnectionUpdate(core, msg.host_id, hcu),
-            .caller_speaking => |cs| {
-                var locked = lockState(core);
-                defer locked.unlock();
+        const event = core.command_queue.getOne(io) catch return;
+        switch (event) {
+            .network => |msg| {
+                log.debug("from host {} got {any}", .{ msg.host_id, msg.cmd });
+                switch (msg.cmd) {
+                    .host_connection_update => |hcu| hostConnectionUpdate(core, msg.host_id, hcu),
+                    .caller_speaking => |cs| {
+                        var locked = lockState(core);
+                        defer locked.unlock();
 
-                const host = core.hosts.get(msg.host_id).?;
-                const caller = host.client.callers.get(cs.caller) orelse continue;
-                caller.client.speaking_last_ms = cs.time_ms;
+                        const host = core.hosts.get(msg.host_id).?;
+                        const caller = host.client.callers.get(cs.caller) orelse continue;
+                        caller.client.speaking_last_ms = cs.time_ms;
+                    },
+
+                    .host_sync => |hs| hostSync(core, msg.host_id, hs),
+                    .chat_message_new => |cms| chatMessageNew(core, msg.host_id, cms),
+                    .media_connection_details => |mcd| mediaConnectionDetails(core, msg.host_id, mcd),
+                    .callers_update => |cu| callersUpdate(core, msg.host_id, cu),
+                    // .msg => |msg| switch (msg.bytes[0]) {
+                    //     else => std.debug.panic("unexpected marker: '{c}'", .{
+                    //         msg.bytes[0],
+                    //     }),
+                    //     awebo.protocol.server.ChannelsUpdate.marker => {
+                    //         try channelsUpdate(msg);
+                    //     },
+                    //     awebo.protocol.server.ClientRequestReply.marker => {
+                    //         try handleRequestReply(core);
+                    //     },
+                    // },
+
+                }
             },
-
-            .host_sync => |hs| hostSync(core, msg.host_id, hs),
-            .chat_message_new => |cms| chatMessageNew(core, msg.host_id, cms),
-            .media_connection_details => |mcd| mediaConnectionDetails(core, msg.host_id, mcd),
-            .callers_update => |cu| callersUpdate(core, msg.host_id, cu),
-            // .msg => |msg| switch (msg.bytes[0]) {
-            //     else => std.debug.panic("unexpected marker: '{c}'", .{
-            //         msg.bytes[0],
-            //     }),
-            //     awebo.protocol.server.ChannelsUpdate.marker => {
-            //         try channelsUpdate(msg);
-            //     },
-            //     awebo.protocol.server.ClientRequestReply.marker => {
-            //         try handleRequestReply(core);
-            //     },
-            // },
-
+            .audio_ready => {
+                log.info("audio ready", .{});
+            },
         }
 
         core.refresh(core, @src(), null);
     }
 }
 
-pub const NetworkCommand = struct {
-    host_id: awebo.Host.ClientOnly.Id,
-    cmd: union(enum) {
-        host_connection_update: awebo.Host.ClientOnly.ConnectionStatus,
-        caller_speaking: CallerSpeaking,
+pub const Event = union(enum) {
+    network: Network,
+    audio_ready: void,
 
-        host_sync: awebo.protocol.server.HostSync,
-        chat_message_new: awebo.protocol.server.ChatMessageNew,
-        media_connection_details: awebo.protocol.server.MediaConnectionDetails,
-        callers_update: awebo.protocol.server.CallersUpdate,
-    },
+    pub const Network = struct {
+        host_id: awebo.Host.ClientOnly.Id,
+        cmd: union(enum) {
+            host_connection_update: awebo.Host.ClientOnly.ConnectionStatus,
+            caller_speaking: CallerSpeaking,
 
-    pub const CallerSpeaking = struct {
-        time_ms: u64,
-        caller: awebo.Caller.Id,
+            host_sync: awebo.protocol.server.HostSync,
+            chat_message_new: awebo.protocol.server.ChatMessageNew,
+            media_connection_details: awebo.protocol.server.MediaConnectionDetails,
+            callers_update: awebo.protocol.server.CallersUpdate,
+        },
+
+        pub const CallerSpeaking = struct {
+            time_ms: u64,
+            caller: awebo.Caller.Id,
+        };
     };
 };
+
+pub fn putEvent(core: *Core, event: Event) error{ Canceled, Closed }!void {
+    return core.command_queue.putOne(core.io, event);
+}
 
 fn hostConnectionUpdate(core: *Core, id: HostId, hcu: awebo.Host.ClientOnly.ConnectionStatus) void {
     var locked = lockState(core);
@@ -257,7 +273,7 @@ fn hostSync(core: *Core, id: HostId, hs: awebo.protocol.server.HostSync) void {
     }
 }
 
-fn channelsUpdate(core: *Core, msg: NetworkCommand.Msg) !void {
+fn channelsUpdate(core: *Core, msg: void) !void {
     const gpa = core.gpa;
 
     var fbs = std.io.fixedBufferStream(msg.bytes[1..]);
@@ -274,7 +290,7 @@ fn channelsUpdate(core: *Core, msg: NetworkCommand.Msg) !void {
         try h.chats.set(gpa, chat);
     }
 }
-fn handleRequestReply(core: *Core, msg: NetworkCommand.Msg) !void {
+fn handleRequestReply(core: *Core, msg: void) !void {
     var fbs = std.io.fixedBufferStream(msg.bytes[1..]);
     const crr = try awebo.protocol.server.ClientRequestReply.parseAlloc(core.gpa, fbs.reader());
     log.debug("CRR: {any}", .{crr});

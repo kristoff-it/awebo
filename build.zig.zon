@@ -9,8 +9,8 @@
             .hash = "dvui-0.4.0-dev-AQFJmayi2gAKE7FeJoF61v5U1IV9-SupoEcFutIZYpkC",
         },
         .pulseaudio = .{
-            .url = "https://github.com/andrewrk/pulseaudio/archive/6c5437104c91ba171e436dcf3b9c7c205536f649.tar.gz",
-            .hash = "pulseaudio-16.1.1-7-mk_62PVWNwBgUrv1b_PUmPklhPtlKi-YlgjhNoMKwhAS",
+            .url = "https://github.com/andrewrk/pulseaudio/archive/909a2ceebcc4efe74418107c279ac239f28e0f61.tar.gz",
+            .hash = "pulseaudio-16.1.1-9-mk_62MZkNwBaFwiZ7ZVrYRIf_3dTqqJR5PbMRCJzSuLw",
             .lazy = true,
         },
         .opus = .{

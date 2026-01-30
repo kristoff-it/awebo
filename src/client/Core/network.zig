@@ -50,10 +50,12 @@ pub fn runHostManager(
     var retry_count: usize = 0;
     while (true) : (retry_count += 1) {
         if (retry_count > 0) {
-            if (mode == .connect) core.command_queue.putOne(io, .{
-                .host_id = mode.connect,
-                .cmd = .{
-                    .host_connection_update = .{ .disconnected = core.now() + (2 * std.time.ns_per_s) },
+            if (mode == .connect) core.putEvent(.{
+                .network = .{
+                    .host_id = mode.connect,
+                    .cmd = .{
+                        .host_connection_update = .{ .disconnected = core.now() + (2 * std.time.ns_per_s) },
+                    },
                 },
             }) catch return;
             log.debug("disconnected, sleeping", .{});
@@ -242,7 +244,7 @@ fn runHostManagerFallible(
     defer send_future.cancel(io) catch {};
 
     log.debug("notifying core we connected successfully", .{});
-    try core.command_queue.putOne(io, .{ .host_id = host_id, .cmd = .{ .host_connection_update = .{ .connected = hc } } });
+    try core.putEvent(.{ .network = .{ .host_id = host_id, .cmd = .{ .host_connection_update = .{ .connected = hc } } } });
 
     _ = io.select(.{ &receive_future, &send_future }) catch return error.Canceled;
 
@@ -256,7 +258,6 @@ fn runHostReceive(
     id: awebo.Host.ClientOnly.Id,
 ) !void {
     const gpa = core.gpa;
-    const io = core.io;
 
     log.debug("{s} started", .{@src().fn_name});
     defer log.debug("{s} exited", .{@src().fn_name});
@@ -268,19 +269,19 @@ fn runHostReceive(
         switch (marker) {
             awebo.protocol.server.HostSync.marker => {
                 const hs: awebo.protocol.server.HostSync = try .deserializeAlloc(gpa, reader);
-                try core.command_queue.putOne(io, .{ .host_id = id, .cmd = .{ .host_sync = hs } });
+                try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .host_sync = hs } } });
             },
             awebo.protocol.server.ChatMessageNew.marker => {
                 const cmn: awebo.protocol.server.ChatMessageNew = try .deserializeAlloc(gpa, reader);
-                try core.command_queue.putOne(io, .{ .host_id = id, .cmd = .{ .chat_message_new = cmn } });
+                try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .chat_message_new = cmn } } });
             },
             awebo.protocol.server.MediaConnectionDetails.marker => {
                 const mcd: awebo.protocol.server.MediaConnectionDetails = try .deserialize(reader);
-                try core.command_queue.putOne(io, .{ .host_id = id, .cmd = .{ .media_connection_details = mcd } });
+                try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .media_connection_details = mcd } } });
             },
             awebo.protocol.server.CallersUpdate.marker => {
                 const cu: awebo.protocol.server.CallersUpdate = try .deserialize(reader);
-                try core.command_queue.putOne(io, .{ .host_id = id, .cmd = .{ .callers_update = cu } });
+                try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .callers_update = cu } } });
             },
 
             else => {
@@ -363,7 +364,6 @@ pub fn runHostMediaReceiver(
     defer log.debug("{s} exited", .{@src().fn_name});
 
     var imbuf: [64]Io.net.IncomingMessage = undefined;
-    var csbuf: [64]Core.NetworkCommand = undefined;
     var csbuf_idx: usize = 0;
     const dbuf = gpa.alloc(u8, imbuf.len * 1280) catch oom();
     while (true) {
@@ -372,7 +372,7 @@ pub fn runHostMediaReceiver(
         const power, const cid = core.media.receive(gpa, m.data);
         // log.debug("cid: {} pow: {}", .{ cid, power });
         if (power > 200) {
-            try core.command_queue.putOne(io, .{
+            try core.putEvent(.{ .network = .{
                 .host_id = host_id,
                 .cmd = .{
                     .caller_speaking = .{
@@ -380,10 +380,9 @@ pub fn runHostMediaReceiver(
                         .caller = cid,
                     },
                 },
-            });
+            } });
         }
 
-        _ = &csbuf;
         _ = &csbuf_idx;
         //     const err, const n = sock.receiveManyTimeout(io, &imbuf, dbuf, .{}, .none);
         //     if (err) |e| return e;
