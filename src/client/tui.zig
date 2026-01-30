@@ -31,8 +31,8 @@ fn exitHelp(status: u8) noreturn {
         \\Initialize and run the awebo terminal client.
         \\
         \\Available commands:
-        \\  run       Start the awebo terminal client.
-        \\  help      Show this menu and exit.
+        \\  run     Start the awebo terminal client.
+        \\  help    Show this menu and exit.
         \\
         \\Use `awebo tui COMMAND --help` for command-specific help information.
         \\

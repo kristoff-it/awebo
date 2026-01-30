@@ -482,33 +482,20 @@ const Command = struct {
         var owner_pass: ?[]const u8 = null;
         var db_path: ?[:0]const u8 = null;
 
-        const eql = std.mem.eql;
-        while (it.next()) |arg| {
-            if (eql(u8, arg, "--server-name")) {
-                if (server_name != null) {
-                    cli.fatal("duplicate --server-name argument", .{});
-                }
-                server_name = it.next() orelse cli.fatal("missing argument to --server-name", .{});
-            } else if (eql(u8, arg, "--owner-handle")) {
-                if (owner_handle != null) {
-                    cli.fatal("duplicate --owner-handle argument", .{});
-                }
-                owner_handle = it.next() orelse cli.fatal("missing argument to --owner-handle", .{});
-            } else if (eql(u8, arg, "--owner-pass")) {
-                if (owner_pass != null) {
-                    cli.fatal("duplicate --owner-pass argument", .{});
-                }
-                owner_pass = it.next() orelse cli.fatal("missing argument to --owner-pass", .{});
-            } else if (eql(u8, arg, "--db-path")) {
-                if (db_path != null) {
-                    cli.fatal("duplicate --db-path argument", .{});
-                }
-                db_path = it.next() orelse cli.fatal("missing argument to --db-path", .{});
-            } else if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) {
-                exitHelp(0);
+        var args: cli.Args = .init(it);
+
+        while (args.peek()) |current_arg| {
+            if (args.help()) exitHelp(0);
+            if (args.option("server-name")) |server_name_opt| {
+                server_name = server_name_opt;
+            } else if (args.option("owner-handle")) |owner_handle_opt| {
+                owner_handle = owner_handle_opt;
+            } else if (args.option("owner-pass")) |owner_pass_opt| {
+                owner_pass = owner_pass_opt;
+            } else if (args.option("db-path")) |db_path_opt| {
+                db_path = db_path_opt;
             } else {
-                std.debug.print("error: unknown argument '{s}'\n", .{arg});
-                exitHelp(1);
+                cli.fatal("unknown argument '{s}'", .{current_arg});
             }
         }
 
@@ -530,14 +517,14 @@ fn exitHelp(status: u8) noreturn {
         \\Create a SQLite database for a fresh new Awebo server.
         \\
         \\Required arguments:
-        \\ --server-name NAME             Name of this Awebo server instance.
-        \\ --owner-handle OWNER_HANDLE    Owner account username.
-        \\ --owner-pass OWNER_PASS        Owner account password.
+        \\  --server-name NAME             Name of this Awebo server instance.
+        \\  --owner-handle OWNER_HANDLE    Owner account username.
+        \\  --owner-pass OWNER_PASS        Owner account password.
         \\
         \\Optional arguments:
-        \\ --db-path DB_PATH              Path where to place the generated SQLite database.
-        \\                                Defaults to 'awebo.db'.
-        \\ --help, -h                     Show this menu and exit.
+        \\  --db-path DB_PATH    Path where to place the generated SQLite database.
+        \\                       Defaults to 'awebo.db'.
+        \\  --help, -h           Show this menu and exit.
         \\
     , .{});
 

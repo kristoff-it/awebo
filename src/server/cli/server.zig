@@ -42,9 +42,9 @@ fn exitHelp(status: u8) noreturn {
         \\Initialize and run a server, manage its settings.
         \\
         \\Available commands:
-        \\  init      Create a SQLite database for a fresh new Awebo server.
-        \\  run       Start the Awebo server.
-        \\  help      Show this menu and exit.
+        \\  init    Create a SQLite database for a fresh new Awebo server.
+        \\  run     Start the Awebo server.
+        \\  help    Show this menu and exit.
         \\
         \\Use `awebo-server server COMMAND --help` for command-specific help information.
         \\

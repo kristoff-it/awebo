@@ -89,59 +89,45 @@ const Command = struct {
     fn parse(it: *std.process.Args.Iterator) Command {
         var slug: ?[]const u8 = null;
         var expiry: ?i64 = null;
-        var creator: ?[]const u8 = null;
+        var creator_handle: ?[]const u8 = null;
         var enabled: ?bool = null;
         var user_limit: union(enum) { limit: u32, no_limit, unset } = .unset;
         var db_path: ?[:0]const u8 = null;
 
-        const eql = std.mem.eql;
-        while (it.next()) |arg| {
-            if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) exitHelp(0);
-            if (eql(u8, arg, "--slug")) {
-                if (slug != null) cli.fatal("duplicate --slug flag", .{});
-                slug = it.next() orelse cli.fatal("missing value for --slug", .{});
-            } else if (eql(u8, arg, "--expiry")) {
-                if (expiry != null) cli.fatal("duplicate --expiry flag", .{});
-                const expiry_arg = it.next() orelse cli.fatal("missing value for --expiry", .{});
-                expiry = std.fmt.parseInt(i64, expiry_arg, 10) catch {
-                    cli.fatal("invalid value for --expiry (integer): '{s}'", .{expiry_arg});
+        var args: cli.Args = .init(it);
+
+        while (args.peek()) |current_arg| {
+            if (args.help()) exitHelp(0);
+            if (args.option("slug")) |slug_opt| {
+                slug = slug_opt;
+            } else if (args.option("expiry")) |expiry_opt| {
+                expiry = std.fmt.parseInt(i64, expiry_opt, 10) catch {
+                    cli.fatal("invalid value for --expiry (integer): '{s}'", .{expiry_opt});
                 };
-            } else if (eql(u8, arg, "--creator-handle")) {
-                if (creator != null) cli.fatal("duplicate --creator-handle flag", .{});
-                creator = it.next() orelse cli.fatal("missing value for --creator-handle", .{});
-            } else if (eql(u8, arg, "--enabled")) {
-                if (enabled != null) cli.fatal("duplicate --enabled flag", .{});
-                const enabled_arg = it.next() orelse cli.fatal("missing value for --enabled", .{});
-                if (eql(u8, enabled_arg, "true")) {
-                    enabled = true;
-                } else if (eql(u8, enabled_arg, "false")) {
-                    enabled = false;
-                } else {
-                    cli.fatal("invalid value for --enabled (boolean): '{s}'", .{enabled_arg});
-                }
-            } else if (eql(u8, arg, "--user-limit")) {
-                if (user_limit != .unset) cli.fatal("duplicate --user-limit flag", .{});
-                const user_limit_arg = it.next() orelse cli.fatal("missing value for --user-limit", .{});
-                if (std.ascii.eqlIgnoreCase(user_limit_arg, "null")) {
+            } else if (args.option("creator-handle")) |creator_handle_opt| {
+                creator_handle = creator_handle_opt;
+            } else if (args.flag("enabled")) |enabled_flag| {
+                enabled = enabled_flag;
+            } else if (args.option("user-limit")) |user_limit_opt| {
+                if (std.ascii.eqlIgnoreCase(user_limit_opt, "null")) {
                     user_limit = .no_limit;
                 } else {
                     user_limit = .{
-                        .limit = std.fmt.parseInt(u32, user_limit_arg, 10) catch {
-                            cli.fatal("invalid value for --user-limit (integer or 'null'): '{s}'", .{user_limit_arg});
+                        .limit = std.fmt.parseInt(u32, user_limit_opt, 10) catch {
+                            cli.fatal("invalid value for --user-limit (integer or 'null'): '{s}'", .{user_limit_opt});
                         },
                     };
                 }
-            } else if (eql(u8, arg, "--db-path")) {
-                if (db_path != null) cli.fatal("duplicate --db-path flag", .{});
-                db_path = it.next() orelse cli.fatal("missing value for --db-path", .{});
+            } else if (args.option("db-path")) |db_path_opt| {
+                db_path = db_path_opt;
             } else {
-                cli.fatal("unknown argument '{s}'", .{arg});
+                cli.fatal("unknown argument '{s}'", .{current_arg});
             }
         }
 
         return .{
             .slug = slug,
-            .creator_handle = creator orelse cli.fatal("--creator-handle argument is required", .{}),
+            .creator_handle = creator_handle orelse cli.fatal("--creator-handle argument is required", .{}),
             .expiry = expiry,
             .enabled = enabled orelse true,
             .user_limit = switch (user_limit) {
@@ -161,15 +147,15 @@ fn exitHelp(status: u8) noreturn {
         \\Add a new invite.
         \\
         \\Required arguments:
-        \\ --creator-handle HANDLE  @handle of the user that created the invite
+        \\  --creator-handle HANDLE    @handle of the user that created the invite
         \\
         \\Optional arguments:
-        \\ --slug SLUG         Invite's slug (default: a random, unique string)
-        \\ --expiry TIME       Time the invite will expire (default: never)
-        \\ --enabled ENABLED   Whether the invite is enabled (default: true)
-        \\ --user-limit LIMIT  Number of users allowed to use the invite (default: 1)
-        \\ --db-path DB_PATH   Path to the SQLite database to be used. (default: awebo.db)
-        \\ --help, -h          Show this menu and exit.
+        \\  --slug SLUG           Invite's slug (default: a random, unique string)
+        \\  --expiry TIME         Time the invite will expire (default: never)
+        \\  --[no-]enabled        Whether the invite is enabled (default: enabled)
+        \\  --user-limit LIMIT    Number of users allowed to use the invite, or 'null' for no limit (default: 1)
+        \\  --db-path DB_PATH     Path to the SQLite database to be used. (default: awebo.db)
+        \\  --help, -h            Show this menu and exit.
         \\
     , .{});
 

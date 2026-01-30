@@ -39,12 +39,12 @@ pub fn noopRefresh(_: *Core, _: std.builtin.SourceLocation, _: ?u64) void {}
 
 fn exitHelp(status: u8) noreturn {
     std.debug.print(
-        \\Usage: awebo server list REQUIRED_ARGS [OPTIONAL_ARGS]
+        \\Usage: awebo server list [OPTIONAL_ARGS]
         \\
         \\List configured servers.
         \\
         \\Optional arguments:
-        \\ --help, -h                 Show this menu and exit.
+        \\  --help, -h    Show this menu and exit.
         \\
     , .{});
 

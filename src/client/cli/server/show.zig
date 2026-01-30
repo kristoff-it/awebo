@@ -52,10 +52,10 @@ fn exitHelp(status: u8) noreturn {
         \\Show the configuration for a server.
         \\
         \\Required arguments:
-        \\ --identity IDENTITY        Server name to show
+        \\  --identity IDENTITY    Server name to show
         \\
         \\Optional arguments:
-        \\ --help, -h                 Show this menu and exit.
+        \\  --help, -h    Show this menu and exit.
         \\
     , .{});
 

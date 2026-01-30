@@ -68,49 +68,36 @@ const Command = struct {
         var user_limit_value: ?u64 = null;
         var db_path: ?[:0]const u8 = null;
 
-        const invite_slug = it.next() orelse {
+        var args: cli.Args = .init(it);
+
+        if (args.help()) exitHelp(0);
+        const invite_slug = args.next() orelse {
             std.debug.print("error: missing INVITE_SLUG for edit\n", .{});
             exitHelp(1);
         };
 
-        const eql = std.mem.eql;
-        if (eql(u8, invite_slug, "--help") or eql(u8, invite_slug, "-h")) exitHelp(0);
-        while (it.next()) |arg| {
-            if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) exitHelp(0);
-            if (eql(u8, arg, "--expiry")) {
-                if (expiry != null) cli.fatal("duplicate --expiry flag", .{});
-                const expiry_arg = it.next() orelse cli.fatal("missing value for --expiry", .{});
-                expiry = std.fmt.parseInt(i64, expiry_arg, 10) catch {
-                    cli.fatal("invalid value for --expiry (integer): '{s}'", .{expiry_arg});
+        while (args.peek()) |current_arg| {
+            if (args.help()) exitHelp(0);
+            if (args.option("expiry")) |expiry_opt| {
+                expiry = std.fmt.parseInt(i64, expiry_opt, 10) catch {
+                    cli.fatal("invalid value for --expiry (integer): '{s}'", .{expiry_opt});
                 };
-            } else if (eql(u8, arg, "--enabled")) {
-                if (enabled != null) cli.fatal("duplicate --enabled flag", .{});
-                const enabled_arg = it.next() orelse cli.fatal("missing value for --enabled", .{});
-                if (eql(u8, enabled_arg, "true")) {
-                    enabled = true;
-                } else if (eql(u8, enabled_arg, "false")) {
-                    enabled = false;
-                } else {
-                    cli.fatal("invalid value for --enabled (boolean): '{s}'", .{enabled_arg});
-                }
-            } else if (eql(u8, arg, "--user-limit")) {
-                if (user_limit_set != null) cli.fatal("duplicate --user-limit flag", .{});
+            } else if (args.flag("enabled")) |enabled_flag| {
+                enabled = enabled_flag;
+            } else if (args.option("user-limit")) |user_limit_opt| {
                 user_limit_set = true;
 
-                const user_limit_arg = it.next() orelse cli.fatal("missing value for --user-limit", .{});
-
-                if (std.ascii.eqlIgnoreCase(user_limit_arg, "null")) {
+                if (std.ascii.eqlIgnoreCase(user_limit_opt, "null")) {
                     user_limit_value = null;
                 } else {
-                    user_limit_value = std.fmt.parseInt(u32, user_limit_arg, 10) catch {
-                        cli.fatal("invalid value for --user-limit (integer or 'null'): '{s}'", .{user_limit_arg});
+                    user_limit_value = std.fmt.parseInt(u32, user_limit_opt, 10) catch {
+                        cli.fatal("invalid value for --user-limit (integer or 'null'): '{s}'", .{user_limit_opt});
                     };
                 }
-            } else if (eql(u8, arg, "--db-path")) {
-                if (db_path != null) cli.fatal("duplicate --db-path flag", .{});
-                db_path = it.next() orelse cli.fatal("missing value for --db-path", .{});
+            } else if (args.option("db-path")) |db_path_opt| {
+                db_path = db_path_opt;
             } else {
-                cli.fatal("unknown argument '{s}'", .{arg});
+                cli.fatal("unknown argument '{s}'", .{current_arg});
             }
         }
 
@@ -143,14 +130,14 @@ fn exitHelp(status: u8) noreturn {
         \\Edit an invite.
         \\
         \\Invite editing arguments (at least one must be specified):
-        \\  --expiry EXPIRY          Change the invite's expiration time
-        \\  --enabled ENABLED        Enable/disable the invite
-        \\  --user-limit LIMIT       Change the invite's user limit
+        \\  --expiry EXPIRY       Change the invite's expiration time
+        \\  --[no-]enabled        Enable/disable the invite
+        \\  --user-limit LIMIT    Change the invite's user limit
         \\
         \\Optional arguments:
-        \\ --db-path DB_PATH     Path to the SQLite database to be used.
+        \\  --db-path DB_PATH    Path to the SQLite database to be used.
         \\                       Defaults to 'awebo.db'.
-        \\ --help, -h            Show this menu and exit.
+        \\  --help, -h           Show this menu and exit.
         \\
     , .{});
 

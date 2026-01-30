@@ -51,7 +51,7 @@ fn exitHelp(status: u8) noreturn {
         \\  add       Add a new invite
         \\  edit      Edit an invite
         \\  delete    Delete an invite
-        \\  list      List invite
+        \\  list      List invites
         \\  show      Show an invite
         \\  help      Show this menu and exit
         \\

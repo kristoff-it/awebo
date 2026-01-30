@@ -42,14 +42,14 @@ fn exitHelp(status: u8) noreturn {
         \\Add a new role.
         \\
         \\Required arguments:
-        \\ --name NAME                Role name
+        \\  --name NAME    Role name
         \\
         \\Optional arguments:
-        \\ --grant KEY [RESOURCE]     Grant a premission to this role.
-        \\ --deny  KEY [RESOURCE]     Deny a premission to this role.
-        \\ --db-path DB_PATH          Path where to place the generated SQLite database.
+        \\  --grant KEY [RESOURCE]    Grant a premission to this role.
+        \\  --deny  KEY [RESOURCE]    Deny a premission to this role.
+        \\  --db-path DB_PATH         Path where to place the generated SQLite database.
         \\                            Defaults to 'awebo.db'.
-        \\ --help, -h                 Show this menu and exit.
+        \\  --help, -h                Show this menu and exit.
         \\
     , .{});
 

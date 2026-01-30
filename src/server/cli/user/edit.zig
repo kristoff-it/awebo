@@ -96,8 +96,11 @@ const Command = struct {
         var display_name: ?[]const u8 = null;
         var db_path: ?[:0]const u8 = null;
 
+        var args: cli.Args = .init(it);
+
+        if (args.help()) exitHelp(0);
         const user_id = blk: {
-            const str = it.next() orelse {
+            const str = args.next() orelse {
                 std.debug.print("error: missing USER_ID for edit\n", .{});
                 exitHelp(1);
             };
@@ -106,23 +109,18 @@ const Command = struct {
             };
         };
 
-        const eql = std.mem.eql;
-        while (it.next()) |arg| {
-            if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) exitHelp(1);
-            if (eql(u8, arg, "--handle")) {
-                if (handle != null) cli.fatal("duplicate --handle flag", .{});
-                handle = it.next() orelse cli.fatal("missing value for --handle", .{});
-            } else if (eql(u8, arg, "--password")) {
-                if (password != null) cli.fatal("duplicate --password flag", .{});
-                password = it.next() orelse cli.fatal("missing value for --password", .{});
-            } else if (eql(u8, arg, "--display-name")) {
-                if (display_name != null) cli.fatal("duplicate --display-name flag", .{});
-                display_name = it.next() orelse cli.fatal("missing value for --display-name", .{});
-            } else if (eql(u8, arg, "--db-path")) {
-                if (db_path != null) cli.fatal("duplicate --db-path flag", .{});
-                db_path = it.next() orelse cli.fatal("missing value for --db-path", .{});
+        while (args.peek()) |current_arg| {
+            if (args.help()) exitHelp(0);
+            if (args.option("handle")) |handle_opt| {
+                handle = handle_opt;
+            } else if (args.option("password")) |password_opt| {
+                password = password_opt;
+            } else if (args.option("display-name")) |display_name_opt| {
+                display_name = display_name_opt;
+            } else if (args.option("db-path")) |db_path_opt| {
+                db_path = db_path_opt;
             } else {
-                cli.fatal("unknown argument '{s}'", .{arg});
+                cli.fatal("unknown argument '{s}'", .{current_arg});
             }
         }
 
@@ -150,14 +148,14 @@ fn exitHelp(status: u8) noreturn {
         \\Edit a user.
         \\
         \\User edit arguments (at least one must be specified):
-        \\ --handle HANDLE       Change the user's @handle (user will be logged out)
-        \\ --password password   Change the user's password (user will be logged out)
-        \\ --display-name        Change the user's display name
+        \\  --handle HANDLE        Change the user's @handle (user will be logged out)
+        \\  --password password    Change the user's password (user will be logged out)
+        \\  --display-name         Change the user's display name
         \\
         \\Optional arguments:
-        \\ --db-path DB_PATH     Path to the SQLite database to be used.
+        \\  --db-path DB_PATH    Path to the SQLite database to be used.
         \\                       Defaults to 'awebo.db'.
-        \\ --help, -h            Show this menu and exit.
+        \\  --help, -h           Show this menu and exit.
         \\
     , .{});
 

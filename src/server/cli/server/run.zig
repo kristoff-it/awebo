@@ -956,32 +956,28 @@ const Command = struct {
         var udp: ?Io.net.IpAddress = null;
         var db_path: ?[:0]const u8 = null;
 
-        const eql = std.mem.eql;
-        while (it.next()) |arg| {
-            if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) exitHelp(0);
-            if (eql(u8, arg, "--tcp")) {
-                if (tcp != null) cli.fatal("duplicate --tcp argument", .{});
-                const ip = it.next() orelse cli.fatal("missing argument to --tcp", .{});
-                tcp = Io.net.IpAddress.parseLiteral(ip) catch |err| {
+        var args: cli.Args = .init(it);
+
+        while (args.peek()) |current_arg| {
+            if (args.help()) exitHelp(0);
+            if (args.option("tcp")) |tcp_opt| {
+                tcp = Io.net.IpAddress.parseLiteral(tcp_opt) catch |err| {
                     cli.fatal(
                         "unable to parse '{s}' as an ip address: {t}",
-                        .{ arg, err },
+                        .{ tcp_opt, err },
                     );
                 };
-            } else if (eql(u8, arg, "--udp")) {
-                if (udp != null) cli.fatal("duplicate --udp argument", .{});
-                const ip = it.next() orelse cli.fatal("missing argument to --udp", .{});
-                udp = Io.net.IpAddress.parseLiteral(ip) catch |err| {
+            } else if (args.option("udp")) |udp_opt| {
+                udp = Io.net.IpAddress.parseLiteral(udp_opt) catch |err| {
                     cli.fatal(
                         "unable to parse '{s}' as an ip address with port: {t}",
-                        .{ arg, err },
+                        .{ udp_opt, err },
                     );
                 };
-            } else if (eql(u8, arg, "--db-path")) {
-                if (db_path != null) cli.fatal("duplicate --db-path argument", .{});
-                db_path = arg;
+            } else if (args.option("db-path")) |db_path_opt| {
+                db_path = db_path_opt;
             } else {
-                cli.fatal("unknown argument: '{s}'", .{arg});
+                cli.fatal("unknown argument: '{s}'", .{current_arg});
             }
         }
 
@@ -1010,13 +1006,13 @@ fn exitHelp(status: u8) noreturn {
         \\Start the Awebo server.
         \\
         \\Optional arguments:
-        \\ --db-path DB_PATH     Path to the SQLite database to be used.
+        \\  --db-path DB_PATH    Path to the SQLite database to be used.
         \\                       Defaults to 'awebo.db'.
-        \\ --tcp IP:PORT         Address and port for TCP communication.
+        \\  --tcp IP:PORT        Address and port for TCP communication.
         \\                       Defaults to '[::]:1991'.
-        \\ --udp IP:PORT         Address and port for UDP communication.
+        \\  --udp IP:PORT        Address and port for UDP communication.
         \\                       Defaults to '[::]:1992'.
-        \\ --help, -h            Show this menu and exit.
+        \\  --help, -h           Show this menu and exit.
         \\
         \\
     , .{});

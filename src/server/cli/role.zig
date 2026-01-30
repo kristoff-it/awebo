@@ -46,13 +46,13 @@ fn exitHelp(status: u8) noreturn {
         \\Use command `permissions` to see which permissions can be granted or denied to a role.
         \\
         \\Available commands:
-        \\  add                Add a new role
-        \\  edit               Edit a role
-        \\  delete             Delete a role
-        \\  list               List roles
-        \\  permissions        List all permissions
-        \\  show               Show a role
-        \\  help               Show this menu and exit
+        \\  add            Add a new role
+        \\  edit           Edit a role
+        \\  delete         Delete a role
+        \\  list           List roles
+        \\  permissions    List all permissions
+        \\  show           Show a role
+        \\  help           Show this menu and exit
         \\
         \\Use awebo-server role COMMAND --help` for command-specific information.
         \\
