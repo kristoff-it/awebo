@@ -164,14 +164,17 @@ pub fn initHostDb(gpa: Allocator, cache_path: []const u8, h: *awebo.Host) !void 
 
     const db: awebo.Database = .init(db_path, .create);
     const qs = db.initQueries(awebo.Database.CommonQueries);
-    db.loadHost(gpa, &qs, h);
+    try db.loadHost(gpa, &qs, h);
 
     h.client.identity = identity;
     h.client.host_id = id;
+    h.client.max_uid = qs.select_max_uid.run(db, .{}).?.get(.max_uid);
     h.client.username = username;
     h.client.password = password;
     h.client.db = db;
     h.client.qs = qs;
+
+    log.debug("loaded host {} max_uid {}", .{ id, h.client.max_uid });
 }
 
 pub fn updateHosts(io: Io, hosts: []const awebo.Host) !void {

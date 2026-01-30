@@ -15,7 +15,10 @@ const log = std.log.scoped(.net);
 
 pub const HostConnectMode = union(enum) {
     join: *Core.ui.FirstConnectionStatus,
-    connect: HostId,
+    connect: struct {
+        host_id: HostId,
+        max_uid: u64,
+    },
 };
 
 pub fn runHostManager(
@@ -52,7 +55,7 @@ pub fn runHostManager(
         if (retry_count > 0) {
             if (mode == .connect) core.putEvent(.{
                 .network = .{
-                    .host_id = mode.connect,
+                    .host_id = mode.connect.host_id,
                     .cmd = .{
                         .host_connection_update = .{ .disconnected = core.now() + (2 * std.time.ns_per_s) },
                     },
@@ -191,6 +194,10 @@ fn runHostManagerFallible(
     const r = &hc.tcp.reader_state.interface;
 
     const auth: awebo.protocol.client.Authenticate = .{
+        .max_uid = switch (mode) {
+            .join => 0,
+            .connect => |c| c.max_uid,
+        },
         .device_kind = .pc,
         .method = .{
             .login = .{
@@ -221,7 +228,7 @@ fn runHostManagerFallible(
     }
 
     const host_id = switch (mode) {
-        .connect => |host_id| host_id,
+        .connect => |c| c.host_id,
         .join => |fcs| blk: {
             const host_id = lock: {
                 var locked = core.lockState();

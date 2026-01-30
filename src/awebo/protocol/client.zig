@@ -12,6 +12,9 @@ pub const OriginId = u64;
 /// which version of the protocol the server uses. It's important we
 /// keep it "append only" (same with the reply).
 pub const Authenticate = struct {
+    // The latest uid observed by the client, used for efficient
+    // state synchronization.
+    max_uid: u64,
     device_kind: enum(u8) { pc, mobile },
     method: union(Method) {
         login: struct {

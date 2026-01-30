@@ -88,25 +88,28 @@ select_host_info: Query(
 ),
 
 select_channels: Query(
-    \\SELECT id, name, privacy, kind FROM channels;
+    \\SELECT id, name, update_uid, privacy, kind FROM channels;
 , .{
     .kind = .rows,
     .cols = struct {
         id: u64,
         name: []const u8,
+        update_uid: u64,
         privacy: awebo.Channel.Privacy,
         kind: awebo.Channel.Kind.Enum,
     },
 }),
 
 select_channel_messages: Query(
-    \\SELECT uid, origin, author, body FROM messages
+    \\SELECT uid, origin, created, update_uid, author, body FROM messages
     \\WHERE channel = ? ORDER BY uid DESC LIMIT ?;
 , .{
     .kind = .rows,
     .cols = struct {
         uid: u64,
         origin: u64,
+        created: u64,
+        update_uid: u64,
         author: awebo.User.Id,
         body: []const u8,
     },
@@ -235,6 +238,7 @@ upsert_user: Query(
         avatar: ?[]const u8,
     },
 }),
+
 upsert_channel: Query(
     \\INSERT INTO channels(id, update_uid, section, sort, name, kind, privacy)
     \\VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -254,5 +258,29 @@ upsert_channel: Query(
         name: []const u8,
         kind: awebo.Channel.Kind.Enum,
         privacy: awebo.Channel.Privacy,
+    },
+}),
+
+upsert_message: Query(
+    \\INSERT INTO
+    \\messages(uid, origin, created, update_uid, channel, author, body, reactions)
+    \\VALUES  (?1,  ?2,     ?3,      ?4,         ?5,      ?6,     ?7,   ?8)
+    \\ON CONFLICT(uid) DO UPDATE
+    \\SET(origin, created, update_uid, channel, author, body, reactions)
+    \\ = (?2,     ?3,      ?4,         ?5,      ?6,     ?7,   ?8)
+    // \\ON CONFLICT(update_uid) DO UPDATE
+    // \\SET(origin, created, update_uid, channel, author, body, reactions)
+    // \\ = (?2,     ?3,      ?4,         ?5,      ?6,     ?7,   ?8)
+, .{
+    .kind = .exec,
+    .args = struct {
+        uid: awebo.Message.Id,
+        origin: u64,
+        created: u64,
+        update_uid: ?u64,
+        channel: awebo.Channel.Id,
+        author: awebo.User.Id,
+        body: []const u8,
+        reactions: ?[]const u8 = null,
     },
 }),

@@ -6,13 +6,17 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const proto = @import("protocol.zig");
+const HostSync = proto.server.HostSync;
 const Database = @import("Database.zig");
 const Channel = @import("Channel.zig");
 const User = @import("User.zig");
 const Caller = @import("Caller.zig");
 
+const log = std.log.scoped(.awebo_host);
+
 name: []const u8 = "",
 logo: []const u8 = "", // TODO: draw default logo
+// max_uid: u64 = 0,
 channels: Channels = .{},
 users: Users = .{},
 
@@ -40,10 +44,69 @@ pub fn deinit(hs: *const Host, gpa: std.mem.Allocator) void {
     hs.channels.deinit(gpa);
 }
 
-pub fn sync(host: *Host, gpa: Allocator, delta: *const Host, user_id: User.Id) void {
+pub fn computeDelta(
+    host: *Host,
+    gpa: Allocator,
+    user_id: User.Id,
+    user_max_uid: u64,
+    server_max_uid: u64,
+) !HostSync {
+    if (context != .server) @compileError("server only");
+
+    log.debug("computing delta for user {} max_uid {}", .{
+        user_id, user_max_uid,
+    });
+
+    var delta_users: std.ArrayList(User) = .empty;
+    var delta_channels: std.ArrayList(Channel) = .empty;
+
+    for (host.users.items.values()) |u| {
+        if (u.update_uid <= user_max_uid) continue;
+        try delta_users.append(gpa, u);
+    }
+    for (host.channels.items.values()) |ch| {
+        const has_new_message = switch (ch.kind) {
+            .voice => false,
+            .chat => |chat| if (chat.messages.latest()) |m|
+                m.id > user_max_uid
+            else
+                false,
+        };
+
+        if (!has_new_message and ch.update_uid <= user_max_uid) continue;
+
+        try delta_channels.append(gpa, ch);
+
+        const delta_ch = &delta_channels.items[delta_channels.items.len - 1];
+        switch (delta_ch.kind) {
+            .voice => {},
+            .chat => |*chat| {
+                if (!has_new_message) {
+                    chat.messages.len = 0;
+                } else {
+                    assert(chat.messages.len > 0);
+                    while (chat.messages.at(0).id <= user_max_uid) {
+                        chat.messages.tail +%= 1;
+                        chat.messages.len -= 1;
+                    }
+                }
+            },
+        }
+    }
+
+    return .{
+        .user_id = user_id,
+        .server_max_uid = server_max_uid,
+        .name = host.name,
+        .users = .{ .mode = .delta, .items = delta_users.items },
+        .channels = .{ .mode = .delta, .items = delta_channels.items },
+    };
+}
+
+pub fn sync(host: *Host, gpa: Allocator, delta: *const HostSync) void {
     if (context != .client) @compileError("client only");
 
-    host.client.user_id = user_id;
+    host.client.user_id = delta.user_id;
     host.client.connection_status = .synced;
 
     const db = host.client.db;
@@ -52,56 +115,81 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const Host, user_id: User.Id) v
     {
         gpa.free(host.name);
         host.name = delta.name;
-
         qs.upsert_host_kv.run(db, .{
             .key = "name",
             .value = .init(host.name),
         });
     }
-    {
-        for (delta.users.items.values()) |new_user| {
-            if (host.users.get(new_user.id)) |u| {
-                u.deinit(gpa);
-                u.* = new_user;
-            } else {
-                host.users.set(gpa, new_user) catch @panic("oom");
+
+    switch (delta.users.mode) {
+        .full => {
+            @panic("TODO");
+        },
+        .delta => {
+            for (delta.users.items) |new_user| {
+                if (host.users.get(new_user.id)) |u| {
+                    u.deinit(gpa);
+                    u.* = new_user;
+                } else {
+                    host.users.set(gpa, new_user) catch @panic("oom");
+                }
+
+                std.log.debug("upsert {f}", .{new_user});
+
+                qs.upsert_user.run(db, .{
+                    .id = new_user.id,
+                    .created = 0,
+                    // .update_uid = new_user.update_id,
+                    .update_uid = new_user.id,
+                    .invited_by = new_user.invited_by,
+                    .power = new_user.power,
+                    .handle = new_user.handle,
+                    .display_name = new_user.display_name,
+                    .avatar = null,
+                });
             }
-
-            std.log.debug("upsert {f}", .{new_user});
-
-            qs.upsert_user.run(db, .{
-                .id = new_user.id,
-                .created = 0,
-                // .update_uid = new_user.update_id,
-                .update_uid = new_user.id,
-                .invited_by = new_user.invited_by,
-                .power = new_user.power,
-                .handle = new_user.handle,
-                .display_name = new_user.display_name,
-                .avatar = null,
-            });
-        }
+        },
     }
 
-    {
-        for (delta.channels.items.values()) |new_ch| {
-            if (host.channels.get(new_ch.id)) |ch| {
-                assert(@as(Channel.Kind.Enum, ch.kind) == new_ch.kind);
-                ch.sync(gpa, db, qs, &new_ch);
-            } else {
-                host.channels.set(gpa, new_ch) catch @panic("oom");
-            }
+    switch (delta.channels.mode) {
+        .full => @panic("TODO"),
+        .delta => {
+            for (delta.channels.items) |new_ch| {
+                if (host.channels.get(new_ch.id)) |ch| {
+                    assert(@as(Channel.Kind.Enum, ch.kind) == new_ch.kind);
+                    ch.sync(gpa, db, qs, &new_ch);
+                } else {
+                    host.channels.set(gpa, new_ch) catch @panic("oom");
+                }
 
-            qs.upsert_channel.run(db, .{
-                .id = new_ch.id,
-                .update_uid = new_ch.id,
-                .section = null,
-                .sort = 0,
-                .name = new_ch.name,
-                .kind = new_ch.kind,
-                .privacy = new_ch.privacy,
-            });
-        }
+                qs.upsert_channel.run(db, .{
+                    .id = new_ch.id,
+                    .update_uid = new_ch.id,
+                    .section = null,
+                    .sort = 0,
+                    .name = new_ch.name,
+                    .kind = new_ch.kind,
+                    .privacy = new_ch.privacy,
+                });
+
+                switch (new_ch.kind) {
+                    .voice => {},
+                    .chat => |chat| {
+                        for (chat.messages.slices()) |s| for (s) |msg| {
+                            qs.upsert_message.run(db, .{
+                                .uid = msg.id,
+                                .origin = msg.origin,
+                                .created = msg.created,
+                                .update_uid = msg.update_uid,
+                                .channel = new_ch.id,
+                                .author = msg.author,
+                                .body = msg.text,
+                            });
+                        };
+                    },
+                }
+            }
+        },
     }
 }
 
@@ -113,6 +201,7 @@ pub const ClientOnly = struct {
 
     identity: []const u8 = undefined,
     host_id: Id = undefined,
+    max_uid: u64 = undefined,
     user_id: User.Id = undefined,
     username: []const u8 = undefined,
     password: []const u8 = undefined,
@@ -252,34 +341,33 @@ pub const Channels = struct {
         @constCast(&c.indexes.name).deinit(gpa);
     }
 
-    pub const create: fn (
+    pub fn create(
         u: *Channels,
         gpa: std.mem.Allocator,
         channel_name: []const u8,
-    ) error{ OutOfMemory, NameTaken }!*Channel = switch (context) {
-        .client => @compileError("server only"),
-        .server => struct {
-            var chat_counter: Channel.Id = 5;
-            fn create(u: *Channels, gpa: std.mem.Allocator, channel_name: []const u8) !*Channel {
-                if (u.indexes.name.get(channel_name) != null) {
-                    return error.NameTaken;
-                }
-                chat_counter += 1;
-                const gop = try u.items.getOrPut(gpa, chat_counter);
-                if (gop.found_existing) unreachable;
+    ) error{ OutOfMemory, NameTaken }!*Channel {
+        if (true) @panic("todo");
+        if (context != .server) @compileError("server only");
 
-                gop.value_ptr.* = .{
-                    .id = chat_counter,
-                    .name = channel_name,
-                    .kind = .{ .chat = .{} },
-                    .privacy = .private,
-                };
+        const host: *Host = @fieldParentPtr("channels", u);
+        _ = host;
+        if (u.indexes.name.get(channel_name) != null) {
+            return error.NameTaken;
+        }
+        const chat_counter = 10;
+        const gop = try u.items.getOrPut(gpa, chat_counter);
+        if (gop.found_existing) unreachable;
 
-                try u.indexes.name.put(gpa, channel_name, chat_counter);
-                return gop.value_ptr;
-            }
-        }.create,
-    };
+        gop.value_ptr.* = .{
+            .id = chat_counter,
+            .name = channel_name,
+            .kind = .{ .chat = .{} },
+            .privacy = .private,
+        };
+
+        try u.indexes.name.put(gpa, channel_name, chat_counter);
+        return gop.value_ptr;
+    }
 
     pub fn set(u: *@This(), gpa: std.mem.Allocator, channel: Channel) !void {
         const gop = try u.items.getOrPut(gpa, channel.id);

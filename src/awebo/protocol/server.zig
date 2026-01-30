@@ -1,5 +1,6 @@
 const context = @import("options").context;
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const proto = @import("../protocol.zig");
 const User = @import("../User.zig");
@@ -7,6 +8,7 @@ const Caller = @import("../Caller.zig");
 const Host = @import("../Host.zig");
 const Channel = @import("../Channel.zig");
 const Message = @import("../Message.zig");
+// const Role = @import("../Role.zig");
 
 const log = std.log.scoped(.protocol);
 
@@ -58,7 +60,7 @@ pub const InviteInfoReply = struct {
         };
     };
 
-    pub fn deinit(iir: InviteInfoReply, gpa: std.mem.Allocator) void {
+    pub fn deinit(iir: InviteInfoReply, gpa: Allocator) void {
         gpa.free(iir.server_name);
     }
 };
@@ -104,18 +106,92 @@ pub const ClientRequestReply = struct {
 
 pub const HostSync = struct {
     user_id: User.Id,
-    host: Host,
+    server_max_uid: u64,
+    name: []const u8,
+    users: struct {
+        mode: Mode,
+        items: []User,
+
+        pub const protocol = struct {
+            pub const sizes = struct {
+                pub const items = u64;
+            };
+        };
+    },
+    // roles: struct { sync: Sync, items: []Role },
+    channels: struct {
+        // Whether the client should flush before adding channels
+        mode: Mode,
+        // Whether the client should flush messages before adding
+        // messages, one entry per channel.
+        channel_sync: []Mode = &.{},
+        items: []Channel,
+        // modified_messages: []Message,
+
+        pub const protocol = struct {
+            pub const sizes = struct {
+                pub const channel_sync = u64;
+                pub const items = u64;
+            };
+        };
+    },
+
+    // Whether a given resource is being paritally or fully resynced.
+    // Full resyncs imply flushing all cached data first.
+    const Mode = enum(u8) { delta, full };
+
+    pub fn deinit(hs: *const HostSync, gpa: Allocator) void {
+        // This type assumes that item slices are sliced from
+        // in-memory server state.
+        gpa.free(hs.channels.channel_sync);
+    }
+
+    pub fn format(hs: *const HostSync, w: *Io.Writer) !void {
+        try w.print(
+            "HostSync(user_id: {} server_max_uid: {} name: '{s}' users: ({t}/{}) [",
+            .{
+                hs.user_id,         hs.server_max_uid,
+                hs.name,            hs.users.mode,
+                hs.users.items.len,
+            },
+        );
+
+        for (hs.users.items, 0..) |u, i| {
+            try w.print("(id: {} uid: {})", .{ u.id, u.update_uid });
+            if (i < hs.users.items.len - 1) {
+                try w.writeAll(", ");
+            }
+        }
+
+        try w.print("] channels: ({t}/{}) [", .{
+            hs.channels.mode, hs.channels.items.len,
+        });
+
+        for (hs.channels.items, 0..) |ch, i| {
+            try w.print("(id: {} uid: {} msgs: {?})", .{
+                ch.id,
+                ch.update_uid,
+                switch (ch.kind) {
+                    .voice => null,
+                    .chat => |chat| chat.messages.len,
+                },
+            });
+            if (i < hs.channels.items.len - 1) {
+                try w.writeAll(", ");
+            }
+        }
+
+        try w.writeAll("])");
+    }
 
     pub const marker = 'S';
     pub const serializeAlloc = proto.MakeSerializeAllocFn(HostSync);
     pub const deserializeAlloc = proto.MakeDeserializeAllocFn(HostSync);
     pub const protocol = struct {
-        pub const sizes = struct {};
+        pub const sizes = struct {
+            pub const name = u64;
+        };
     };
-
-    pub fn deinit(hs: *const HostSync, gpa: std.mem.Allocator) void {
-        hs.host.deinit(gpa);
-    }
 };
 
 pub const CallersUpdate = struct {

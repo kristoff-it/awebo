@@ -518,10 +518,7 @@ const Client = struct {
         };
         const auth_bytes = try reply.serializeAlloc(gpa);
 
-        const hs: awebo.protocol.server.HostSync = .{
-            .user_id = client.authenticated.?,
-            .host = state.host,
-        };
+        const hs = try state.host.computeDelta(gpa, user.id, cmd.max_uid, state.id.last);
         const bytes = try hs.serializeAlloc(gpa);
         errdefer gpa.free(bytes);
 
@@ -681,6 +678,8 @@ const Client = struct {
         const new: awebo.Message = .{
             .id = state.id.new(),
             .origin = cms.origin,
+            .created = 0,
+            .update_uid = null,
             .author = client.authenticated.?,
             .text = cms.text,
         };
@@ -814,6 +813,7 @@ var ___state: struct {
                     var channel: awebo.Channel = .{
                         .id = r.get(.id),
                         .name = try r.text(gpa, .name),
+                        .update_uid = r.get(.update_uid),
                         .privacy = r.get(.privacy),
                         .kind = switch (kind) {
                             inline else => |tag| @unionInit(
@@ -834,6 +834,8 @@ var ___state: struct {
                             const msg: awebo.Message = .{
                                 .id = m.get(.uid),
                                 .origin = m.get(.origin),
+                                .created = m.get(.created),
+                                .update_uid = m.get(.update_uid),
                                 .author = m.get(.author),
                                 .text = try m.text(gpa, .body),
                             };

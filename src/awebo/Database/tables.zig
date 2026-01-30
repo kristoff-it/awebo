@@ -233,7 +233,7 @@ pub const messages: Table = .{
     ,
     .indexes = &.{
         // For queries that search for newly updated messages
-        \\CREATE UNIQUE INDEX messages_by_update_uid ON messages (channel)
+        \\CREATE UNIQUE INDEX messages_by_update_uid ON messages (update_uid)
         \\WHERE update_uid != NULL;
         ,
         \\CREATE INDEX messages_by_channel ON messages (channel);

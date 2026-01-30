@@ -8,6 +8,8 @@ pub const Id = u64;
 
 id: Id,
 origin: u64,
+created: u64,
+update_uid: ?u64,
 author: User.Id,
 text: []const u8,
 

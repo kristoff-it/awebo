@@ -10,6 +10,7 @@ pub const Voice = @import("Channel/Voice.zig");
 
 id: Id,
 name: []const u8,
+update_uid: u64,
 privacy: Privacy,
 kind: Kind,
 

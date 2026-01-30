@@ -12,8 +12,8 @@ const context = @import("options").context;
 pub const Id = u64;
 
 id: Id,
-created: u32 = 0,
-updated: u32 = 0,
+created: u64 = 0,
+update_uid: u64 = 0,
 invited_by: Id,
 power: Power,
 handle: []const u8,

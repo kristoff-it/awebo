@@ -140,6 +140,13 @@ const MessageWindow = struct {
         return idx;
     }
 
+    pub fn latest(mw: *const MessageWindow) ?*const Message {
+        if (mw.len == 0) return null;
+        const head: Channel.WindowSize = @intCast(mw.len - 1);
+        const idx: Channel.WindowSize = mw.tail +% head;
+        return &mw.buffer[idx];
+    }
+
     /// First slice starts at mw.tail, second slice ends at newest message
     pub fn slices(mw: *const MessageWindow) [2][]const Message {
         const len_wraps = Channel.window_size - mw.tail < mw.len;

@@ -53,6 +53,14 @@ pub fn MakeSerializeFn(T: type) SerializeFn(T) {
                 .bool => try w.writeByte(@intFromBool(elem)),
                 .int => try w.writeInt(E, elem, .little),
                 .@"enum" => |enum_info| try w.writeInt(enum_info.tag_type, @intFromEnum(elem), .little),
+                .optional => {
+                    if (elem) |e| {
+                        try w.writeByte(1);
+                        try serializeInner(e, w);
+                    } else {
+                        try w.writeByte(0);
+                    }
+                },
                 .@"union" => |union_info| {
                     if (union_info.tag_type == null) {
                         @compileError("union tag must have explicit enum in " ++ @typeName(E));
@@ -184,6 +192,14 @@ pub fn MakeDeserializeAllocFn(T: type) DeserializeAllocFn(T) {
                 .bool => return (try r.takeByte()) == 1,
                 .int => return r.takeInt(E, .little),
                 .@"enum" => |enum_info| return @enumFromInt(try r.takeInt(enum_info.tag_type, .little)),
+                .optional => |opt_info| {
+                    const present = try r.takeByte();
+                    switch (present) {
+                        0 => return null,
+                        1 => return try deserializeAllocInner(opt_info.child, gpa, r),
+                        else => unreachable,
+                    }
+                },
                 .@"union" => |union_info| {
                     comptime assert(@hasDecl(E, "protocol")); // all unions in a message must define a protocol decl
                     if (union_info.tag_type == null) {

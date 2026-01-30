@@ -149,95 +149,83 @@ pub fn isEmpty(db: Database) bool {
     return r == null;
 }
 
-pub const loadHost = switch (context) {
-    .server => @compileError("client only"),
-    .client => struct {
-        fn impl(
-            db: Database,
-            gpa: Allocator,
-            qs: *const awebo.Database.CommonQueries,
-            h: *awebo.Host,
-        ) void {
-            loadData(db, gpa, qs, h) catch oom();
+pub fn loadHost(
+    db: Database,
+    gpa: Allocator,
+    qs: *const awebo.Database.CommonQueries,
+    h: *awebo.Host,
+) !void {
+    if (context != .client) @compileError("client only");
+    // {
+    //     const query = "SELECT value FROM host WHERE key = 'name'";
+    //     const maybe_row = db.row(query, .{}) catch db.fatal(@src());
+    //     const r = maybe_row orelse {
+    //         h.* = .{};
+    //         return;
+    //     };
+    //     h.name = try r.text(gpa, .value);
+    h.name = try gpa.dupe(u8, "banana");
+    // }
+
+    {
+        var rs = qs.select_users.run(db, .{});
+        while (rs.next()) |r| {
+            const user: awebo.User = .{
+                .id = r.get(.id),
+                .handle = try r.text(gpa, .handle),
+                .power = r.get(.power),
+                .invited_by = r.get(.invited_by),
+                .display_name = try r.text(gpa, .display_name),
+                .avatar = "arst",
+            };
+            log.debug("loaded {f}", .{user});
+            h.users.set(gpa, user) catch oom();
         }
+    }
 
-        fn loadData(
-            db: Database,
-            gpa: Allocator,
-            qs: *const awebo.Database.CommonQueries,
-            h: *awebo.Host,
-        ) !void {
-            // {
-            //     const query = "SELECT value FROM host WHERE key = 'name'";
-            //     const maybe_row = db.row(query, .{}) catch db.fatal(@src());
-            //     const r = maybe_row orelse {
-            //         h.* = .{};
-            //         return;
-            //     };
-            //     h.name = try r.text(gpa, .value);
-            h.name = try gpa.dupe(u8, "banana");
-            // }
+    {
+        var rs = qs.select_channels.run(db, .{});
+        while (rs.next()) |r| {
+            const kind = r.get(.kind);
+            var channel: awebo.Channel = .{
+                .id = r.get(.id),
+                .name = try r.text(gpa, .name),
+                .update_uid = r.get(.update_uid),
+                .privacy = r.get(.privacy),
+                .kind = switch (kind) {
+                    inline else => |tag| @unionInit(
+                        awebo.Channel.Kind,
+                        @tagName(tag),
+                        .{},
+                    ),
+                },
+            };
 
-            {
-                var rs = qs.select_users.run(db, .{});
-                var users: awebo.Host.Users = .{};
-                while (rs.next()) |r| {
-                    const user: awebo.User = .{
-                        .id = r.get(.id),
-                        .handle = try r.text(gpa, .handle),
-                        .power = r.get(.power),
-                        .invited_by = r.get(.invited_by),
-                        .display_name = try r.text(gpa, .display_name),
-                        .avatar = "arst",
+            if (channel.kind == .chat) {
+                var msgs = qs.select_channel_messages.run(db, .{
+                    .channel = channel.id,
+                    .limit = 64,
+                });
+
+                while (msgs.next()) |m| {
+                    const msg: awebo.Message = .{
+                        .id = m.get(.uid),
+                        .origin = m.get(.origin),
+                        .created = m.get(.created),
+                        .update_uid = m.get(.update_uid),
+                        .author = m.get(.author),
+                        .text = try m.text(gpa, .body),
                     };
-                    log.debug("loaded {f}", .{user});
-                    users.set(gpa, user) catch oom();
+                    try channel.kind.chat.messages.backfill(gpa, msg);
+                    log.debug("loaded chat message: {f}", .{msg});
                 }
             }
 
-            {
-                var rs = qs.select_channels.run(db, .{});
-                var channels: awebo.Host.Channels = .{};
-                while (rs.next()) |r| {
-                    const kind = r.get(.kind);
-                    var channel: awebo.Channel = .{
-                        .id = r.get(.id),
-                        .name = try r.text(gpa, .name),
-                        .privacy = r.get(.privacy),
-                        .kind = switch (kind) {
-                            inline else => |tag| @unionInit(
-                                awebo.Channel.Kind,
-                                @tagName(tag),
-                                .{},
-                            ),
-                        },
-                    };
-
-                    if (channel.kind == .chat) {
-                        var msgs = qs.select_channel_messages.run(db, .{
-                            .channel = channel.id,
-                            .limit = 64,
-                        });
-
-                        while (msgs.next()) |m| {
-                            const msg: awebo.Message = .{
-                                .id = m.get(.uid),
-                                .origin = m.get(.origin),
-                                .author = m.get(.author),
-                                .text = try m.text(gpa, .body),
-                            };
-                            try channel.kind.chat.messages.backfill(gpa, msg);
-                            log.debug("loaded chat message: {f}", .{msg});
-                        }
-                    }
-
-                    try channels.set(gpa, channel);
-                    log.debug("loaded {f}", .{channel});
-                }
-            }
+            try h.channels.set(gpa, channel);
+            log.debug("loaded {f}", .{channel});
         }
-    }.impl,
-};
+    }
+}
 
 pub const serverPermission = if (context == .client)
     @compileError("server only")

@@ -167,7 +167,16 @@ pub fn run(core: *Core) void {
         persistence.load(core) catch return;
         const hosts = core.hosts.items.values();
         for (hosts) |h| first_connect_group.async(io, network.runHostManager, .{
-            core, .{ .connect = h.client.host_id }, h.client.identity, h.client.username, h.client.password,
+            core,
+            .{
+                .connect = .{
+                    .host_id = h.client.host_id,
+                    .max_uid = h.client.max_uid,
+                },
+            },
+            h.client.identity,
+            h.client.username,
+            h.client.password,
         });
     }
 
@@ -187,7 +196,7 @@ pub fn run(core: *Core) void {
                         caller.client.speaking_last_ms = cs.time_ms;
                     },
 
-                    .host_sync => |hs| hostSync(core, msg.host_id, hs),
+                    .host_sync => |*hs| hostSync(core, msg.host_id, hs),
                     .chat_message_new => |cms| chatMessageNew(core, msg.host_id, cms),
                     .media_connection_details => |mcd| mediaConnectionDetails(core, msg.host_id, mcd),
                     .callers_update => |cu| callersUpdate(core, msg.host_id, cu),
@@ -256,14 +265,16 @@ fn hostConnectionUpdate(core: *Core, id: HostId, hcu: awebo.Host.ClientOnly.Conn
     core.refresh(core, @src(), 0);
 }
 
-fn hostSync(core: *Core, id: HostId, hs: awebo.protocol.server.HostSync) void {
+fn hostSync(core: *Core, id: HostId, hs: *const awebo.protocol.server.HostSync) void {
     var locked = lockState(core);
     defer locked.unlock();
+
+    log.debug("host sync data: {f}", .{hs});
 
     if (core.hosts.get(id)) |host| {
         const db = host.client.db;
         db.conn.transaction() catch db.fatal(@src());
-        host.sync(core.gpa, &hs.host, hs.user_id);
+        host.sync(core.gpa, hs);
         db.conn.commit() catch db.fatal(@src());
     } else {
         // Not considering this a programming error because it seems possible for
