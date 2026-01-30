@@ -81,7 +81,8 @@ pub const DeviceIterator = struct {
     count: u32,
     next_index: u32 = 0,
 
-    pub fn init(direction: audio.Direction, err: *HResultError) error{DeviceIterator}!DeviceIterator {
+    pub fn init(w: *Wasapi, direction: audio.Direction, err: *HResultError) error{DeviceIterator}!DeviceIterator {
+        _ = w;
         const enumerator: *win32.IMMDeviceEnumerator = blk: {
             var enumerator: *win32.IMMDeviceEnumerator = undefined;
             const hr = win32.CoCreateInstance(

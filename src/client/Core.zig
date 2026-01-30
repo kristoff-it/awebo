@@ -462,7 +462,7 @@ pub const UserAudio = struct {
                 .playout => logAudioDeviceEvent(.playout),
             };
             const directional = core.audioDirectional(self.direction);
-            switch (directional.updateDevices(core.gpa, on_event, &core.string_pool)) {
+            switch (directional.updateDevices(core.gpa, &core.audio_backend, on_event, &core.string_pool)) {
                 .locked => {
                     std.log.err("unable to update devices, something else has a lock?", .{});
                 },

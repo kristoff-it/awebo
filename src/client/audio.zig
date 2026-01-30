@@ -106,8 +106,8 @@ fn iteration(comptime direction: Core.audio.Direction) type {
         pub const DeviceIteratorError = Backend.DeviceIteratorError;
         pub const DeviceIterator = struct {
             it: Backend.DeviceIterator,
-            pub fn init(err: *DeviceIteratorError) error{DeviceIterator}!DeviceIterator {
-                return .{ .it = try Backend.DeviceIterator.init(direction, err) };
+            pub fn init(backend: *Backend, err: *DeviceIteratorError) error{DeviceIterator}!DeviceIterator {
+                return .{ .it = try Backend.DeviceIterator.init(backend, direction, err) };
             }
             pub fn deinit(self: *DeviceIterator) void {
                 self.it.deinit();
@@ -131,6 +131,7 @@ pub const Directional = struct {
     pub fn updateDevices(
         self: *Directional,
         gpa: Allocator,
+        backend: *Backend,
         on_event: *const fn (Core.UpdateDevicesEvent) void,
         sp: *StringPool,
     ) UpdateDevicesResult {
@@ -141,6 +142,7 @@ pub const Directional = struct {
             .capture => Device.updateArrayList(
                 iteration(.capture),
                 gpa,
+                backend,
                 &self.devices,
                 on_event,
                 sp,
@@ -148,6 +150,7 @@ pub const Directional = struct {
             .playout => Device.updateArrayList(
                 iteration(.playout),
                 gpa,
+                backend,
                 &self.devices,
                 on_event,
                 sp,

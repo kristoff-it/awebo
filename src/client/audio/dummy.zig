@@ -25,7 +25,8 @@ pub const DeviceIteratorError = struct {
 pub const DeviceIterator = struct {
     direction: audio.Direction,
     next_index: u8 = 0,
-    pub fn init(direction: audio.Direction, err: *DeviceIteratorError) error{DeviceIterator}!DeviceIterator {
+    pub fn init(d: *Dummy, direction: audio.Direction, err: *DeviceIteratorError) error{DeviceIterator}!DeviceIterator {
+        _ = d;
         _ = err;
         return .{ .direction = direction };
     }
