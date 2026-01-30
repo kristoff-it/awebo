@@ -8,8 +8,10 @@ const Device = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+
 const Core = @import("Core.zig");
 const StringPool = @import("StringPool.zig");
+const audio = @import("audio.zig");
 
 name: StringPool.String,
 token: StringPool.String,
@@ -37,6 +39,7 @@ pub fn addReference(self: Device, sp: *StringPool) void {
 pub fn updateArrayList(
     comptime iteration: anytype,
     gpa: std.mem.Allocator,
+    backend: *audio.Backend,
     devices: *std.ArrayListUnmanaged(Device),
     on_event: *const fn (Core.UpdateDevicesEvent) void,
     sp: *StringPool,
@@ -46,7 +49,7 @@ pub fn updateArrayList(
     const err: ?iteration.DeviceIteratorError = blk: {
         var err: iteration.DeviceIteratorError = undefined;
 
-        var it = iteration.DeviceIterator.init(&err) catch break :blk err;
+        var it = iteration.DeviceIterator.init(backend, &err) catch break :blk err;
         defer it.deinit();
 
         while (it.next(sp, gpa, &err) catch break :blk err) |next_device| : (new_device_count += 1) {
