@@ -63,7 +63,7 @@ pub const App = struct {
     window: *dvui.Window,
     core_future: Io.Future(void),
     core: Core,
-    command_queue_buffer: [1024]Core.NetworkCommand,
+    command_queue_buffer: [1024]Core.Event,
 
     // main
     active_host: Host.ClientOnly.Id = 0,

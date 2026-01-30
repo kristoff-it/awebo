@@ -107,7 +107,7 @@ pub fn processInit(p: *PulseAudio) !void {
 fn contextStateCallback(context: *pa.context, userdata: ?*anyopaque) callconv(.c) void {
     const p: *PulseAudio = @ptrCast(@alignCast(userdata));
     p.state = context.get_state();
-    log.debug("context state: {s}", .{@tagName(p.state)});
+    log.debug("context state: {t}", .{p.state});
     switch (p.state) {
         .UNCONNECTED, .CONNECTING, .AUTHORIZING, .SETTING_NAME => return,
         .READY, .FAILED, .TERMINATED => p.main_loop.signal(0),
