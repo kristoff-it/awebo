@@ -67,7 +67,7 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     defer db.close();
     const qs = db.initQueries(Queries);
 
-    var rows = qs.search.run(db, .{ .query = query });
+    var rows = qs.search.run(@src(), db, .{ .query = query });
     while (rows.next()) |r| {
         std.debug.print("{s} ({}) - {s} ({})\n---\n{s}\n---\n\n", .{
             r.textNoDupe(.handle),

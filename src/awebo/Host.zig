@@ -115,7 +115,7 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const HostSync) void {
     {
         gpa.free(host.name);
         host.name = delta.name;
-        qs.upsert_host_kv.run(db, .{
+        qs.upsert_host_kv.run(@src(), db, .{
             .key = "name",
             .value = .init(host.name),
         });
@@ -136,7 +136,7 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const HostSync) void {
 
                 std.log.debug("upsert {f}", .{new_user});
 
-                qs.upsert_user.run(db, .{
+                qs.upsert_user.run(@src(), db, .{
                     .id = new_user.id,
                     .created = 0,
                     // .update_uid = new_user.update_id,
@@ -162,7 +162,7 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const HostSync) void {
                     host.channels.set(gpa, new_ch) catch @panic("oom");
                 }
 
-                qs.upsert_channel.run(db, .{
+                qs.upsert_channel.run(@src(), db, .{
                     .id = new_ch.id,
                     .update_uid = new_ch.id,
                     .section = null,
@@ -176,7 +176,7 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const HostSync) void {
                     .voice => {},
                     .chat => |chat| {
                         for (chat.messages.slices()) |s| for (s) |msg| {
-                            qs.upsert_message.run(db, .{
+                            qs.upsert_message.run(@src(), db, .{
                                 .uid = msg.id,
                                 .origin = msg.origin,
                                 .created = msg.created,

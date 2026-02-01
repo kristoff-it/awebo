@@ -42,7 +42,7 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     const qs = db.initQueries(Queries);
     defer db.deinitQueries(Queries, &qs);
 
-    qs.update_invite.run(db, .{
+    qs.update_invite.run(@src(), db, .{
         .slug = cmd.slug,
         .expiry = cmd.expiry,
         .enabled = cmd.enabled,

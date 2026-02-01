@@ -1,4 +1,5 @@
 const builtin = @import("builtin");
+const options = @import("options");
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -80,25 +81,22 @@ pub const App = struct {
         const io = window.io;
         const gpa = window.gpa;
 
-        var empty_environ: std.process.Environ.Map = .init(gpa);
-        var environ = &empty_environ;
-        if (dvui.App.main_init) |mi| {
-            environ = mi.environ_map;
-
-            var it = std.process.Args.Iterator.initAllocator(mi.minimal.args, gpa) catch {
-                cli.fatal("unable to allocate cli arguments", .{});
+        // Local client cache means that we store everything relative to cwd
+        // which is helpful when testing awebo with more than one client open
+        // at a time.
+        const environ = if (options.local_cache) blk: {
+            const EmptyEnv = struct {
+                var env: std.process.Environ.Map = undefined;
             };
-
-            while (it.next()) |arg| {
-                log.debug("arg: {s}", .{arg});
-            }
-        }
+            EmptyEnv.env = .init(gpa);
+            break :blk &EmptyEnv.env;
+        } else dvui.App.main_init.?.environ_map;
 
         app.* = .{
             .active_screen = .main,
             .window = window,
             .command_queue_buffer = undefined,
-            .environ = environ, // TODO: get from dvui
+            .environ = environ,
             .core = .init(gpa, io, environ, refresh, &app.command_queue_buffer),
             .core_future = io.concurrent(Core.run, .{&app.core}) catch |err| {
                 cli.fatal("unable to start awebo client core: {t}", .{err});
@@ -162,7 +160,7 @@ pub const App = struct {
     }
 
     fn refresh(core: *Core, src: std.builtin.SourceLocation, id: ?u64) void {
-        const app: *App = @fieldParentPtr("core", core);
+        const app: *App = @alignCast(@fieldParentPtr("core", core));
         dvui.refresh(app.window, src, if (id) |i| @enumFromInt(i) else null);
     }
 };

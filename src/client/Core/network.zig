@@ -282,6 +282,10 @@ fn runHostReceive(
                 const cmn: awebo.protocol.server.ChatMessageNew = try .deserializeAlloc(gpa, reader);
                 try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .chat_message_new = cmn } } });
             },
+            awebo.protocol.server.ChatHistory.marker => {
+                const ch: awebo.protocol.server.ChatHistory = try .deserializeAlloc(gpa, reader);
+                try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .chat_history = ch } } });
+            },
             awebo.protocol.server.MediaConnectionDetails.marker => {
                 const mcd: awebo.protocol.server.MediaConnectionDetails = try .deserialize(reader);
                 try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .media_connection_details = mcd } } });
@@ -325,7 +329,7 @@ pub fn runHostMediaManager(
     core: *Core,
     host_id: HostId,
     hc: *HostConnection,
-    tcp_client: u64,
+    tcp_client: i96,
     nonce: u64,
 ) !void {
     const gpa = core.gpa;

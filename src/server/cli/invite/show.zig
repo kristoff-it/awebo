@@ -42,7 +42,7 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     const qs = db.initQueries(Queries);
     defer db.deinitQueries(Queries, &qs);
 
-    const row = qs.select_invite.run(db, .{ .slug = cmd.slug });
+    const row = qs.select_invite.run(@src(), db, .{ .slug = cmd.slug });
     if (row) |r| {
         // NOTE: There is no need to `.deinit`
         const invite: Invite = .{

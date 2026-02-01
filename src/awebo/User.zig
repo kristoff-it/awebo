@@ -13,7 +13,7 @@ pub const Id = u64;
 
 id: Id,
 created: u64 = 0,
-update_uid: u64 = 0,
+update_uid: u64,
 invited_by: Id,
 power: Power,
 handle: []const u8,

@@ -45,9 +45,9 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
 
     db.conn.transaction() catch db.fatal(@src());
 
-    const max_uid = qs.select_max_uid.run(db, .{}).?.get(.max_uid);
+    const max_uid = qs.select_max_uid.run(@src(), db, .{}).?.get(.max_uid);
 
-    _ = qs.insert_user.run(db, .{
+    _ = qs.insert_user.run(@src(), db, .{
         .created = 0,
         .update_uid = max_uid + 1,
         .invited_by = null,
@@ -56,7 +56,7 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
         .display_name = cmd.display_name,
     }).?;
 
-    qs.insert_password.run(db, .{
+    qs.insert_password.run(@src(), db, .{
         .handle = cmd.handle,
         .hash = hash,
     });

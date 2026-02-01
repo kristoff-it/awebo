@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const dvui = @import("dvui");
 const awebo = @import("../../../awebo.zig");
 const Channel = awebo.Channel;
@@ -26,7 +27,7 @@ pub fn draw(app: *App, frozen: bool) !void {
     defer box.deinit();
 
     try sendBar(core, h, c, frozen);
-    try messageList(h, &c.kind.chat);
+    try messageList(core, h, c.id, &c.kind.chat);
 }
 
 fn sendBar(core: *Core, h: *awebo.Host, c: *Channel, frozen: bool) !void {
@@ -64,12 +65,78 @@ fn sendBar(core: *Core, h: *awebo.Host, c: *Channel, frozen: bool) !void {
         }
     }
 }
-fn messageList(h: *awebo.Host, c: *Chat) !void {
-    var scroll = dvui.scrollArea(@src(), .{}, .{
+
+var channel_infos: std.AutoHashMapUnmanaged(packed struct {
+    host_id: awebo.Host.ClientOnly.Id,
+    channel_id: awebo.Channel.Id,
+}, struct {
+    waiting_history: ?awebo.Message.Id = null,
+    scroll_info: dvui.ScrollInfo = .{},
+}) = .empty;
+
+fn messageList(core: *Core, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat) !void {
+    const gpa = core.gpa;
+
+    const gop = try channel_infos.getOrPut(gpa, .{
+        .host_id = h.client.host_id,
+        .channel_id = channel_id,
+    });
+
+    const channel_info = gop.value_ptr;
+    const scroll_info = &channel_info.scroll_info;
+
+    if (!gop.found_existing) {
+        channel_info.* = .{};
+        scroll_info.scrollToOffset(.vertical, std.math.floatMax(f32));
+    }
+
+    const oldest_uid = if (c.client.history.front()) |old|
+        old.id
+    else if (c.messages.oldest()) |old|
+        old.id
+    else
+        1;
+
+    if (channel_info.waiting_history) |wh| {
+        if (oldest_uid <= wh) channel_info.waiting_history = null;
+    }
+
+    if (dvui.button(@src(), "request more history", .{}, .{})) {
+        log.debug("button press!", .{});
+        if (channel_info.waiting_history == null) {
+            log.debug("sending chat history request!", .{});
+            core.chatHistoryGet(h, channel_id, oldest_uid);
+            channel_info.waiting_history = oldest_uid - 1;
+        }
+    }
+
+    if (channel_info.waiting_history != null) {
+        dvui.spinner(@src(), .{});
+    }
+
+    var scroll = dvui.scrollArea(@src(), .{ .scroll_info = scroll_info }, .{
         .expand = .both,
         // .color_fill = .{ .name = .fill_control },
     });
     defer scroll.deinit();
+
+    // render history crappily
+    {
+        var it = c.client.history.iterator();
+        var i: usize = 1000;
+        while (it.next()) |msg| : (i += 1) {
+            const mfr = messageFrame(h, msg.author, i);
+            defer mfr.deinit();
+
+            var tl = dvui.textLayout(@src(), .{}, .{
+                .expand = .horizontal,
+                .id_extra = i,
+                .margin = dvui.Rect.all(0),
+            });
+            defer tl.deinit();
+            tl.addText(msg.text, .{});
+        }
+    }
 
     const messages_len = c.messages.len;
 

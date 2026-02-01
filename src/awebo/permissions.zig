@@ -3,6 +3,8 @@ const awebo = @import("../awebo.zig");
 
 pub const Kind = enum { server, section, channel };
 
+pub const user_default: Server = .{};
+
 pub const Server = struct {
     authenticate: bool = true,
 
@@ -11,7 +13,6 @@ pub const Server = struct {
         pub const authenticate =
             \\Clients belonging to this user can authenticate.
         ;
-
 
         comptime {
             for (@typeInfo(Server).@"struct".fields) |f| {
@@ -22,4 +23,3 @@ pub const Server = struct {
         }
     };
 };
-

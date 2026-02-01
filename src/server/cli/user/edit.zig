@@ -64,14 +64,14 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
             cli.fatal("unable to hash user password: {t}", .{err});
         };
 
-        qs.update_password.run(db, .{
+        qs.update_password.run(@src(), db, .{
             .id = cmd.user_id,
             .hash = hash,
             .ip = null,
         });
     }
 
-    qs.update_user.run(db, .{
+    qs.update_user.run(@src(), db, .{
         .id = cmd.user_id,
         // .update_uid = latest_uid + 1,
         .handle = cmd.handle,

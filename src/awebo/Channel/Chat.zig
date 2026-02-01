@@ -14,6 +14,14 @@ const log = std.log.scoped(.chat);
 
 messages: MessageWindow = .{},
 
+client: switch (context) {
+    .client => ClientOnly,
+    .server => void,
+} = switch (context) {
+    .client => .{},
+    .server => {},
+},
+
 pub const protocol = struct {};
 
 const MessageWindow = struct {
@@ -121,7 +129,7 @@ const MessageWindow = struct {
 
         // TODO: investigate if a single upsert could be better!
 
-        qs.insert_message.run(db, .{
+        qs.insert_message.run(@src(), db, .{
             .uid = msg.id,
             .origin = msg.origin,
             .channel = chat_id,
@@ -130,8 +138,17 @@ const MessageWindow = struct {
         });
 
         if (idx == mw.tail and mw.len == Channel.window_size) {
-            qs.delete_message.run(db, .{mw.buffer[idx].id});
-            mw.buffer[idx].deinit(gpa);
+            switch (context) {
+                .client => {
+                    qs.delete_message.run(@src(), db, .{mw.buffer[idx].id});
+                    const chat: *Chat = @fieldParentPtr("messages", mw);
+                    chat.client.history.pushBack(gpa, mw.buffer[idx]) catch @panic("oom");
+                },
+                .server => {
+                    mw.buffer[idx].deinit(gpa);
+                },
+            }
+
             mw.tail +%= 1;
         } else {
             mw.len += 1;
@@ -145,6 +162,11 @@ const MessageWindow = struct {
         const head: Channel.WindowSize = @intCast(mw.len - 1);
         const idx: Channel.WindowSize = mw.tail +% head;
         return &mw.buffer[idx];
+    }
+
+    pub fn oldest(mw: *MessageWindow) ?*Message {
+        if (mw.len == 0) return null;
+        return &mw.buffer[mw.tail];
     }
 
     /// First slice starts at mw.tail, second slice ends at newest message
@@ -173,6 +195,14 @@ const MessageWindow = struct {
 pub fn deinit(c: *Chat, gpa: std.mem.Allocator) void {
     c.messages.deinit(gpa);
 }
+
+pub const ClientOnly = struct {
+    history: std.Deque(Message) = .empty,
+
+    pub const protocol = struct {
+        pub const skip = true;
+    };
+};
 
 /// Synchronizes messages in bulk.
 pub fn sync(

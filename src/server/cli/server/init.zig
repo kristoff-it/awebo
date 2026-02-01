@@ -14,10 +14,11 @@ const log = std.log.scoped(.db);
 
 pub const Queries = struct {
     insert_user: @FieldType(Database.CommonQueries, "insert_user"),
+    insert_password: @FieldType(user_add.Queries, "insert_password"),
     insert_channels: @FieldType(Database.CommonQueries, "insert_channels"),
+    insert_message: @FieldType(Database.CommonQueries, "insert_message"),
     insert_roles: @FieldType(Database.CommonQueries, "insert_roles"),
     insert_host_kv: @FieldType(Database.CommonQueries, "insert_host_kv"),
-    insert_password: @FieldType(user_add.Queries, "insert_password"),
 };
 
 pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
@@ -49,27 +50,54 @@ fn seed(
         cli.fatal("unable to hash admin password: {t}", .{err});
     };
 
-    _ = qs.insert_user.run(db, .{
+    const admin = qs.insert_user.run(@src(), db, .{
         .created = 0,
         .update_uid = id.new(),
         .handle = cmd.owner.handle,
         .invited_by = 1,
         .power = .owner,
         .display_name = "Admin",
-    }).?;
+    }).?.get(.id);
 
-    qs.insert_password.run(db, .{
+    qs.insert_password.run(@src(), db, .{
         .handle = cmd.owner.handle,
         .hash = pass_str,
     });
 
-    qs.insert_channels.run(db, .{
+    const user = qs.insert_user.run(@src(), db, .{
+        .created = 0,
+        .update_uid = id.new(),
+        .handle = "user",
+        .invited_by = 1,
+        .power = .user,
+        .display_name = "Other User",
+    }).?.get(.id);
+
+    qs.insert_password.run(@src(), db, .{
+        .handle = "user",
+        .hash = pass_str,
+    });
+
+    qs.insert_channels.run(@src(), db, .{
         id.new(),
         id.new(),
         id.new(),
     });
 
-    qs.insert_roles.run(db, .{id.new()});
+    // var buf: [1024]u8 = undefined;
+    // for (0..100) |i| {
+    //     qs.insert_message.run(@src(), db, .{
+    //         .uid = id.new(),
+    //         .origin = 0,
+    //         .author = if (i % 2 == 0) admin else user,
+    //         .channel = 1,
+    //         .body = std.fmt.bufPrint(&buf, "message #{}", .{i}) catch unreachable,
+    //     });
+    // }
+    _ = user;
+    _ = admin;
+
+    qs.insert_roles.run(@src(), db, .{id.new()});
 
     const epoch = Io.Clock.real.now(io) catch @panic("server needs a clock");
     const settings: Settings = .{
@@ -78,7 +106,7 @@ fn seed(
     };
 
     inline for (std.meta.fields(Settings)) |f| {
-        qs.insert_host_kv.run(db, .{
+        qs.insert_host_kv.run(@src(), db, .{
             .key = f.name,
             .value = .init(@field(settings, f.name)),
         });

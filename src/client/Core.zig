@@ -198,6 +198,7 @@ pub fn run(core: *Core) void {
 
                     .host_sync => |*hs| hostSync(core, msg.host_id, hs),
                     .chat_message_new => |cms| chatMessageNew(core, msg.host_id, cms),
+                    .chat_history => |chg| chatHistory(core, msg.host_id, chg),
                     .media_connection_details => |mcd| mediaConnectionDetails(core, msg.host_id, mcd),
                     .callers_update => |cu| callersUpdate(core, msg.host_id, cu),
                     // .msg => |msg| switch (msg.bytes[0]) {
@@ -235,6 +236,7 @@ pub const Event = union(enum) {
 
             host_sync: awebo.protocol.server.HostSync,
             chat_message_new: awebo.protocol.server.ChatMessageNew,
+            chat_history: awebo.protocol.server.ChatHistory,
             media_connection_details: awebo.protocol.server.MediaConnectionDetails,
             callers_update: awebo.protocol.server.CallersUpdate,
         },
@@ -347,6 +349,17 @@ fn chatMessageNew(core: *Core, host_id: HostId, cmn: awebo.protocol.server.ChatM
     }
 }
 
+fn chatHistory(core: *Core, host_id: HostId, ch: awebo.protocol.server.ChatHistory) void {
+    const h = core.hosts.get(host_id).?;
+    const channel = h.channels.get(ch.channel) orelse {
+        log.err("received a chat history message for a channel that doesn't exist", .{});
+        return;
+    };
+
+    for (ch.history) |msg| {
+        channel.kind.chat.client.history.pushFront(core.gpa, msg) catch oom();
+    }
+}
 fn callersUpdate(core: *Core, host_id: HostId, cu: awebo.protocol.server.CallersUpdate) void {
     var locked = lockState(core);
     defer locked.unlock();
@@ -532,6 +545,30 @@ pub const ActiveCall = struct {
         core.active_call = null;
     }
 };
+
+pub fn chatHistoryGet(
+    core: *Core,
+    h: *Host,
+    channel_id: awebo.Channel.Id,
+    next_oldest_uid: u64,
+) void {
+    switch (h.client.connection_status) {
+        .connecting, .connected, .disconnected, .reconnecting, .deleting => unreachable, // UI should have prevented this attempt
+        .synced => {},
+    }
+    const conn = h.client.connection.?; // connection must be present if status == .synced
+
+    const chg: awebo.protocol.client.ChatHistoryGet = .{
+        .chat_channel = channel_id,
+        .origin = 0,
+        .oldest_uid = next_oldest_uid,
+    };
+
+    const bytes = chg.serializeAlloc(core.gpa) catch oom();
+    errdefer core.gpa.free(bytes);
+
+    conn.tcp.queue.putOne(core.io, bytes) catch oom();
+}
 
 /// On error return, the message was not scheduled for sending and should be
 /// left untouched in the UI text input element, letting the user know that

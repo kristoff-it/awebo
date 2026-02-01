@@ -168,7 +168,7 @@ pub fn initHostDb(gpa: Allocator, cache_path: []const u8, h: *awebo.Host) !void 
 
     h.client.identity = identity;
     h.client.host_id = id;
-    h.client.max_uid = qs.select_max_uid.run(db, .{}).?.get(.max_uid);
+    h.client.max_uid = qs.select_max_uid.run(@src(), db, .{}).?.get(.max_uid);
     h.client.username = username;
     h.client.password = password;
     h.client.db = db;

@@ -39,7 +39,7 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     const qs = db.initQueries(Queries);
     defer db.deinitQueries(Queries, &qs);
 
-    var rows = qs.select_invites.run(db, .{});
+    var rows = qs.select_invites.run(@src(), db, .{});
     var no_invites = true;
     while (rows.next()) |r| {
         no_invites = false;

@@ -208,7 +208,7 @@ pub const CallersUpdate = struct {
 
 pub const MediaConnectionDetails = struct {
     voice: Channel.Id,
-    tcp_client: u64,
+    tcp_client: i96,
     nonce: u64,
 
     pub const marker = 'm';
@@ -226,6 +226,23 @@ pub const ChatMessageNew = struct {
     pub const serializeAlloc = proto.MakeSerializeAllocFn(ChatMessageNew);
     pub const deserializeAlloc = proto.MakeDeserializeAllocFn(ChatMessageNew);
     pub const protocol = struct {};
+};
+
+pub const ChatHistory = struct {
+    origin: u64,
+    // TODO: this should be removed once we can
+    //       cross-reference origins
+    channel: Channel.Id,
+    history: []Message,
+
+    pub const marker = 'h';
+    pub const serializeAlloc = proto.MakeSerializeAllocFn(ChatHistory);
+    pub const deserializeAlloc = proto.MakeDeserializeAllocFn(ChatHistory);
+    pub const protocol = struct {
+        pub const sizes = struct {
+            pub const history = u64;
+        };
+    };
 };
 
 pub const ChannelsUpdate = struct {

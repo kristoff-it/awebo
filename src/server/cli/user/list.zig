@@ -21,7 +21,7 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     const db: Database = .init(cmd.db_path, .read_only);
     const qs = db.initQueries(Queries);
 
-    var rows = qs.select_users.run(db, .{});
+    var rows = qs.select_users.run(@src(), db, .{});
 
     std.debug.print("id\tupdate_uid\thandle\tdisplay_name\t\n\n", .{});
     while (rows.next()) |row| {

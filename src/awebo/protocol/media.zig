@@ -83,7 +83,7 @@ pub const Header = extern struct {
 /// An open stream request is marked by Packet Sequence Number set to 0.
 /// The rest of the header data will be ignored.
 pub const OpenStream = extern struct {
-    tcp_client: u64,
+    tcp_client: i128,
     nonce: u64,
 
     //  0                   1                   2                   3

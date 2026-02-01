@@ -36,10 +36,16 @@ pub fn build(b: *std.Build) void {
         "Overrides the client version of awebo",
     ) orelse zon.version;
 
+    const client_local_cache = b.option(
+        bool,
+        "local-cache",
+        "store client's .cache and .config dirs in cwd, useful for testing",
+    ) orelse false;
+
     const server, const server_test = setupServer(b, target, optimize, dep_optimize, slow, echo, server_version);
     b.installArtifact(server);
 
-    const gui, const gui_test = setupGui(b, target, optimize, dep_optimize);
+    const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, client_local_cache);
     b.installArtifact(gui);
 
     const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, client_version);
@@ -120,6 +126,7 @@ pub fn setupGui(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     dep_optimize: std.builtin.OptimizeMode,
+    local_cache: bool,
 ) struct { *std.Build.Step.Compile, *std.Build.Step.Compile } {
     const dvui = b.dependency("dvui", .{
         .target = target,
@@ -158,6 +165,7 @@ pub fn setupGui(
 
     const options = b.addOptions();
     options.addOption(Context, "context", .client);
+    options.addOption(bool, "local_cache", local_cache);
     gui.root_module.addOptions("options", options);
     gui.root_module.addImport("dvui", dvui.module("dvui_sdl3"));
     gui.root_module.addImport("folders", folders.module("known-folders"));
@@ -279,7 +287,7 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.O
         const optimize = .Debug;
 
         const server, const server_test = setupServer(b, target, optimize, dep_optimize, false, false, zon.version);
-        const gui, const gui_test = setupGui(b, target, optimize, dep_optimize);
+        const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, false);
         const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, zon.version);
 
         step.dependOn(&server.step);

@@ -157,10 +157,10 @@ fn runClientManager(io: Io, gpa: Allocator, stream: Io.net.Stream) void {
 
     var rbuf: [4096]u8 = undefined;
     var wbuf: [4096]u8 = undefined;
-    var qbuf: [64][]const u8 = undefined;
+    var qbuf: [64]*TcpMessage = undefined;
     var client: Client = .{
         .tcp = .{
-            .connected_at = 0,
+            .connected_at = tcpId(io),
             .stream = stream,
             .reader_state = stream.reader(io, &rbuf),
             .writer_state = stream.writer(io, &wbuf),
@@ -254,6 +254,11 @@ fn runClientTcpRead(io: Io, gpa: Allocator, client: *Client) !void {
                     log.err("error processing ChatMessageSend: {t}", .{err});
                 };
             },
+            awebo.protocol.client.ChatHistoryGet.marker => {
+                client.chatHistoryGet(io, gpa, reader) catch |err| {
+                    log.err("error processing ChatMessageSend: {t}", .{err});
+                };
+            },
             awebo.protocol.client.ChannelCreate.marker => {
                 client.channelCreate(io, gpa, reader) catch |err| {
                     log.err("error processing ChannelCreate: {t}", .{err});
@@ -273,20 +278,25 @@ fn runClientTcpWrite(io: Io, gpa: Allocator, client: *Client) !void {
 
     const writer = &client.tcp.writer_state.interface;
     while (true) {
-        var msgbuf: [64][]const u8 = undefined;
+        var msgbuf: [64]*TcpMessage = undefined;
         const messages = msgbuf[0..try client.tcp.queue.get(io, &msgbuf, 1)];
         log.debug("tcp write got {} messages to send", .{messages.len});
         if (options.slow) {
             for (messages) |m| {
                 try io.sleep(.fromSeconds(1), .real);
-                try writer.writeAll(m);
+                try writer.writeAll(m.bytes);
                 try writer.flush();
             }
         } else {
-            try writer.writeVecAll(messages);
+            // TODO: remove this step if we ever get Io.MultiQueue
+            var outbuf: [64][]const u8 = undefined;
+            for (messages, outbuf[0..messages.len]) |m, *b| {
+                b.* = m.bytes;
+            }
+            try writer.writeVecAll(outbuf[0..messages.len]);
             try writer.flush();
         }
-        for (messages) |msg| gpa.free(msg);
+        for (messages) |msg| msg.destroy(gpa);
     }
 }
 
@@ -332,7 +342,7 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
 
                 server_log.debug("new udp client: {f} {any}", .{ packet.from, os });
 
-                const client = state.clients.tcp_index.get(os.tcp_client) orelse {
+                const client = state.clients.tcp_index.get(@intCast(os.tcp_client)) orelse {
                     server_log.debug("could not find matching TCP connection, ignoring", .{});
                     continue;
                 };
@@ -366,7 +376,7 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
                     const msg = cu.serializeAlloc(gpa) catch unreachable;
                     errdefer gpa.free(msg);
 
-                    state.tcpBroadcast(io, msg);
+                    state.tcpBroadcast(io, gpa, msg);
                 }
             },
 
@@ -406,14 +416,37 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
     }
 }
 
+const TcpMessage = struct {
+    refs: std.atomic.Value(usize),
+    bytes: []const u8,
+
+    pub fn create(gpa: Allocator, bytes: []const u8, initial: usize) *TcpMessage {
+        const t = gpa.create(TcpMessage) catch oom();
+        t.* = .{ .bytes = bytes, .refs = .init(initial) };
+        return t;
+    }
+
+    // pub fn increment(t: *TcpMessage) void {
+    //     assert(0 != t.refs.fetchAdd(1, .acq_rel));
+    // }
+
+    pub fn destroy(t: *TcpMessage, gpa: Allocator) void {
+        if (0 == t.refs.fetchSub(1, .acq_rel)) {
+            gpa.free(t.bytes);
+            t.* = undefined;
+            gpa.destroy(t);
+        }
+    }
+};
+
 const Client = struct {
     tcp: struct {
-        connected_at: u64,
+        connected_at: i96,
         stream: Io.net.Stream,
         reader_state: Io.net.Stream.Reader = undefined,
         writer_state: Io.net.Stream.Writer = undefined,
         /// Queue of messages to be sent to the client
-        queue: Io.Queue([]const u8),
+        queue: Io.Queue(*TcpMessage),
     },
 
     authenticated: ?awebo.User.Id = null,
@@ -485,7 +518,7 @@ const Client = struct {
         };
 
         log.debug("checking auth permissions for user", .{});
-        const can_auth = db.serverPermission(&user, .authenticate);
+        const can_auth = serverPermission(&user, .authenticate);
         if (!can_auth) {
             log.debug("no auth permission for user '{s}'", .{cmd.method.login.username});
             const reply: awebo.protocol.server.AuthenticateReply = .{
@@ -522,8 +555,13 @@ const Client = struct {
         const bytes = try hs.serializeAlloc(gpa);
         errdefer gpa.free(bytes);
 
+        // This is very wasteful, we could avoid this allocating by sneaking
+        // refcounting into the message bytes themselves.
+        const auth_msg: *TcpMessage = .create(gpa, auth_bytes, 1);
+        const host_sync_msg: *TcpMessage = .create(gpa, bytes, 1);
+
         // order matters, we first confirm the auth request and second send the host sync data
-        try client.tcp.queue.putAll(io, &.{ auth_bytes, bytes });
+        try client.tcp.queue.putAll(io, &.{ auth_msg, host_sync_msg });
     }
 
     fn bufferIndex(deque: *const std.Deque(awebo.Message), index: usize) usize {
@@ -551,7 +589,8 @@ const Client = struct {
                 const ccr = cc.reply(.name_taken);
                 const bytes = try ccr.serializeAlloc(gpa);
                 errdefer gpa.free(bytes);
-                try client.tcp.queue.putOne(io, bytes);
+                const msg: *TcpMessage = .create(gpa, bytes, 1);
+                try client.tcp.queue.putOne(io, msg);
                 return;
             },
         };
@@ -561,7 +600,8 @@ const Client = struct {
             const bytes = try ccr.serializeAlloc(gpa);
             errdefer gpa.free(bytes);
 
-            try client.tcp.queue.putOne(io, bytes);
+            const msg: *TcpMessage = .create(gpa, bytes, 1);
+            try client.tcp.queue.putOne(io, msg);
         }
 
         {
@@ -572,7 +612,8 @@ const Client = struct {
 
             const bytes = try cu.serializeAlloc(gpa);
             errdefer gpa.free(bytes);
-            try client.tcp.queue.putOne(io, bytes);
+            const msg: *TcpMessage = .create(gpa, bytes, 1);
+            try client.tcp.queue.putOne(io, msg);
         }
     }
 
@@ -601,7 +642,9 @@ const Client = struct {
                     };
 
                     const bytes = try fail.serializeAlloc(gpa);
-                    try client.tcp.queue.putOne(io, bytes);
+
+                    const msg: *TcpMessage = .create(gpa, bytes, 1);
+                    try client.tcp.queue.putOne(io, msg);
                 };
             }
 
@@ -638,7 +681,9 @@ const Client = struct {
         const bytes = try mcd.serializeAlloc(gpa);
         errdefer gpa.free(bytes);
 
-        try client.tcp.queue.putOne(io, bytes);
+        const msg: *TcpMessage = .create(gpa, bytes, 1);
+
+        try client.tcp.queue.putOne(io, msg);
     }
 
     fn chatMessageSendRequest(client: *Client, io: Io, gpa: Allocator, reader: *Io.Reader) !void {
@@ -663,7 +708,9 @@ const Client = struct {
             };
 
             const bytes = try fail.serializeAlloc(gpa);
-            try client.tcp.queue.putOne(io, bytes);
+            const msg: *TcpMessage = .create(gpa, bytes, 1);
+            try client.tcp.queue.putOne(io, msg);
+            return;
         };
 
         const channel = state.host.channels.get(cms.channel) orelse {
@@ -671,7 +718,9 @@ const Client = struct {
             const reply = cms.replyErr(.unknown_channel);
             const bytes = try reply.serializeAlloc(gpa);
             errdefer gpa.free(bytes);
-            try client.tcp.queue.putOne(io, bytes);
+
+            const msg: *TcpMessage = .create(gpa, bytes, 1);
+            try client.tcp.queue.putOne(io, msg);
             return;
         };
 
@@ -696,8 +745,83 @@ const Client = struct {
             const bytes = try cmn.serializeAlloc(gpa);
             errdefer gpa.free(bytes);
 
-            state.tcpBroadcast(io, bytes);
+            state.tcpBroadcast(io, gpa, bytes);
         }
+    }
+
+    fn chatHistoryGet(client: *Client, io: Io, gpa: Allocator, reader: *Io.Reader) !void {
+        const log = client.scopedLog();
+        const chg = try awebo.protocol.client.ChatHistoryGet.deserialize(reader);
+
+        const locked = lockState(io);
+        defer locked.unlock(io);
+        const state = locked.state;
+
+        const gop = try state.user_limits.getOrPut(gpa, client.authenticated.?);
+        if (!gop.found_existing) gop.value_ptr.* = .init(io, .user_action);
+
+        const limiter = gop.value_ptr;
+
+        limiter.takeToken(io, .user_action) catch {
+            log.debug("exceeded user action limit", .{});
+            const fail: awebo.protocol.server.ClientRequestReply = .{
+                .origin = chg.origin,
+                .reply_marker = awebo.protocol.client.ChatHistoryGet.marker,
+                .result = .rate_limit,
+            };
+
+            const bytes = try fail.serializeAlloc(gpa);
+            const msg: *TcpMessage = .create(gpa, bytes, 1);
+            try client.tcp.queue.putOne(io, msg);
+            return;
+        };
+
+        const channel = state.host.channels.get(chg.chat_channel) orelse {
+            log.debug("unknown channel", .{});
+            const reply = chg.replyErr(.unknown_channel);
+            const bytes = try reply.serializeAlloc(gpa);
+            errdefer gpa.free(bytes);
+            const msg: *TcpMessage = .create(gpa, bytes, 1);
+            try client.tcp.queue.putOne(io, msg);
+            return;
+        };
+        _ = channel;
+
+        var rs = qs.select_chat_history.run(@src(), db, .{
+            .channel = chg.chat_channel,
+            .offset = chg.oldest_uid,
+            .limit = 3,
+        });
+
+        var messages: std.ArrayList(awebo.Message) = .empty;
+        defer {
+            for (messages.items) |m| gpa.free(m.text);
+            messages.deinit(gpa);
+        }
+
+        while (rs.next()) |r| {
+            try messages.append(gpa, .{
+                .id = r.get(.uid),
+                .origin = r.get(.origin),
+                .created = r.get(.created),
+                .update_uid = r.get(.update_uid),
+                .author = r.get(.author),
+                // TODO: we need protocol metaprogramming to skip this copy
+                .text = try r.text(gpa, .body),
+            });
+        }
+
+        const ch: awebo.protocol.server.ChatHistory = .{
+            .channel = chg.chat_channel,
+            .origin = chg.origin,
+            .history = messages.items,
+        };
+
+        const bytes = try ch.serializeAlloc(gpa);
+        errdefer gpa.free(bytes);
+
+        const msg: *TcpMessage = .create(gpa, bytes, 1);
+        try client.tcp.queue.putOne(io, msg);
     }
 
     /// Logger for user-specific operations.
@@ -752,7 +876,7 @@ var ___state: struct {
         head: ?*Client = null,
 
         /// We use connection time of a TCP socket as a unique identifier
-        tcp_index: std.AutoHashMapUnmanaged(u64, *Client) = .{},
+        tcp_index: std.AutoHashMapUnmanaged(i96, *Client) = .{},
 
         /// Clients gain a udp address when they connect to a call.
         udp_index: std.AutoHashMapUnmanaged(Io.net.IpAddress, *Client) = .{},
@@ -782,11 +906,11 @@ var ___state: struct {
 
     fn init(state: *State, io: Io, gpa: Allocator) !void {
         _ = io;
-        const latest_uid = cqs.select_max_uid.run(db, .{}).?.get(.max_uid);
+        const latest_uid = cqs.select_max_uid.run(@src(), db, .{}).?.get(.max_uid);
         const settings = blk: {
             var settings: Settings = undefined;
 
-            var rows = cqs.select_host_info.run(db, .{});
+            var rows = cqs.select_host_info.run(@src(), db, .{});
 
             outer: while (rows.next()) |r| {
                 const key = r.textNoDupe(.key);
@@ -804,8 +928,27 @@ var ___state: struct {
         };
 
         const host: awebo.Host = host: {
+            const users = blk: {
+                var rs = cqs.select_users.run(@src(), db, .{});
+                var users: awebo.Host.Users = .{};
+
+                while (rs.next()) |r| {
+                    try users.set(gpa, .{
+                        .id = r.get(.id),
+                        .created = 0,
+                        .update_uid = r.get(.update_uid),
+                        .handle = try r.text(gpa, .handle),
+                        .display_name = try r.text(gpa, .display_name),
+                        .invited_by = r.get(.invited_by),
+                        .power = r.get(.power),
+                        .avatar = "",
+                    });
+                }
+                break :blk users;
+            };
+
             const channels = blk: {
-                var rs = cqs.select_channels.run(db, .{});
+                var rs = cqs.select_channels.run(@src(), db, .{});
 
                 var channels: awebo.Host.Channels = .{};
                 while (rs.next()) |r| {
@@ -825,7 +968,7 @@ var ___state: struct {
                     };
 
                     if (channel.kind == .chat) {
-                        var msgs = cqs.select_channel_messages.run(db, .{
+                        var msgs = cqs.select_channel_messages.run(@src(), db, .{
                             .channel = channel.id,
                             .limit = awebo.Channel.window_size,
                         });
@@ -854,6 +997,7 @@ var ___state: struct {
             break :host .{
                 .name = settings.name,
                 .channels = channels,
+                .users = users,
             };
         };
 
@@ -915,18 +1059,30 @@ var ___state: struct {
         };
 
         const bytes = cu.serializeAlloc(gpa) catch @panic("oom");
-        state.tcpBroadcast(io, bytes);
+        state.tcpBroadcast(io, gpa, bytes);
 
         _ = state.clients.udp_index.remove(client.udp.?.addr);
         client.udp = null;
     }
 
-    fn tcpBroadcast(state: *State, io: Io, msg: []const u8) void {
+    fn tcpBroadcast(state: *State, io: Io, gpa: Allocator, bytes: []const u8) void {
+        const count = state.clients.tcp_index.count();
+        if (count == 0) {
+            gpa.free(bytes);
+            return;
+        }
+
+        const msg: *TcpMessage = .create(gpa, bytes, count);
+
+        var i: usize = 0;
         var maybe_cur: ?*Client = state.clients.head;
         while (maybe_cur) |cur| : (maybe_cur = cur.next) {
             // TODO: this needs to be a tryPut + client disconnection if the queue is full
             cur.tcp.queue.putOne(io, msg) catch @panic("TODO");
+            i += 1;
         }
+
+        assert(i == count);
     }
 } = .{};
 
@@ -1032,7 +1188,7 @@ fn getUserByLogin(
     username: []const u8,
     password: []const u8,
 ) error{ NotFound, Password }!awebo.User {
-    const maybe_pswd_row = qs.select_password.run(db, .{ .handle = username });
+    const maybe_pswd_row = qs.select_password.run(@src(), db, .{ .handle = username });
     const pswd_row = maybe_pswd_row orelse {
         std.crypto.pwhash.argon2.strVerify("bananarama123", password, .{ .allocator = gpa }, io) catch {};
         return error.NotFound;
@@ -1046,7 +1202,7 @@ fn getUserByLogin(
         else => fatalIo(err),
     };
 
-    const maybe_row = qs.select_user_by_handle.run(db, .{
+    const maybe_row = qs.select_user_by_handle.run(@src(), db, .{
         .handle = username,
     });
     const user_row = maybe_row orelse return error.NotFound;
@@ -1055,6 +1211,7 @@ fn getUserByLogin(
         .id = user_row.get(.uid),
         .power = user_row.get(.power),
         .display_name = user_row.text(gpa, .display_name) catch oom(),
+        .update_uid = user_row.get(.update_uid),
         .avatar = user_row.text(gpa, .avatar) catch oom(),
         .handle = gpa.dupe(u8, username) catch oom(),
         .invited_by = user_row.get(.invited_by),
@@ -1062,6 +1219,32 @@ fn getUserByLogin(
             .pswd_hash = gpa.dupe(u8, pswd_hash) catch oom(),
         },
     };
+}
+
+fn serverPermission(
+    user: *const awebo.User,
+    key: awebo.permissions.Server.Enum,
+) bool {
+    const user_id = user.id;
+    const user_default = @field(awebo.permissions.Server{}, @tagName(key));
+
+    switch (user.power) {
+        .banned => return false,
+        .admin, .owner => return true,
+        .user, .moderator => {},
+    }
+
+    const r = qs.select_permission.run(@src(), db, .{
+        .user = user_id,
+        .kind = .server,
+        .key = key,
+    }) orelse return user_default;
+
+    server_log.debug("found {t} perm for user '{s}': {}", .{
+        key, user.handle, r.get(.value),
+    });
+
+    return r.get(.value);
 }
 
 pub const Queries = struct {
@@ -1074,20 +1257,93 @@ pub const Queries = struct {
     }),
 
     select_user_by_handle: Query(
-        \\SELECT id, display_name, power, invited_by, avatar FROM users
+        \\SELECT id, display_name, update_uid, power, invited_by, avatar FROM users
         \\WHERE handle = ?;
     , .{
         .kind = .row,
         .cols = struct {
             uid: u64,
             display_name: []const u8,
+            update_uid: u64,
             power: awebo.User.Power,
             invited_by: awebo.User.Id,
             avatar: []const u8,
         },
         .args = struct { handle: []const u8 },
     }),
+
+    select_chat_history: Query(
+        \\SELECT uid, origin, created, update_uid, author, body FROM messages
+        \\WHERE channel = ?1 AND uid < ?2 ORDER BY uid DESC LIMIT ?3;
+    , .{
+        .kind = .rows,
+        .cols = struct {
+            uid: awebo.Message.Id,
+            origin: u64,
+            created: u64,
+            update_uid: ?u64,
+            author: awebo.User.Id,
+            body: []const u8,
+        },
+        .args = struct {
+            channel: awebo.Channel.Id,
+            offset: u64,
+            limit: u64,
+        },
+    }),
+
+    // select_user_permission: Query(
+    //     \\SELECT value FROM user_permissions
+    //     \\WHERE user = ?1 AND kind = ?2 AND key = ?3;
+    // , .{
+    //     .kind = .row,
+    //     .cols = struct { value: bool },
+    //     .args = struct {
+    //         user: awebo.User.Id,
+    //         kind: awebo.permissions.Kind,
+    //         key: awebo.permissions.Server.Enum,
+    //     },
+    // }),
+
+    // select_role_permission: Query(
+    //     \\SELECT value FROM role_permissions
+    //     \\INNER JOIN user_roles ON user_roles.role == role_permissions.role
+    //     \\WHERE kind = ? AND key = ? AND user_roles.user = ?;
+    // , .{
+    //     .kind = .row,
+    //     .cols = struct { value: bool },
+    //     .args = struct {
+    //         user: awebo.User.Id,
+    //         kind: awebo.permissions.Kind,
+    //         key: awebo.permissions.Server.Enum,
+    //     },
+    // }),
+
+    select_permission: Query(
+        \\SELECT value
+        \\FROM (
+        \\  SELECT value FROM user_permissions
+        \\    WHERE user = ?1 AND kind = ?2 AND key = ?3
+        \\  UNION ALL
+        \\  SELECT MIN(value) FROM role_permissions
+        \\    INNER JOIN user_roles ON user_roles.role == role_permissions.role
+        \\    WHERE kind = ? AND key = ? AND user_roles.user = ?
+        \\) WHERE value IS NOT NULL LIMIT 1;
+    , .{
+        .kind = .row,
+        .cols = struct { value: bool },
+        .args = struct {
+            user: awebo.User.Id,
+            kind: awebo.permissions.Kind,
+            key: awebo.permissions.Server.Enum,
+        },
+    }),
 };
+
+fn tcpId(io: Io) i96 {
+    const ts = Io.Clock.awake.now(io) catch @panic("missing clock");
+    return ts.toNanoseconds();
+}
 
 test {
     _ = awebo;

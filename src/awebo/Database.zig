@@ -168,12 +168,13 @@ pub fn loadHost(
     // }
 
     {
-        var rs = qs.select_users.run(db, .{});
+        var rs = qs.select_users.run(@src(), db, .{});
         while (rs.next()) |r| {
             const user: awebo.User = .{
                 .id = r.get(.id),
                 .handle = try r.text(gpa, .handle),
                 .power = r.get(.power),
+                .update_uid = r.get(.update_uid),
                 .invited_by = r.get(.invited_by),
                 .display_name = try r.text(gpa, .display_name),
                 .avatar = "arst",
@@ -184,7 +185,7 @@ pub fn loadHost(
     }
 
     {
-        var rs = qs.select_channels.run(db, .{});
+        var rs = qs.select_channels.run(@src(), db, .{});
         while (rs.next()) |r| {
             const kind = r.get(.kind);
             var channel: awebo.Channel = .{
@@ -202,7 +203,7 @@ pub fn loadHost(
             };
 
             if (channel.kind == .chat) {
-                var msgs = qs.select_channel_messages.run(db, .{
+                var msgs = qs.select_channel_messages.run(@src(), db, .{
                     .channel = channel.id,
                     .limit = 64,
                 });
@@ -226,52 +227,6 @@ pub fn loadHost(
         }
     }
 }
-
-pub const serverPermission = if (context == .client)
-    @compileError("server only")
-else
-    struct {
-        fn impl(
-            db: Database,
-            user: *const awebo.User,
-            comptime key: awebo.permissions.Server.Enum,
-        ) bool {
-            const user_id = user.id;
-            const user_default = @field(awebo.permissions.Server{}, @tagName(key));
-
-            switch (user.power) {
-                .banned => return false,
-                .admin, .owner => return true,
-                .user, .moderator => {},
-            }
-
-            const user_perm_query =
-                \\SELECT value FROM user_permissions WHERE user = ? AND kind = ? AND key = ?;
-            ;
-            const roles_perm_query =
-                \\SELECT permissions.value FROM permissions
-                \\INNER JOIN user_roles ON user_roles.role == permissions.role
-                \\WHERE user_roles.user = ? AND permissions.kind = ? AND permissions.key = ?;
-            ;
-            for (&[_][]const u8{ user_perm_query, roles_perm_query }) |q| {
-                var result_rows = db.conn.rows(q, .{
-                    user_id,
-                    @intFromEnum(awebo.permissions.Kind.server),
-                    @intFromEnum(key),
-                }) catch db.fatal(@src());
-                defer result_rows.deinit();
-
-                var found = false;
-                while (result_rows.next()) |r| {
-                    const value = r.int(0);
-                    if (value == 0) return false;
-                    found = true;
-                }
-
-                if (found) return true;
-            } else return user_default;
-        }
-    }.impl;
 
 pub fn fatal(db: Database, src: std.builtin.SourceLocation) noreturn {
     log.err("{s}:{}: fatal db error: {s}", .{ src.file, src.line, db.conn.lastError() });
@@ -327,7 +282,12 @@ pub fn Query(sql_query: [:0]const u8, config: QueryConfig) type {
             _ = zqlite.c.sqlite3_finalize(q.stmt);
         }
 
-        pub fn run(q: *const @This(), db: Database, args: config.args) Result(config) {
+        pub fn run(
+            q: *const @This(),
+            src: std.builtin.SourceLocation,
+            db: Database,
+            args: config.args,
+        ) Result(config) {
             const stmt: zqlite.Stmt = .{
                 .conn = db.conn.conn,
                 .stmt = @ptrCast(q.stmt),
@@ -351,7 +311,7 @@ pub fn Query(sql_query: [:0]const u8, config: QueryConfig) type {
 
             switch (config.kind) {
                 .row => {
-                    const one_row = stmt.step() catch db.fatal(@src());
+                    const one_row = stmt.step() catch db.fatal(src);
                     if (!one_row) return null;
                     return Rows(config).Row{ .row = .{ .stmt = stmt } };
                 },
@@ -359,7 +319,7 @@ pub fn Query(sql_query: [:0]const u8, config: QueryConfig) type {
                     return Rows(config){ .rows = .{ .stmt = stmt, .err = null } };
                 },
                 .exec => {
-                    stmt.stepToCompletion() catch db.fatal(@src());
+                    stmt.stepToCompletion() catch db.fatal(src);
                 },
             }
         }
@@ -403,6 +363,7 @@ pub fn Rows(config: QueryConfig) type {
                     },
                     []u8, []const u8 => @compileError("use text() or textNoDupe()"),
                     bool => return r.row.boolean(idx),
+                    ?bool => return r.row.nullableBoolean(idx),
                     else => switch (@typeInfo(T)) {
                         .@"enum" => {
                             return @enumFromInt(r.row.int(idx));

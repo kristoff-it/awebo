@@ -136,6 +136,29 @@ pub const CallJoin = struct {
     pub const protocol = struct {};
 };
 
+pub const ChatHistoryGet = struct {
+    origin: OriginId,
+    chat_channel: Channel.Id,
+    oldest_uid: u64,
+
+    pub const marker = 'H';
+    pub const serializeAlloc = proto.MakeSerializeAllocFn(ChatHistoryGet);
+    pub const deserialize = proto.MakeDeserializeFn(ChatHistoryGet);
+    pub const protocol = struct {};
+
+    pub const Error = enum {
+        unknown_channel,
+    };
+
+    pub fn replyErr(chg: ChatHistoryGet, err: Error) server.ClientRequestReply {
+        return .{
+            .origin = chg.origin,
+            .reply_marker = marker,
+            .result = .{ .err = .{ .code = @intFromEnum(err) } },
+        };
+    }
+};
+
 pub const ChatMessageSend = struct {
     origin: OriginId,
     channel: Channel.Id,
