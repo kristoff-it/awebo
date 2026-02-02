@@ -27,6 +27,16 @@ pub const Address = union(enum) {
             .hostname = net.HostName.init(text) catch return error.InvalidHost,
         };
     }
+
+    pub fn format(
+        self: Address,
+        writer: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
+        switch (self) {
+            .hostname => |h| try writer.writeAll(h.bytes),
+            .ip_address => |ip| try ip.format(writer),
+        }
+    }
 };
 
 pub const ParseError = error{
@@ -102,12 +112,20 @@ pub fn parse(gpa: Allocator, text: []const u8) ParseError!Invite {
     } else {
         return error.MissingHost;
     };
+    errdefer gpa.free(host_str);
 
-    return .{
+    const invite: Invite = .{
         .slug = slug,
         .address = try Address.parse(host_str),
         .port = uri.port orelse default_tcp_port,
     };
+    if (invite.address == .ip_address) {
+        // Free now since it is not referenced in `invite.host`,
+        // so it wouldn't be freed by `invite.deinit`
+        gpa.free(host_str);
+    }
+
+    return invite;
 }
 
 test parse {
