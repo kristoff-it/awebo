@@ -48,7 +48,7 @@ pub fn build(b: *std.Build) void {
     const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, client_local_cache);
     b.installArtifact(gui);
 
-    const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, client_version);
+    const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, client_version, client_local_cache);
     b.installArtifact(tui);
 
     const server_step = b.step("server", "Launch the server executable");
@@ -216,6 +216,7 @@ pub fn setupTui(
     optimize: std.builtin.OptimizeMode,
     dep_optimize: std.builtin.OptimizeMode,
     version: []const u8,
+    local_cache: bool,
 ) struct { *std.Build.Step.Compile, *std.Build.Step.Compile } {
     const vaxis = b.dependency("vaxis", .{
         .target = target,
@@ -259,6 +260,7 @@ pub fn setupTui(
     const options = b.addOptions();
     options.addOption(Context, "context", .client);
     options.addOption([]const u8, "version", version);
+    options.addOption(bool, "local_cache", local_cache);
     tui.root_module.addOptions("options", options);
     tui.root_module.addImport("vaxis", vaxis.module("vaxis"));
     tui.root_module.addImport("folders", folders.module("known-folders"));
@@ -306,7 +308,7 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.O
 
         const server, const server_test = setupServer(b, target, optimize, dep_optimize, false, false, zon.version);
         const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, false);
-        const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, zon.version);
+        const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false);
 
         step.dependOn(&server.step);
         step.dependOn(&server_test.step);
