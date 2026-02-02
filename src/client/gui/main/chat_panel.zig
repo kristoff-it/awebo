@@ -161,7 +161,7 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
             const next_m = c.messages.at(idx);
             if (m.author != next_m.author) break;
 
-            dvui.label(@src(), "{f}", .{m.created.fmt(tz, h.epoch)}, .{
+            dvui.label(@src(), "{f}", .{next_m.created.fmt(tz, h.epoch)}, .{
                 .id_extra = idx,
             });
 
