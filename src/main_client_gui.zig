@@ -76,6 +76,7 @@ pub const App = struct {
     // empty
     in_progress_host_join: ?Core.ui.FirstConnectionStatus = null,
     show_add_host: bool = false,
+    show_invite_signup: bool = false,
     err_msg: ?[]const u8 = null,
     environ: *std.process.Environ.Map,
 
