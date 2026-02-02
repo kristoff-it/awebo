@@ -223,7 +223,7 @@ pub const messages: Table = .{
     \\CREATE TABLE messages (
     \\  uid          INTEGER PRIMARY KEY ASC NOT NULL,
     \\  origin       INTEGER,
-    \\  created      DATETIME NOT NULL DEFAULT (unixepoch()),
+    \\  created      DATETIME NOT NULL,
     \\  update_uid   INTEGER NULL DEFAULT NULL,
     \\  channel      REFERENCES channels ON DELETE CASCADE NOT NULL,
     \\  author       REFERENCES users ON DELETE CASCADE NULL,
@@ -291,23 +291,23 @@ pub const seen: Table = .{
     },
 };
 
-pub const notifications: Table = .{
-    .context = .server,
-    .schema =
-    \\CREATE TABLE notifications (
-    \\  id           INTEGER PRIMARY KEY ASC AUTOINCREMENT,
-    \\  user         REFERENCES users ON DELETE CASCADE NOT NULL,
-    \\  message      REFERENCES messages ON DELETE CASCADE NOT NULL,
-    \\  created      INTEGER NOT NULL
-    \\);
-    ,
-    .indexes = &.{
-        \\CREATE INDEX notifications_by_user ON notifications (user);
-        ,
-        \\CREATE INDEX notifications_by_created ON notifications (created);
-        ,
-    },
-};
+// pub const notifications: Table = .{
+//     .context = .server,
+//     .schema =
+//     \\CREATE TABLE notifications (
+//     \\  id           INTEGER PRIMARY KEY ASC AUTOINCREMENT,
+//     \\  user         REFERENCES users ON DELETE CASCADE NOT NULL,
+//     \\  message      REFERENCES messages ON DELETE CASCADE NOT NULL,
+//     \\  created      INTEGER NOT NULL
+//     \\);
+//     ,
+//     .indexes = &.{
+//         \\CREATE INDEX notifications_by_user ON notifications (user);
+//         ,
+//         \\CREATE INDEX notifications_by_created ON notifications (created);
+//         ,
+//     },
+// };
 
 pub const emotes: Table = .{
     .context = .server,

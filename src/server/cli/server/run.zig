@@ -727,11 +727,13 @@ const Client = struct {
         const new: awebo.Message = .{
             .id = state.id.new(),
             .origin = cms.origin,
-            .created = 0,
+            .created = .now(io, state.host.epoch),
             .update_uid = null,
             .author = client.authenticated.?,
             .text = cms.text,
         };
+
+        log.debug("adding new message: {f}", .{new});
 
         try channel.kind.chat.messages.add(gpa, db, &cqs, channel.id, new);
 
@@ -924,6 +926,7 @@ var ___state: struct {
                     }
                 }
             }
+
             break :blk settings;
         };
 
@@ -935,7 +938,7 @@ var ___state: struct {
                 while (rs.next()) |r| {
                     try users.set(gpa, .{
                         .id = r.get(.id),
-                        .created = 0,
+                        .created = r.get(.created),
                         .update_uid = r.get(.update_uid),
                         .handle = try r.text(gpa, .handle),
                         .display_name = try r.text(gpa, .display_name),
@@ -998,6 +1001,7 @@ var ___state: struct {
                 .name = settings.name,
                 .channels = channels,
                 .users = users,
+                .epoch = settings.epoch,
             };
         };
 
@@ -1202,19 +1206,19 @@ fn getUserByLogin(
         else => fatalIo(err),
     };
 
-    const maybe_row = qs.select_user_by_handle.run(@src(), db, .{
+    const r = qs.select_user_by_handle.run(@src(), db, .{
         .handle = username,
-    });
-    const user_row = maybe_row orelse return error.NotFound;
+    }) orelse return error.NotFound;
 
     return .{
-        .id = user_row.get(.uid),
-        .power = user_row.get(.power),
-        .display_name = user_row.text(gpa, .display_name) catch oom(),
-        .update_uid = user_row.get(.update_uid),
-        .avatar = user_row.text(gpa, .avatar) catch oom(),
+        .id = r.get(.id),
+        .created = r.get(.created),
+        .power = r.get(.power),
+        .display_name = r.text(gpa, .display_name) catch oom(),
+        .update_uid = r.get(.update_uid),
+        .avatar = r.text(gpa, .avatar) catch oom(),
         .handle = gpa.dupe(u8, username) catch oom(),
-        .invited_by = user_row.get(.invited_by),
+        .invited_by = r.get(.invited_by),
         .server = .{
             .pswd_hash = gpa.dupe(u8, pswd_hash) catch oom(),
         },
@@ -1257,12 +1261,13 @@ pub const Queries = struct {
     }),
 
     select_user_by_handle: Query(
-        \\SELECT id, display_name, update_uid, power, invited_by, avatar FROM users
+        \\SELECT id, created, display_name, update_uid, power, invited_by, avatar FROM users
         \\WHERE handle = ?;
     , .{
         .kind = .row,
         .cols = struct {
-            uid: u64,
+            id: u64,
+            created: awebo.Date,
             display_name: []const u8,
             update_uid: u64,
             power: awebo.User.Power,
@@ -1280,7 +1285,7 @@ pub const Queries = struct {
         .cols = struct {
             uid: awebo.Message.Id,
             origin: u64,
-            created: u64,
+            created: awebo.Date,
             update_uid: ?u64,
             author: awebo.User.Id,
             body: []const u8,

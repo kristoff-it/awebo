@@ -108,7 +108,7 @@ select_channel_messages: Query(
     .cols = struct {
         uid: u64,
         origin: u64,
-        created: u64,
+        created: awebo.Date,
         update_uid: u64,
         author: awebo.User.Id,
         body: []const u8,
@@ -120,11 +120,12 @@ select_channel_messages: Query(
 }),
 
 select_users: Query(
-    \\SELECT id, update_uid, handle, power, invited_by, display_name FROM users
+    \\SELECT id, created, update_uid, handle, power, invited_by, display_name FROM users
 , .{
     .kind = .rows,
     .cols = struct {
         id: u64,
+        created: awebo.Date,
         update_uid: u64,
         handle: []const u8,
         power: awebo.User.Power,
@@ -187,14 +188,18 @@ insert_host_kv: Query(
 }),
 
 insert_message: Query(
-    \\INSERT INTO messages (uid, origin, channel, author, body) VALUES
-    \\  (?, ?, ?, ?, ?)
+    \\INSERT INTO messages
+    \\    (uid, origin, created, update_uid, channel, author, body)
+    \\  VALUES
+    \\    (?, ?, ?, ?, ?, ?, ?)
     \\;
 , .{
     .kind = .exec,
     .args = struct {
         uid: u64,
         origin: u64,
+        created: awebo.Date,
+        update_uid: ?u64,
         channel: awebo.Channel.Id,
         author: ?awebo.User.Id,
         body: []const u8,
@@ -276,7 +281,7 @@ upsert_message: Query(
     .args = struct {
         uid: awebo.Message.Id,
         origin: u64,
-        created: u64,
+        created: awebo.Date,
         update_uid: ?u64,
         channel: awebo.Channel.Id,
         author: awebo.User.Id,

@@ -4,6 +4,7 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const context = @import("options").context;
+const awebo = @import("../awebo.zig");
 
 // - u26 max 67_108_864 users per server
 // - u4 max 16 clients connected
@@ -12,7 +13,7 @@ const context = @import("options").context;
 pub const Id = u64;
 
 id: Id,
-created: u64 = 0,
+created: awebo.Date,
 update_uid: u64,
 invited_by: Id,
 power: Power,

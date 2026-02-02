@@ -1,16 +1,15 @@
 const Io = @import("std").Io;
 const TcpMessage = @import("protocol.zig").TcpMessage;
-const User = @import("User.zig");
-const Channel = @import("Channel.zig");
+const awebo = @import("../awebo.zig");
 const Message = @This();
 
 pub const Id = u64;
 
 id: Id,
 origin: u64,
-created: u64,
+created: awebo.Date,
 update_uid: ?u64,
-author: User.Id,
+author: awebo.User.Id,
 text: []const u8,
 
 pub const protocol = struct {
@@ -32,7 +31,7 @@ pub fn serialize(msg: Message, tcp: TcpMessage) void {
 
 pub fn parseAlloc(gpa: std.mem.Allocator, r: anytype) !Message {
     const id = try TcpMessage.readInt(Id, r);
-    const author = try TcpMessage.readInt(User.Id, r);
+    const author = try TcpMessage.readInt(awebo.User.Id, r);
     const text = try TcpMessage.readSlice(gpa, .u24, r);
 
     return .{
@@ -43,7 +42,7 @@ pub fn parseAlloc(gpa: std.mem.Allocator, r: anytype) !Message {
 }
 
 pub fn format(msg: *const Message, w: *Io.Writer) !void {
-    try w.print("Message(id: {} origin: {} author: {}  text: '{s}')", .{
-        msg.id, msg.origin, msg.author, msg.text,
+    try w.print("Message(id: {} origin: {} created: {f} author: {}  text: '{s}')", .{
+        msg.id, msg.origin, msg.created, msg.author, msg.text,
     });
 }

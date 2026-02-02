@@ -108,6 +108,7 @@ pub const HostSync = struct {
     user_id: User.Id,
     server_max_uid: u64,
     name: []const u8,
+    epoch: i64,
     users: struct {
         mode: Mode,
         items: []User,

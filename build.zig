@@ -103,6 +103,11 @@ pub fn setupServer(
         .optimize = dep_optimize,
     });
 
+    const zeit = b.dependency("zeit", .{
+        .target = target,
+        .optimize = dep_optimize,
+    });
+
     const options = b.addOptions();
     options.addOption(Context, "context", .server);
     options.addOption(bool, "slow", slow);
@@ -111,6 +116,7 @@ pub fn setupServer(
 
     server.root_module.addOptions("options", options);
     server.root_module.addImport("folders", folders.module("known-folders"));
+    server.root_module.addImport("zeit", zeit.module("zeit"));
     addSqlite(server, zqlite, .server);
 
     const server_test = b.addTest(.{
@@ -163,12 +169,18 @@ pub fn setupGui(
         .optimize = dep_optimize,
     });
 
+    const zeit = b.dependency("zeit", .{
+        .target = target,
+        .optimize = dep_optimize,
+    });
+
     const options = b.addOptions();
     options.addOption(Context, "context", .client);
     options.addOption(bool, "local_cache", local_cache);
     gui.root_module.addOptions("options", options);
     gui.root_module.addImport("dvui", dvui.module("dvui_sdl3"));
     gui.root_module.addImport("folders", folders.module("known-folders"));
+    gui.root_module.addImport("zeit", zeit.module("zeit"));
     gui.root_module.linkLibrary(opus.artifact("opus"));
     gui.root_module.linkLibrary(opus_tools.artifact("opus-tools"));
     addSqlite(gui, zqlite, .client);
@@ -239,12 +251,18 @@ pub fn setupTui(
         .optimize = dep_optimize,
     });
 
+    const zeit = b.dependency("zeit", .{
+        .target = target,
+        .optimize = dep_optimize,
+    });
+
     const options = b.addOptions();
     options.addOption(Context, "context", .client);
     options.addOption([]const u8, "version", version);
     tui.root_module.addOptions("options", options);
     tui.root_module.addImport("vaxis", vaxis.module("vaxis"));
     tui.root_module.addImport("folders", folders.module("known-folders"));
+    tui.root_module.addImport("zeit", zeit.module("zeit"));
     tui.root_module.linkLibrary(opus.artifact("opus"));
     tui.root_module.linkLibrary(opus_tools.artifact("opus-tools"));
     addSqlite(tui, zqlite, .client);

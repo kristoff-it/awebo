@@ -27,7 +27,7 @@ pub fn draw(app: *App, frozen: bool) !void {
     defer box.deinit();
 
     try sendBar(core, h, c, frozen);
-    try messageList(core, h, c.id, &c.kind.chat);
+    try messageList(app, h, c.id, &c.kind.chat);
 }
 
 fn sendBar(core: *Core, h: *awebo.Host, c: *Channel, frozen: bool) !void {
@@ -74,8 +74,10 @@ var channel_infos: std.AutoHashMapUnmanaged(packed struct {
     scroll_info: dvui.ScrollInfo = .{},
 }) = .empty;
 
-fn messageList(core: *Core, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat) !void {
+fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat) !void {
+    const core = &app.core;
     const gpa = core.gpa;
+    const tz = &app.tz;
 
     const gop = try channel_infos.getOrPut(gpa, .{
         .host_id = h.client.host_id,
@@ -128,6 +130,10 @@ fn messageList(core: *Core, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Ch
             const mfr = messageFrame(h, msg.author, i);
             defer mfr.deinit();
 
+            dvui.label(@src(), "{f}", .{msg.created.fmt(tz, h.epoch)}, .{
+                .id_extra = i,
+            });
+
             var tl = dvui.textLayout(@src(), .{}, .{
                 .expand = .horizontal,
                 .id_extra = i,
@@ -146,12 +152,18 @@ fn messageList(core: *Core, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Ch
         var showing_pending = false;
         const m = c.messages.at(idx);
         const mfr = messageFrame(h, m.author, idx);
-        defer if (!showing_pending) mfr.deinit();
+        defer if (!showing_pending) {
+            mfr.deinit();
+        };
         last_author = mfr.author;
 
         while (idx < messages_len) : (idx += 1) {
             const next_m = c.messages.at(idx);
             if (m.author != next_m.author) break;
+
+            dvui.label(@src(), "{f}", .{m.created.fmt(tz, h.epoch)}, .{
+                .id_extra = idx,
+            });
 
             var tl = dvui.textLayout(@src(), .{}, .{
                 .expand = .horizontal,

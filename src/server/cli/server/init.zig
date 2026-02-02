@@ -102,7 +102,7 @@ fn seed(
     const epoch = Io.Clock.real.now(io) catch @panic("server needs a clock");
     const settings: Settings = .{
         .name = cmd.server.name,
-        .epoch = epoch.toMilliseconds(),
+        .epoch = epoch.toSeconds(),
     };
 
     inline for (std.meta.fields(Settings)) |f| {

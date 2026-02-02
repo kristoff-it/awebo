@@ -5,6 +5,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const folders = @import("folders");
 const dvui = @import("dvui");
+const zeit = @import("zeit");
 const awebo = @import("awebo.zig");
 const gui = @import("client/gui.zig");
 const Host = awebo.Host;
@@ -65,6 +66,7 @@ pub const App = struct {
     core_future: Io.Future(void),
     core: Core,
     command_queue_buffer: [1024]Core.Event,
+    tz: zeit.TimeZone,
 
     // main
     active_host: Host.ClientOnly.Id = 0,
@@ -100,6 +102,9 @@ pub const App = struct {
             .core = .init(gpa, io, environ, refresh, &app.command_queue_buffer),
             .core_future = io.concurrent(Core.run, .{&app.core}) catch |err| {
                 cli.fatal("unable to start awebo client core: {t}", .{err});
+            },
+            .tz = zeit.local(gpa, io, .{}) catch |err| {
+                cli.fatal("unable to load local timezone: {t}", .{err});
             },
         };
     }

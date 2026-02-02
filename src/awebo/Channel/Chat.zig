@@ -132,6 +132,8 @@ const MessageWindow = struct {
         qs.insert_message.run(@src(), db, .{
             .uid = msg.id,
             .origin = msg.origin,
+            .created = msg.created,
+            .update_uid = msg.update_uid,
             .channel = chat_id,
             .author = msg.author,
             .body = msg.text,

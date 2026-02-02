@@ -16,6 +16,7 @@ const log = std.log.scoped(.awebo_host);
 
 name: []const u8 = "",
 logo: []const u8 = "", // TODO: draw default logo
+epoch: i64 = 0,
 // max_uid: u64 = 0,
 channels: Channels = .{},
 users: Users = .{},
@@ -98,6 +99,7 @@ pub fn computeDelta(
         .user_id = user_id,
         .server_max_uid = server_max_uid,
         .name = host.name,
+        .epoch = host.epoch,
         .users = .{ .mode = .delta, .items = delta_users.items },
         .channels = .{ .mode = .delta, .items = delta_channels.items },
     };
@@ -115,6 +117,7 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const HostSync) void {
     {
         gpa.free(host.name);
         host.name = delta.name;
+        host.epoch = delta.epoch;
         qs.upsert_host_kv.run(@src(), db, .{
             .key = "name",
             .value = .init(host.name),

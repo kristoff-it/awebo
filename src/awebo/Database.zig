@@ -172,6 +172,7 @@ pub fn loadHost(
         while (rs.next()) |r| {
             const user: awebo.User = .{
                 .id = r.get(.id),
+                .created = r.get(.created),
                 .handle = try r.text(gpa, .handle),
                 .power = r.get(.power),
                 .update_uid = r.get(.update_uid),
