@@ -1,5 +1,4 @@
 const builtin = @import("builtin");
-const options = @import("options");
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -84,16 +83,7 @@ pub const App = struct {
         const io = window.io;
         const gpa = window.gpa;
 
-        // Local client cache means that we store everything relative to cwd
-        // which is helpful when testing awebo with more than one client open
-        // at a time.
-        const environ = if (options.local_cache) blk: {
-            const EmptyEnv = struct {
-                var env: std.process.Environ.Map = undefined;
-            };
-            EmptyEnv.env = .init(gpa);
-            break :blk &EmptyEnv.env;
-        } else dvui.App.main_init.?.environ_map;
+        const environ = dvui.App.main_init.?.environ_map;
 
         app.* = .{
             .active_screen = .main,
