@@ -8,6 +8,8 @@ const Core = @import("../../Core.zig");
 const App = @import("../../../main_client_gui.zig").App;
 const Host = awebo.Host;
 
+const zig_logo = @embedFile("../../data/zig-favicon.png");
+
 const log = std.log.scoped(.chat_panel);
 
 pub fn draw(app: *App, frozen: bool) !void {
@@ -122,137 +124,209 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
     });
     defer scroll.deinit();
 
-    // render history crappily
-    {
-        var it = c.client.history.iterator();
-        var i: usize = 1000;
-        while (it.next()) |msg| : (i += 1) {
-            const mfr = messageFrame(h, msg.author, i);
-            defer mfr.deinit();
-
-            dvui.label(@src(), "{f}", .{msg.created.fmt(tz, h.epoch)}, .{
-                .id_extra = i,
-            });
-
-            var tl = dvui.textLayout(@src(), .{}, .{
-                .expand = .horizontal,
-                .id_extra = i,
-                .margin = dvui.Rect.all(0),
-            });
-            defer tl.deinit();
-            tl.addText(msg.text, .{});
-        }
-    }
-
-    const messages_len = c.messages.len;
-
     var idx: usize = 0;
     var last_author: awebo.User.Id = undefined;
-    while (idx < messages_len) {
-        var showing_pending = false;
-        const m = c.messages.at(idx);
-        const mfr = messageFrame(h, m.author, idx);
-        defer if (!showing_pending) {
-            mfr.deinit();
-        };
-        last_author = mfr.author;
+    var mit: MessageIterator = .init(c.client.history, c.messages.slices());
+    while (mit.next()) |m| : (idx += 1) {
+        drawMessage(h, m.author, m.created.fmt(tz, h.epoch), m.text, idx);
 
-        while (idx < messages_len) : (idx += 1) {
-            const next_m = c.messages.at(idx);
-            if (m.author != next_m.author) break;
+        last_author = m.author;
+        while (mit.peek()) |maybe_continue| {
+            if (m.author != maybe_continue.author) break;
 
-            dvui.label(@src(), "{f}", .{next_m.created.fmt(tz, h.epoch)}, .{
-                .id_extra = idx,
-            });
-
-            var tl = dvui.textLayout(@src(), .{}, .{
-                .expand = .horizontal,
-                .id_extra = idx,
-                .margin = dvui.Rect.all(0),
-            });
-            defer tl.deinit();
-            tl.addText(next_m.text, .{});
-        } else {
+            const message_continuation = mit.next().?;
             idx += 1;
+
+            drawMessage(
+                h,
+                null,
+                message_continuation.created.fmt(tz, h.epoch),
+                message_continuation.text,
+                idx,
+            );
         }
 
-        if (idx >= messages_len) {
+        if (mit.peek() == null) {
             if (h.client.pending_messages.count() > 0) {
-                var maybe_mfr: ?MsgFrameResult = null;
-                defer if (maybe_mfr) |mfr1| mfr1.deinit();
-
-                if (last_author != h.client.user_id) {
-                    showing_pending = true;
-                    mfr.deinit();
-                    maybe_mfr = messageFrame(h, h.client.user_id, idx + 1);
-                }
-
+                var id = if (last_author != h.client.user_id) h.client.user_id else null;
                 for (h.client.pending_messages.values(), 0..) |pm, pmidx| {
-                    var tl = dvui.textLayout(@src(), .{}, .{
-                        .expand = .horizontal,
-                        .id_extra = pmidx,
-                        .margin = dvui.Rect.all(0),
-                        .color_text = .gray,
-                    });
-                    defer tl.deinit();
-                    tl.addText(pm.cms.text, .{});
+                    drawMessage(
+                        h,
+                        id,
+                        null,
+                        pm.cms.text,
+                        idx + pmidx + 1,
+                    );
+                    // after we print the first one, all others are guaranteed
+                    // to be continuations
+                    id = null;
                 }
             }
         }
     }
 }
 
-const MsgFrameResult = struct {
-    author: awebo.User.Id,
-    text_box: *dvui.BoxWidget,
-    msg_box: *dvui.BoxWidget,
+const MessageIterator = struct {
+    rb_slices: [2][]const awebo.Message,
 
-    pub fn deinit(mfr: MsgFrameResult) void {
-        mfr.text_box.deinit();
-        mfr.msg_box.deinit();
+    idx: usize = 0,
+    state: union(enum) {
+        history: std.Deque(awebo.Message).Iterator,
+        ringbuf: struct { slice_idx: u1 = 0, idx: usize = 0 },
+    },
+
+    pub fn init(
+        history: std.Deque(awebo.Message),
+        rb_slices: [2][]const awebo.Message,
+    ) MessageIterator {
+        return .{
+            .state = .{ .history = history.iterator() },
+            .rb_slices = rb_slices,
+        };
+    }
+
+    pub fn next(mi: *MessageIterator) ?awebo.Message {
+        state: switch (mi.state) {
+            .history => |*hit| return hit.next() orelse {
+                mi.state = .{ .ringbuf = .{} };
+                continue :state mi.state;
+            },
+            .ringbuf => |*rb| {
+                while (rb.idx >= mi.rb_slices[rb.slice_idx].len) {
+                    if (rb.slice_idx == mi.rb_slices.len - 1) return null;
+                    rb.slice_idx += 1;
+                    rb.idx = 0;
+                }
+
+                const msg = mi.rb_slices[rb.slice_idx][rb.idx];
+                rb.idx += 1;
+                return msg;
+            },
+        }
+    }
+
+    pub fn peek(mi: *MessageIterator) ?awebo.Message {
+        var temp = mi.*;
+        return temp.next();
     }
 };
-fn messageFrame(h: *awebo.Host, author_id: awebo.User.Id, idx: usize) MsgFrameResult {
-    const author = h.users.get(author_id).?;
 
+fn drawMessage(
+    h: *awebo.Host,
+    // null means this message is a continuation of a previous message
+    // from the same author
+    author_id: ?awebo.User.Id,
+    date_fmt: ?awebo.Date.Formatter,
+    text: []const u8,
+    idx: usize,
+) void {
     const msg_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
         .expand = .horizontal,
         .id_extra = idx,
         // x left, y top, w right, h bottom
-        .margin = .{ .y = 10 },
+        .padding = .all(5),
         // .border = dvui.Rect.all(1),
         // .color_border = .{ .name = .text_press },
         // .color_fill = .{ .name = .fill_control },
     });
+    defer msg_box.deinit();
 
-    // dvui.image(@src(), "avatar", author.avatar, .{
-    //     .gravity_y = 0,
-    //     .gravity_x = 0.5,
-    //     .min_size_content = .{ .w = 30, .h = 30 },
-    //     .id_extra = idx,
-    //     .background = true,
-    //     .border = dvui.Rect.all(1),
-    //     .corner_radius = dvui.Rect.all(100),
-    //     .color_border = .{ .name = .accent },
-    // });
+    // light up on mouseover
+    {
+        const evts = dvui.events();
+        for (evts) |*e| {
+            if (!dvui.eventMatchSimple(e, msg_box.data())) {
+                continue;
+            }
 
-    const text_box = dvui.box(@src(), .{ .dir = .vertical }, .{
-        .expand = .horizontal,
-        // .color_fill = .{ .name = .fill_control },
-        .id_extra = idx,
-    });
+            if (e.evt == .mouse and e.evt.mouse.action == .position) {
+                msg_box.data().options.background = true;
+                msg_box.data().options.color_fill = dvui.themeGet().color(.content, .fill_hover);
+            }
+        }
+        msg_box.drawBackground();
+    }
 
-    dvui.labelNoFmt(@src(), author.display_name, .{}, .{
-        // .font_style = dvui.Font.theme(.heading).larger(-2),
-        .id_extra = idx,
-        // x left, y top, w right, h bottom
-        .padding = dvui.Rect.all(0),
-        .margin = dvui.Rect.all(0),
-    });
+    // No author id means that this message is a "continuation"
+    // from a previous message.
+    const main_box = if (author_id) |aid| blk: {
+        _ = dvui.image(@src(), .{
+            .source = .{
+                .imageFile = .{
+                    .bytes = zig_logo,
+                    .name = "avatar",
+                },
+            },
+        }, .{
+            .min_size_content = .{ .w = 30, .h = 30 },
+            .id_extra = idx,
+            .background = true,
+            .border = dvui.Rect.all(1),
+            .corner_radius = dvui.Rect.all(100),
+            // x left, y top, w right, h bottom
+            .margin = .rect(0, 0, 10, 0),
+            // .color_border = .{ .name = .accent },
+        });
 
-    return .{
-        .author = author.id,
-        .text_box = text_box,
-        .msg_box = msg_box,
+        const main_box = dvui.box(@src(), .{ .dir = .vertical }, .{
+            .expand = .horizontal,
+            // .color_fill = .{ .name = .fill_control },
+            .id_extra = idx,
+        });
+
+        {
+            const author = h.users.get(aid).?;
+            const author_date_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
+                .expand = .horizontal,
+                .id_extra = idx,
+                // x left, y top, w right, h bottom
+                .margin = .{ .h = 5 },
+            });
+            defer author_date_box.deinit();
+
+            dvui.labelNoFmt(@src(), author.display_name, .{}, .{
+                // .font_style = dvui.Font.theme(.heading).larger(-2),
+                .id_extra = idx,
+                // x left, y top, w right, h bottom
+                .padding = dvui.Rect.all(0),
+                .margin = dvui.Rect.all(0),
+                .font = .theme(.heading),
+            });
+
+            if (date_fmt) |fmt| {
+                dvui.label(@src(), "  {f}", .{fmt}, .{
+                    // .font_style = dvui.Font.theme(.heading).larger(-2),
+                    .id_extra = idx,
+                    // x left, y top, w right, h bottom
+                    .padding = dvui.Rect.all(0),
+                    .margin = dvui.Rect.all(0),
+                    .font = .theme(.body),
+                    .color_text = .gray,
+                });
+            }
+        }
+
+        break :blk main_box;
+    } else blk: {
+        _ = dvui.spacer(@src(), .{
+            .min_size_content = .{ .w = 30, .h = 10 },
+            // x left, y top, w right, h bottom
+            .margin = .rect(0, 0, 11, 0),
+        });
+
+        break :blk null;
     };
+    defer if (main_box) |mb| mb.deinit();
+
+    var tl = dvui.textLayout(@src(), .{}, .{
+        .expand = .horizontal,
+        .id_extra = idx,
+        .margin = .all(0),
+        .padding = .all(0),
+        .background = false,
+        .color_text = if (date_fmt == null) .gray else null,
+    });
+
+    defer tl.deinit();
+    tl.addText(text, .{});
 }
