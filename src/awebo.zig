@@ -61,6 +61,7 @@ pub const Date = enum(u32) {
         server_epoch: i64,
         date: Date,
         tz: *const zeit.TimeZone,
+        gofmt: []const u8 = "Jan 2 15:04:05 2006",
 
         pub fn format(f: Formatter, w: *Io.Writer) !void {
             const instant = zeit.instant(undefined, .{
@@ -70,7 +71,7 @@ pub const Date = enum(u32) {
                 .timezone = f.tz,
             }) catch unreachable;
             const time = instant.time();
-            time.gofmt(w, "Jan 2 15:04:05 2006") catch return error.WriteFailed;
+            time.gofmt(w, f.gofmt) catch return error.WriteFailed;
         }
     };
 

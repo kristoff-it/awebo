@@ -232,7 +232,8 @@ fn drawMessage(
     defer msg_box.deinit();
 
     // light up on mouseover
-    {
+    const hover = blk: {
+        var hover = false;
         const evts = dvui.events();
         for (evts) |*e| {
             if (!dvui.eventMatchSimple(e, msg_box.data())) {
@@ -242,10 +243,13 @@ fn drawMessage(
             if (e.evt == .mouse and e.evt.mouse.action == .position) {
                 msg_box.data().options.background = true;
                 msg_box.data().options.color_fill = dvui.themeGet().color(.content, .fill_hover);
+                hover = true;
+                e.handle(@src(), msg_box.data());
             }
         }
         msg_box.drawBackground();
-    }
+        break :blk hover;
+    };
 
     // No author id means that this message is a "continuation"
     // from a previous message.
@@ -258,7 +262,7 @@ fn drawMessage(
                 },
             },
         }, .{
-            .min_size_content = .{ .w = 30, .h = 30 },
+            .min_size_content = .{ .w = 40, .h = 40 },
             .id_extra = idx,
             .background = true,
             .border = dvui.Rect.all(1),
@@ -308,11 +312,32 @@ fn drawMessage(
 
         break :blk main_box;
     } else blk: {
-        _ = dvui.spacer(@src(), .{
-            .min_size_content = .{ .w = 30, .h = 10 },
+        const left_box = dvui.box(@src(), .{}, .{
+            .min_size_content = .{ .w = 40, .h = 10 },
             // x left, y top, w right, h bottom
             .margin = .rect(0, 0, 11, 0),
         });
+
+        defer left_box.deinit();
+
+        if (date_fmt) |fmt| {
+            const hour_fmt: awebo.Date.Formatter = .{
+                .server_epoch = fmt.server_epoch,
+                .date = fmt.date,
+                .tz = fmt.tz,
+                .gofmt = "15:04",
+            };
+
+            dvui.label(@src(), "{f}", .{hour_fmt}, .{
+                // .font_style = dvui.Font.theme(.heading).larger(-2),
+                .id_extra = idx,
+                // x left, y top, w right, h bottom
+                .padding = dvui.Rect.all(0),
+                .margin = dvui.Rect.all(0),
+                .font = dvui.Font.theme(.mono),
+                .color_text = if (hover) dvui.Color.gray.lighten(5) else .transparent,
+            });
+        }
 
         break :blk null;
     };
