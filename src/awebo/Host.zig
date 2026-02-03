@@ -175,22 +175,6 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const HostSync) void {
                     .privacy = new_ch.privacy,
                 });
 
-                switch (new_ch.kind) {
-                    .voice => {},
-                    .chat => |chat| {
-                        for (chat.messages.slices()) |s| for (s) |msg| {
-                            qs.upsert_message.run(@src(), db, .{
-                                .uid = msg.id,
-                                .origin = msg.origin,
-                                .created = msg.created,
-                                .update_uid = msg.update_uid,
-                                .channel = new_ch.id,
-                                .author = msg.author,
-                                .body = msg.text,
-                            });
-                        };
-                    },
-                }
             }
         },
     }

@@ -65,17 +65,10 @@ const MessageWindow = struct {
         mw.indexes.id.deinit(gpa);
     }
 
-    pub fn add(
-        mw: *MessageWindow,
-        gpa: std.mem.Allocator,
-        db: Database,
-        qs: *Database.CommonQueries,
-        chat_id: Channel.Id,
-        msg: Message,
-    ) !void {
+    pub fn add(mw: *MessageWindow, gpa: std.mem.Allocator, msg: Message) !void {
         const gop = try mw.indexes.id.getOrPut(gpa, msg.id);
         if (!gop.found_existing) {
-            gop.value_ptr.* = mw.pushNew(gpa, db, qs, chat_id, msg);
+            gop.value_ptr.* = mw.pushNew(gpa, msg);
         }
     }
 
@@ -114,43 +107,11 @@ const MessageWindow = struct {
         return &mw.items[mw.indexes.id.get(id) orelse return null];
     }
 
-    fn pushNew(
-        mw: *MessageWindow,
-        gpa: Allocator,
-        db: Database,
-        qs: *Database.CommonQueries,
-        chat_id: Channel.Id,
-        msg: Message,
-    ) usize {
+    fn pushNew(mw: *MessageWindow, gpa: Allocator, msg: Message) usize {
         const tail_w: u32 = mw.tail;
         const idx: Channel.WindowSize = @intCast(@mod(tail_w + mw.len, Channel.window_size));
-
-        log.debug("adding msg author {} chat_id {}", .{ msg.author, chat_id });
-
-        // TODO: investigate if a single upsert could be better!
-
-        qs.insert_message.run(@src(), db, .{
-            .uid = msg.id,
-            .origin = msg.origin,
-            .created = msg.created,
-            .update_uid = msg.update_uid,
-            .channel = chat_id,
-            .author = msg.author,
-            .body = msg.text,
-        });
-
         if (idx == mw.tail and mw.len == Channel.window_size) {
-            switch (context) {
-                .client => {
-                    qs.delete_message.run(@src(), db, .{mw.buffer[idx].id});
-                    const chat: *Chat = @fieldParentPtr("messages", mw);
-                    chat.client.history.pushBack(gpa, mw.buffer[idx]) catch @panic("oom");
-                },
-                .server => {
-                    mw.buffer[idx].deinit(gpa);
-                },
-            }
-
+            mw.buffer[idx].deinit(gpa);
             mw.tail +%= 1;
         } else {
             mw.len += 1;
@@ -199,6 +160,11 @@ pub fn deinit(c: *Chat, gpa: std.mem.Allocator) void {
 }
 
 pub const ClientOnly = struct {
+    scroll: enum {
+        sticky_bottom,
+        position,
+    } = .sticky_bottom,
+
     history: std.Deque(Message) = .empty,
 
     pub const protocol = struct {
@@ -220,8 +186,17 @@ pub fn sync(
     const new_chat = new_kind.chat;
 
     const slices = new_chat.messages.slices();
-    for (slices) |s| for (s) |message| {
-        chat.messages.add(gpa, db, qs, chat_id, message) catch @panic("oom");
+    for (slices) |s| for (s) |msg| {
+        chat.messages.add(gpa, msg) catch @panic("oom");
+        qs.upsert_message.run(@src(), db, .{
+            .uid = msg.id,
+            .origin = msg.origin,
+            .created = msg.created,
+            .update_uid = msg.update_uid,
+            .channel = chat_id,
+            .author = msg.author,
+            .body = msg.text,
+        });
     };
 
     // const msg_query =

@@ -734,8 +734,16 @@ const Client = struct {
         };
 
         log.debug("adding new message: {f}", .{new});
-
-        try channel.kind.chat.messages.add(gpa, db, &cqs, channel.id, new);
+        try channel.kind.chat.messages.add(gpa, new);
+        cqs.insert_message.run(@src(), db, .{
+            .uid = new.id,
+            .origin = new.origin,
+            .created = new.created,
+            .update_uid = new.update_uid,
+            .channel = channel.id,
+            .author = new.author,
+            .body = new.text,
+        });
 
         {
             const cmn: awebo.protocol.server.ChatMessageNew = .{

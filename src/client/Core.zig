@@ -337,10 +337,20 @@ fn chatMessageNew(core: *Core, host_id: HostId, cmn: awebo.protocol.server.ChatM
 
     const h = core.hosts.get(host_id).?;
     const c = &h.channels.get(cmn.channel).?.kind.chat;
+
+    c.messages.add(core.gpa, cmn.msg) catch oom();
+
     const db = h.client.db;
-    db.conn.transaction() catch db.fatal(@src());
-    c.messages.add(core.gpa, h.client.db, &h.client.qs, cmn.channel, cmn.msg) catch oom();
-    db.conn.commit() catch db.fatal(@src());
+    const new = cmn.msg;
+    h.client.qs.insert_message.run(@src(), db, .{
+        .uid = new.id,
+        .origin = new.origin,
+        .created = new.created,
+        .update_uid = new.update_uid,
+        .channel = cmn.channel,
+        .author = new.author,
+        .body = new.text,
+    });
 
     if (cmn.origin != 0) {
         if (h.client.pending_messages.orderedRemove(cmn.origin)) {
