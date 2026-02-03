@@ -262,13 +262,14 @@ fn drawMessage(
                 },
             },
         }, .{
-            .min_size_content = .{ .w = 40, .h = 40 },
+            .min_size_content = .{ .w = 35, .h = 35 },
             .id_extra = idx,
             .background = true,
             .border = dvui.Rect.all(1),
             .corner_radius = dvui.Rect.all(100),
             // x left, y top, w right, h bottom
             .margin = .rect(0, 0, 10, 0),
+            .gravity_y = 0.5,
             // .color_border = .{ .name = .accent },
         });
 
@@ -294,13 +295,14 @@ fn drawMessage(
                 // x left, y top, w right, h bottom
                 .padding = dvui.Rect.all(0),
                 .margin = dvui.Rect.all(0),
-                .font = .theme(.heading),
+                .font = dvui.Font.theme(.heading).larger(3),
             });
 
             if (date_fmt) |fmt| {
                 dvui.label(@src(), "  {f}", .{fmt}, .{
                     // .font_style = dvui.Font.theme(.heading).larger(-2),
                     .id_extra = idx,
+                    .gravity_y = 0.5,
                     // x left, y top, w right, h bottom
                     .padding = dvui.Rect.all(0),
                     .margin = dvui.Rect.all(0),
@@ -313,7 +315,7 @@ fn drawMessage(
         break :blk main_box;
     } else blk: {
         const left_box = dvui.box(@src(), .{}, .{
-            .min_size_content = .{ .w = 40, .h = 10 },
+            .min_size_content = .{ .w = 35, .h = 10 },
             // x left, y top, w right, h bottom
             .margin = .rect(0, 0, 11, 0),
         });
