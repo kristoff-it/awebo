@@ -30,7 +30,7 @@ pub fn loadImpl(core: *Core) error{OutOfMemory}!void {
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const cfg_path = if (options.local_cache) "./config/awebo" else try std.fs.path.join(allocator, &.{
+    const cfg_path = if (options.local_cache) ".awebo-config" else try std.fs.path.join(allocator, &.{
         folders.getPath(io, allocator, core.environ.*, .local_configuration) catch @panic("oom") orelse blk: {
             log.err("known-folders failed to find the local config dir, defaulting to '.config/'", .{});
             break :blk ".config/";
@@ -80,7 +80,7 @@ pub fn loadImpl(core: *Core) error{OutOfMemory}!void {
         }
     }
 
-    const cache_path = if (options.local_cache) ".cache/awebo" else try std.fs.path.join(allocator, &.{
+    const cache_path = if (options.local_cache) ".awebo-cache" else try std.fs.path.join(allocator, &.{
         folders.getPath(io, allocator, core.environ.*, .cache) catch @panic("oom") orelse blk: {
             log.err("known-folders failed to find the local cache dir, defaulting to '.cache/'", .{});
             break :blk ".cache/";
