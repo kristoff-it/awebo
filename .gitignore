@@ -1,4 +1,4 @@
-# ---> Zig
+# Zig
 .zig-cache/
 zig-out/
 build/
@@ -10,3 +10,5 @@ docgen_tmp/
 awebo.db*
 .config/
 .cache/
+.awebo-config/
+.awebo-cache/
