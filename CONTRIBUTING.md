@@ -33,3 +33,26 @@ If you get a runtime SDL error that there are no devices, try:
 nix-shell -p sdl3
 zig build gui -fsys=sdl3
 ```
+
+#### Testing with multiple users
+
+If you want to launch two or more instances of the client,
+each with a different logged user, use the `-Dlocal_cache` build option like so:
+
+```
+# from inside the awebo repository
+mkdir user1
+cd user1
+zig build gui -Dlocal-cache
+```
+
+Repeat multiple times as needed replacing 'user1' with a different name.
+
+The `-Dlocal-cache` flag will create a build of the client that stores cache and
+authentication data in `.awebo-cache` and `.awebo-config` respectively, and by
+dedicating a directory to each user you can achieve isolation.
+
+This can also be useful to be able to connect as the same user twice, as you will
+not be able to do so without this flag (the client takes an exclusive lock to the
+sqlite database).
+
