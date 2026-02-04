@@ -52,10 +52,14 @@ pub fn hostName(h: *awebo.Host) void {
             }, .{});
             defer fw.deinit();
 
-            // if (dvui.menuItemLabel(@src(), "New Chat", .{}, .{}) != null) {
-            //     main.state.show_new_chat = true;
-            //     dvui.menuGet().?.close();
-            // }
+            if (dvui.menuItemLabel(@src(), "New Chat", .{}, .{}) != null) {
+                // main.state.show_new_chat = true;
+                // dvui.menuGet().?.close();
+                std.log.debug("todo", .{});
+            }
+            if (dvui.menuItemLabel(@src(), "DVUI Debug Window", .{}, .{}) != null) {
+                dvui.toggleDebugWindow();
+            }
         }
 
         dvui.labelNoFmt(@src(), h.name, .{}, .{

@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const dvui = @import("dvui");
 const awebo = @import("../../../awebo.zig");
@@ -213,13 +214,16 @@ const MessageIterator = struct {
 
 fn drawMessage(
     h: *awebo.Host,
-    // null means this message is a continuation of a previous message
-    // from the same author
+    /// null means this message is a continuation of a previous message
+    /// from the same author
     author_id: ?awebo.User.Id,
+    /// null means that this is a pending message that we wrote
     date_fmt: ?awebo.Date.Formatter,
     text: []const u8,
     idx: usize,
 ) void {
+    if (date_fmt == null) assert(author_id.? == h.client.user_id);
+
     const msg_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
         .expand = .horizontal,
         .id_extra = idx,
@@ -254,25 +258,33 @@ fn drawMessage(
     // No author id means that this message is a "continuation"
     // from a previous message.
     const main_box = if (author_id) |aid| blk: {
-        _ = dvui.image(@src(), .{
-            .source = .{
-                .imageFile = .{
-                    .bytes = zig_logo,
-                    .name = "avatar",
-                },
-            },
-        }, .{
-            .min_size_content = .{ .w = 35, .h = 35 },
-            .id_extra = idx,
-            .background = true,
-            .border = dvui.Rect.all(1),
-            .corner_radius = dvui.Rect.all(100),
-            // x left, y top, w right, h bottom
-            .margin = .rect(0, 0, 10, 0),
-            .gravity_y = 0.5,
-            // .color_border = .{ .name = .accent },
-        });
+        {
+            const image_box = dvui.box(@src(), .{}, .{
+                .id_extra = idx,
+                .min_size_content = .{ .w = 40, .h = 35 },
+                // x left, y top, w right, h bottom
+                .margin = .rect(0, 0, 10, 0),
+            });
+            defer image_box.deinit();
 
+            _ = dvui.image(@src(), .{
+                .source = .{
+                    .imageFile = .{
+                        .bytes = zig_logo,
+                        .name = "avatar",
+                    },
+                },
+            }, .{
+                .min_size_content = .{ .w = 35, .h = 35 },
+                .id_extra = idx,
+                .background = true,
+                .border = dvui.Rect.all(1),
+                .corner_radius = dvui.Rect.all(100),
+                .gravity_y = 0.5,
+                .gravity_x = 1,
+                // .color_border = .{ .name = .accent },
+            });
+        }
         const main_box = dvui.box(@src(), .{ .dir = .vertical }, .{
             .expand = .horizontal,
             // .color_fill = .{ .name = .fill_control },
@@ -315,7 +327,7 @@ fn drawMessage(
         break :blk main_box;
     } else blk: {
         const left_box = dvui.box(@src(), .{}, .{
-            .min_size_content = .{ .w = 35, .h = 10 },
+            .min_size_content = .{ .w = 40, .h = 10 },
             // x left, y top, w right, h bottom
             .margin = .rect(0, 0, 11, 0),
         });
@@ -334,10 +346,10 @@ fn drawMessage(
                 // .font_style = dvui.Font.theme(.heading).larger(-2),
                 .id_extra = idx,
                 // x left, y top, w right, h bottom
-                .padding = dvui.Rect.all(0),
-                .margin = dvui.Rect.all(0),
-                .font = dvui.Font.theme(.mono),
-                .color_text = if (hover) dvui.Color.gray.lighten(5) else .transparent,
+                .padding = .all(0),
+                .margin = .all(0),
+                .font = .theme(.mono),
+                .color_text = if (hover) dvui.Color.gray.lighten(8) else .transparent,
             });
         }
 
