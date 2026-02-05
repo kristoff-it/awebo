@@ -338,7 +338,7 @@ fn chatMessageNew(core: *Core, host_id: HostId, cmn: awebo.protocol.server.ChatM
     const h = core.hosts.get(host_id).?;
     const c = &h.channels.get(cmn.channel).?.kind.chat;
 
-    c.messages.add(core.gpa, cmn.msg) catch oom();
+    c.messages.pushNew(core.gpa, cmn.msg) catch oom();
 
     const db = h.client.db;
     const new = cmn.msg;
@@ -367,7 +367,22 @@ fn chatHistory(core: *Core, host_id: HostId, ch: awebo.protocol.server.ChatHisto
     };
 
     for (ch.history) |msg| {
-        channel.kind.chat.client.history.pushFront(core.gpa, msg) catch oom();
+        log.debug("chatHistory: saving history message {}", .{msg.id});
+        h.client.qs.upsert_message.run(@src(), h.client.db, .{
+            .uid = msg.id,
+            .origin = msg.origin,
+            .created = msg.created,
+            .update_uid = msg.update_uid,
+            .channel = ch.channel,
+            .author = msg.author,
+            .body = msg.text,
+            .reactions = null,
+        });
+    }
+
+    channel.kind.chat.client.waiting_old_messages = false;
+    if (ch.history.len < awebo.Channel.window_size) {
+        channel.kind.chat.client.fetched_all_old_messages = true;
     }
 }
 fn callersUpdate(core: *Core, host_id: HostId, cu: awebo.protocol.server.CallersUpdate) void {
@@ -560,6 +575,7 @@ pub fn chatHistoryGet(
     core: *Core,
     h: *Host,
     channel_id: awebo.Channel.Id,
+    chat: *awebo.Channel.Chat,
     next_oldest_uid: u64,
 ) void {
     switch (h.client.connection_status) {
@@ -578,6 +594,7 @@ pub fn chatHistoryGet(
     errdefer core.gpa.free(bytes);
 
     conn.tcp.queue.putOne(core.io, bytes) catch oom();
+    chat.client.waiting_old_messages = true;
 }
 
 /// On error return, the message was not scheduled for sending and should be

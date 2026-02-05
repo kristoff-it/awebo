@@ -73,7 +73,6 @@ var channel_infos: std.AutoHashMapUnmanaged(packed struct {
     host_id: awebo.Host.ClientOnly.Id,
     channel_id: awebo.Channel.Id,
 }, struct {
-    waiting_history: ?awebo.Message.Id = null,
     scroll_info: dvui.ScrollInfo = .{},
 }) = .empty;
 
@@ -86,64 +85,125 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
         .host_id = h.client.host_id,
         .channel_id = channel_id,
     });
+    if (!gop.found_existing) gop.value_ptr.* = .{};
 
     const channel_info = gop.value_ptr;
     const scroll_info = &channel_info.scroll_info;
 
-    if (!gop.found_existing) {
-        channel_info.* = .{};
-        scroll_info.scrollToOffset(.vertical, std.math.floatMax(f32));
-    }
+    const stick_to_bottom = scroll_info.offsetFromMax(.vertical) <= 0;
+    var scroll_lock_visible = false;
 
-    const oldest_uid = if (c.client.history.front()) |old|
-        old.id
-    else if (c.messages.oldest()) |old|
-        old.id
-    else
-        1;
+    // are we close enough to the top to load new messages?
+    const oldest_uid = if (c.messages.oldest()) |old| old.id else 1;
+    const want_more_history = gop.found_existing and scroll_info.offset(.vertical) <= 100;
+    if (!c.client.waiting_old_messages and want_more_history and !c.client.loaded_all_old_messages) {
+        log.debug("query: {} {}", .{ oldest_uid, channel_id });
+        var rs = h.client.qs.select_channel_history.run(@src(), h.client.db, .{
+            .below_uid = oldest_uid,
+            .channel = channel_id,
+            .limit = 16,
+        });
 
-    if (channel_info.waiting_history) |wh| {
-        if (oldest_uid <= wh) channel_info.waiting_history = null;
-    }
+        var count: usize = 0;
+        while (rs.next()) |r| : (count += 1) {
+            log.debug("chat panel: pushing history message {}", .{r.get(.uid)});
+            c.messages.pushOld(gpa, .{
+                .id = r.get(.uid),
+                .origin = r.get(.origin),
+                .created = r.get(.created),
+                .update_uid = r.get(.update_uid),
+                .author = r.get(.author),
+                .text = try r.text(gpa, .body),
+            }) catch @panic("oom");
+        }
 
-    if (dvui.button(@src(), "request more history", .{}, .{})) {
-        log.debug("button press!", .{});
-        if (channel_info.waiting_history == null) {
-            log.debug("sending chat history request!", .{});
-            core.chatHistoryGet(h, channel_id, oldest_uid);
-            channel_info.waiting_history = oldest_uid - 1;
+        log.debug("loaded {} history messages from db oldest_uid = {}", .{ count, oldest_uid });
+
+        if (count == 0) {
+            log.debug("fetching history from server", .{});
+            if (c.client.fetched_all_old_messages) {
+                c.client.loaded_all_old_messages = true;
+            } else {
+                core.chatHistoryGet(h, channel_id, c, oldest_uid);
+            }
+        } else {
+            c.client.loaded_all_new_messages = false;
+            scroll_lock_visible = true;
         }
     }
 
-    if (channel_info.waiting_history != null) {
-        dvui.spinner(@src(), .{});
+    // are we close enough to the bottom to want to load newer messages?
+    const want_more_present = scroll_info.offset(.vertical) > scroll_info.scrollMax(.vertical) - 150;
+    const newest_uid = if (c.messages.latest()) |new| new.id else 1;
+    if (!c.client.waiting_new_messages and
+        want_more_present and !c.client.loaded_all_new_messages)
+    {
+        var rs = h.client.qs.select_channel_present.run(@src(), h.client.db, .{
+            .above_uid = newest_uid,
+            .channel = channel_id,
+            .limit = 16,
+        });
+
+        var count: usize = 0;
+        while (rs.next()) |r| : (count += 1) {
+            log.debug("chat panel: pushing new message {}", .{r.get(.uid)});
+            c.messages.pushNew(gpa, .{
+                .id = r.get(.uid),
+                .origin = r.get(.origin),
+                .created = r.get(.created),
+                .update_uid = r.get(.update_uid),
+                .author = r.get(.author),
+                .text = try r.text(gpa, .body),
+            }) catch @panic("oom");
+        }
+
+        if (count == 0) {
+            log.debug("fetching present from server", .{});
+            c.client.loaded_all_new_messages = true;
+            c.client.fetched_all_new_messages = true;
+            // if (c.client.fetched_all_history) {
+            //     c.client.loaded_all_history = true;
+            // } else {
+            //     core.chatHistoryGet(h, channel_id, c, oldest_uid);
+            // }
+        } else {
+            c.client.loaded_all_old_messages = false;
+            scroll_lock_visible = true;
+        }
     }
 
-    var scroll = dvui.scrollArea(@src(), .{ .scroll_info = scroll_info }, .{
+    // if (c.client.waiting_history) {
+    //     dvui.spinner(@src(), .{});
+    // }
+
+    var scroll = dvui.scrollArea(@src(), .{
+        .scroll_info = scroll_info,
+        .lock_visible = scroll_lock_visible,
+    }, .{
+        // .data_out = scroll_info,
+        .min_size_content = .{ .h = 250 },
+
         .expand = .both,
         // .color_fill = .{ .name = .fill_control },
     });
-    defer scroll.deinit();
 
-    var idx: usize = 0;
     var last_author: awebo.User.Id = undefined;
-    var mit: MessageIterator = .init(c.client.history, c.messages.slices());
-    while (mit.next()) |m| : (idx += 1) {
-        drawMessage(h, m.author, m.created.fmt(tz, h.epoch), m.text, idx);
+    var mit: MessageIterator = .init(c.messages.slices());
+    while (mit.next()) |m| {
+        drawMessage(h, m.author, m.created.fmt(tz, h.epoch), m.text, m.id);
 
         last_author = m.author;
         while (mit.peek()) |maybe_continue| {
             if (m.author != maybe_continue.author) break;
 
             const message_continuation = mit.next().?;
-            idx += 1;
 
             drawMessage(
                 h,
                 null,
                 message_continuation.created.fmt(tz, h.epoch),
                 message_continuation.text,
-                idx,
+                message_continuation.id,
             );
         }
 
@@ -156,7 +216,7 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
                         id,
                         null,
                         pm.cms.text,
-                        idx + pmidx + 1,
+                        pmidx + 1,
                     );
                     // after we print the first one, all others are guaranteed
                     // to be continuations
@@ -164,6 +224,14 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
                 }
             }
         }
+    }
+
+    scroll.deinit();
+
+    if (!gop.found_existing or (c.client.new_messages and stick_to_bottom)) {
+        c.client.new_messages = false;
+        // do this after scrollArea has given scroll_info the new size
+        scroll_info.scrollToOffset(.vertical, std.math.floatMax(f32));
     }
 }
 
@@ -177,11 +245,10 @@ const MessageIterator = struct {
     },
 
     pub fn init(
-        history: std.Deque(awebo.Message),
         rb_slices: [2][]const awebo.Message,
     ) MessageIterator {
         return .{
-            .state = .{ .history = history.iterator() },
+            .state = .{ .ringbuf = .{} },
             .rb_slices = rb_slices,
         };
     }
@@ -222,7 +289,7 @@ fn drawMessage(
     text: []const u8,
     idx: usize,
 ) void {
-    if (date_fmt == null) assert(author_id.? == h.client.user_id);
+    if (date_fmt == null) if (author_id) |aid| assert(aid == h.client.user_id);
 
     const msg_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
         .expand = .horizontal,

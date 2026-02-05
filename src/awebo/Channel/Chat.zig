@@ -1,4 +1,5 @@
 const context = @import("options").context;
+const builtin = @import("builtin");
 const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
@@ -65,10 +66,25 @@ const MessageWindow = struct {
         mw.indexes.id.deinit(gpa);
     }
 
-    pub fn add(mw: *MessageWindow, gpa: std.mem.Allocator, msg: Message) !void {
+    pub fn pushOld(mw: *MessageWindow, gpa: Allocator, msg: Message) !void {
+        if (mw.latest()) |l| assert(l.id > msg.id);
         const gop = try mw.indexes.id.getOrPut(gpa, msg.id);
         if (!gop.found_existing) {
-            gop.value_ptr.* = mw.pushNew(gpa, msg);
+            mw.tail -%= 1;
+            if (mw.len == Channel.window_size) {
+                assert(mw.indexes.id.remove(mw.buffer[mw.tail].id));
+                mw.buffer[mw.tail].deinit(gpa);
+            }
+            mw.buffer[mw.tail] = msg;
+            gop.value_ptr.* = mw.tail;
+        }
+    }
+
+    pub fn pushNew(mw: *MessageWindow, gpa: std.mem.Allocator, msg: Message) !void {
+        // if (mw.latest()) |l| assert(l.id < msg.id);
+        const gop = try mw.indexes.id.getOrPut(gpa, msg.id);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = mw.doPushNew(gpa, msg);
         }
     }
 
@@ -107,17 +123,18 @@ const MessageWindow = struct {
         return &mw.items[mw.indexes.id.get(id) orelse return null];
     }
 
-    fn pushNew(mw: *MessageWindow, gpa: Allocator, msg: Message) usize {
+    fn doPushNew(mw: *MessageWindow, gpa: Allocator, msg: Message) usize {
         const tail_w: u32 = mw.tail;
-        const idx: Channel.WindowSize = @intCast(@mod(tail_w + mw.len, Channel.window_size));
-        if (idx == mw.tail and mw.len == Channel.window_size) {
-            mw.buffer[idx].deinit(gpa);
+        const head: Channel.WindowSize = @intCast(@mod(tail_w + mw.len, Channel.window_size));
+        if (head == mw.tail and mw.len == Channel.window_size) {
+            assert(mw.indexes.id.remove(mw.buffer[head].id));
+            mw.buffer[head].deinit(gpa);
             mw.tail +%= 1;
         } else {
             mw.len += 1;
         }
-        mw.buffer[idx] = msg;
-        return idx;
+        mw.buffer[head] = msg;
+        return head;
     }
 
     pub fn latest(mw: *const MessageWindow) ?*const Message {
@@ -165,7 +182,17 @@ pub const ClientOnly = struct {
         position,
     } = .sticky_bottom,
 
-    history: std.Deque(Message) = .empty,
+    /// Core has pushed new messages in chat.messages,
+    /// UI should set this to false when those messages
+    /// have been rendered.
+    new_messages: bool = false,
+    waiting_new_messages: bool = false,
+    fetched_all_new_messages: bool = false,
+    loaded_all_new_messages: bool = false,
+
+    waiting_old_messages: bool = false,
+    fetched_all_old_messages: bool = false,
+    loaded_all_old_messages: bool = false,
 
     pub const protocol = struct {
         pub const skip = true;
@@ -178,22 +205,21 @@ pub fn sync(
     gpa: Allocator,
     db: Database,
     qs: *Database.CommonQueries,
-    chat_id: Channel.Id,
-    new_kind: *const Channel.Kind,
+    new_channel: *const Channel,
 ) void {
     if (context != .client) @compileError("client only");
 
-    const new_chat = new_kind.chat;
-
+    const new_chat = &new_channel.kind.chat;
     const slices = new_chat.messages.slices();
     for (slices) |s| for (s) |msg| {
-        chat.messages.add(gpa, msg) catch @panic("oom");
+        log.debug("chat sync, saving to db msg {}", .{msg.id});
+        chat.messages.pushNew(gpa, msg) catch @panic("oom");
         qs.upsert_message.run(@src(), db, .{
             .uid = msg.id,
             .origin = msg.origin,
             .created = msg.created,
             .update_uid = msg.update_uid,
-            .channel = chat_id,
+            .channel = new_channel.id,
             .author = msg.author,
             .body = msg.text,
         });

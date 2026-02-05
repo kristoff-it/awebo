@@ -32,11 +32,10 @@ pub const Kind = union(Enum) {
         gpa: Allocator,
         db: Database,
         qs: *Database.CommonQueries,
-        id: Channel.Id,
-        new: *const Kind,
+        ch: *const Channel,
     ) void {
         switch (kind.*) {
-            inline else => |*k| k.sync(gpa, db, qs, id, new),
+            inline else => |*k| k.sync(gpa, db, qs, ch),
         }
     }
 };
@@ -74,7 +73,7 @@ pub fn sync(
     c.name = new.name;
     c.privacy = new.privacy;
 
-    c.kind.sync(gpa, db, qs, c.id, &new.kind);
+    c.kind.sync(gpa, db, qs, new);
 }
 
 pub fn format(c: Channel, w: *Io.Writer) !void {

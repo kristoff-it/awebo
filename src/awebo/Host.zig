@@ -161,20 +161,45 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const HostSync) void {
                 if (host.channels.get(new_ch.id)) |ch| {
                     assert(@as(Channel.Kind.Enum, ch.kind) == new_ch.kind);
                     ch.sync(gpa, db, qs, &new_ch);
+                    qs.upsert_channel.run(@src(), db, .{
+                        .id = new_ch.id,
+                        .update_uid = new_ch.id,
+                        .section = null,
+                        .sort = 0,
+                        .name = new_ch.name,
+                        .kind = new_ch.kind,
+                        .privacy = new_ch.privacy,
+                    });
                 } else {
                     host.channels.set(gpa, new_ch) catch @panic("oom");
+                    qs.upsert_channel.run(@src(), db, .{
+                        .id = new_ch.id,
+                        .update_uid = new_ch.id,
+                        .section = null,
+                        .sort = 0,
+                        .name = new_ch.name,
+                        .kind = new_ch.kind,
+                        .privacy = new_ch.privacy,
+                    });
+                    switch (new_ch.kind) {
+                        .chat => |*chat| {
+                            const slices = chat.messages.slices();
+                            for (slices) |s| for (s) |msg| {
+                                log.debug("first time chat sync, saving to db msg {}", .{msg.id});
+                                qs.upsert_message.run(@src(), db, .{
+                                    .uid = msg.id,
+                                    .origin = msg.origin,
+                                    .created = msg.created,
+                                    .update_uid = msg.update_uid,
+                                    .channel = new_ch.id,
+                                    .author = msg.author,
+                                    .body = msg.text,
+                                });
+                            };
+                        },
+                        else => {},
+                    }
                 }
-
-                qs.upsert_channel.run(@src(), db, .{
-                    .id = new_ch.id,
-                    .update_uid = new_ch.id,
-                    .section = null,
-                    .sort = 0,
-                    .name = new_ch.name,
-                    .kind = new_ch.kind,
-                    .privacy = new_ch.privacy,
-                });
-
             }
         },
     }

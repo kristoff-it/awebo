@@ -84,22 +84,25 @@ fn seed(
         id.new(),
     });
 
-    // var buf: [1024]u8 = undefined;
-    // for (0..100) |i| {
-    //     qs.insert_message.run(@src(), db, .{
-    //         .uid = id.new(),
-    //         .origin = 0,
-    //         .author = if (i % 2 == 0) admin else user,
-    //         .channel = 1,
-    //         .body = std.fmt.bufPrint(&buf, "message #{}", .{i}) catch unreachable,
-    //     });
-    // }
-    _ = user;
-    _ = admin;
+    const epoch = Io.Clock.real.now(io) catch @panic("server needs a clock");
+
+    // _ = user;
+    // _ = admin;
+    var buf: [1024]u8 = undefined;
+    for (0..100) |i| {
+        qs.insert_message.run(@src(), db, .{
+            .uid = id.new(),
+            .origin = 0,
+            .created = .now(io, epoch.toSeconds()),
+            .update_uid = null,
+            .author = if (i % 2 == 0) admin else user,
+            .channel = 1,
+            .body = std.fmt.bufPrint(&buf, "message #{}", .{i}) catch unreachable,
+        });
+    }
 
     qs.insert_roles.run(@src(), db, .{id.new()});
 
-    const epoch = Io.Clock.real.now(io) catch @panic("server needs a clock");
     const settings: Settings = .{
         .name = cmd.server.name,
         .epoch = epoch.toSeconds(),

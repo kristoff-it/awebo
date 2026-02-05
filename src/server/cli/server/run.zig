@@ -576,6 +576,7 @@ const Client = struct {
     }
 
     fn channelCreate(client: *Client, io: Io, gpa: Allocator, reader: *Io.Reader) !void {
+        if (true) @panic("TODO");
         const cc = try awebo.protocol.client.ChannelCreate.deserializeAlloc(gpa, reader);
         assert(cc.kind == .chat);
 
@@ -734,7 +735,7 @@ const Client = struct {
         };
 
         log.debug("adding new message: {f}", .{new});
-        try channel.kind.chat.messages.add(gpa, new);
+        try channel.kind.chat.messages.pushNew(gpa, new);
         cqs.insert_message.run(@src(), db, .{
             .uid = new.id,
             .origin = new.origin,
@@ -800,7 +801,7 @@ const Client = struct {
         var rs = qs.select_chat_history.run(@src(), db, .{
             .channel = chg.chat_channel,
             .offset = chg.oldest_uid,
-            .limit = 3,
+            .limit = awebo.Channel.window_size,
         });
 
         var messages: std.ArrayList(awebo.Message) = .empty;

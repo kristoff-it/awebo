@@ -19,15 +19,13 @@ pub fn sync(
     gpa: Allocator,
     db: Database,
     qs: *Database.CommonQueries,
-    id: Channel.Id,
-    new: *const Channel.Kind,
+    new: *const Channel,
 ) void {
     _ = v;
     _ = gpa;
     _ = db;
     _ = qs;
-    _ = id;
-    assert(new.* == Channel.Kind.Enum.voice);
+    assert(new.kind == Channel.Kind.Enum.voice);
 }
 
 pub fn format(v: Voice, w: *Io.Writer) !void {

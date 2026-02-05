@@ -119,6 +119,46 @@ select_channel_messages: Query(
     },
 }),
 
+select_channel_history: Query(
+    \\SELECT uid, origin, created, update_uid, author, body FROM messages
+    \\WHERE channel = ?1 AND uid < ?2 ORDER BY uid DESC LIMIT ?3;
+, .{
+    .kind = .rows,
+    .cols = struct {
+        uid: awebo.Message.Id,
+        origin: u64,
+        created: awebo.Date,
+        update_uid: u64,
+        author: awebo.User.Id,
+        body: []const u8,
+    },
+    .args = struct {
+        channel: awebo.Channel.Id,
+        below_uid: awebo.Message.Id,
+        limit: u64,
+    },
+}),
+
+select_channel_present: Query(
+    \\SELECT uid, origin, created, update_uid, author, body FROM messages
+    \\WHERE channel = ?1 AND uid > ?2 ORDER BY uid ASC LIMIT ?3;
+, .{
+    .kind = .rows,
+    .cols = struct {
+        uid: awebo.Message.Id,
+        origin: u64,
+        created: awebo.Date,
+        update_uid: u64,
+        author: awebo.User.Id,
+        body: []const u8,
+    },
+    .args = struct {
+        channel: awebo.Channel.Id,
+        above_uid: awebo.Message.Id,
+        limit: u64,
+    },
+}),
+
 select_users: Query(
     \\SELECT id, created, update_uid, handle, power, invited_by, display_name FROM users
 , .{
