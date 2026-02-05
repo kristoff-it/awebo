@@ -37,7 +37,7 @@ zig build gui -fsys=sdl3
 #### Testing with multiple users
 
 If you want to launch two or more instances of the client,
-each with a different logged user, use the `-Dlocal_cache` build option like so:
+each with a different logged user, use the `-Dlocal-cache` build option like so:
 
 ```
 # from inside the awebo repository
