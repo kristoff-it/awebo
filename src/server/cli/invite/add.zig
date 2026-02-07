@@ -46,7 +46,7 @@ pub fn run(io: Io, _: Allocator, it: *std.process.Args.Iterator) void {
     var slug_buf: [16]u8 = undefined;
     const slug = cmd.slug orelse blk: {
         // is there a simpler way of getting a random ascii string?
-        const now = std.Io.Clock.real.now(io) catch @panic("clock is required for PRNG seed");
+        const now = std.Io.Clock.real.now(io);
         const nanoseconds_bits: u96 = @bitCast(now.nanoseconds);
         var prng: std.Random.DefaultPrng = .init(@truncate(nanoseconds_bits));
         var rand = prng.random();
@@ -56,7 +56,7 @@ pub fn run(io: Io, _: Allocator, it: *std.process.Args.Iterator) void {
         break :blk &slug_buf;
     };
 
-    const now = std.Io.Clock.real.now(io) catch @panic("unable to get current time");
+    const now = std.Io.Clock.real.now(io);
     const creator_id_row = qs.insert_invite.run(@src(), db, .{
         .slug = slug,
         .expiry = cmd.expiry orelse now.toSeconds(),

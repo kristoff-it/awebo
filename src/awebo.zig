@@ -33,7 +33,7 @@ pub const Date = enum(u32) {
     }
 
     pub fn now(io: Io, server_epoch: i64) Date {
-        const ts = Io.Clock.real.now(io) catch @panic("clock");
+        const ts = Io.Clock.real.now(io);
         return .init(ts, server_epoch);
     }
 

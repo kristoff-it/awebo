@@ -1355,7 +1355,7 @@ pub const Queries = struct {
 };
 
 fn tcpId(io: Io) i96 {
-    const ts = Io.Clock.awake.now(io) catch @panic("missing clock");
+    const ts = Io.Clock.awake.now(io);
     return ts.toNanoseconds();
 }
 

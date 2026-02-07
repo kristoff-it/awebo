@@ -49,7 +49,7 @@ screenshare_intent: bool = false,
 
 command_queue: Io.Queue(Event),
 refresh: *const RefreshFn,
-start_time: std.time.Instant,
+start_time: Io.Timestamp,
 
 media: Media,
 string_pool: StringPool,
@@ -121,7 +121,7 @@ pub fn init(
         .gpa = gpa,
         .io = io,
         .environ = environ,
-        .start_time = std.time.Instant.now() catch @panic("need clock"),
+        .start_time = .now(io, .awake),
         .refresh = refreshFn,
         .command_queue = .init(command_queue_buffer),
         .media = undefined,
@@ -716,8 +716,9 @@ pub fn callLeave(core: *Core) !void {
 }
 
 pub fn now(core: *Core) u64 {
-    const n = std.time.Instant.now() catch @panic("need a working clock");
-    return @intCast(n.since(core.start_time));
+    const io = core.io;
+    const n = Io.Clock.awake.now(io);
+    return @intCast(core.start_time.durationTo(n).toNanoseconds());
 }
 
 pub fn audioDirectional(core: *Core, direction: audio.Direction) *audio.Directional {

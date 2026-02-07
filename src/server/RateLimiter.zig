@@ -19,12 +19,12 @@ pub const Config = struct {
 pub fn init(io: Io, cfg: Config) RateLimiter {
     return .{
         .tokens = cfg.capacity,
-        .last_refill_timestamp = Io.Clock.real.now(io) catch @panic("no clock"),
+        .last_refill_timestamp = Io.Clock.real.now(io),
     };
 }
 
 pub fn takeToken(rl: *RateLimiter, io: Io, cfg: Config) error{RateLimit}!void {
-    const now = Io.Clock.real.now(io) catch @panic("no clock");
+    const now = Io.Clock.real.now(io);
     const elapsed = rl.last_refill_timestamp.durationTo(now);
     rl.last_refill_timestamp = now;
 

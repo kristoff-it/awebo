@@ -135,6 +135,7 @@ pub fn deinit(m: *Media, gpa: Allocator) void {
 /// Called by the network thread, returns the power of
 /// the decoded audio buffer computed as the root mean square.
 pub fn receive(m: *Media, gpa: Allocator, message: []const u8) struct { f32, u16 } {
+    const io = m.io;
     const data = message[@sizeOf(awebo.protocol.media.Header)..];
     const message_header = std.mem.bytesAsValue(
         awebo.protocol.media.Header,
@@ -176,7 +177,7 @@ pub fn receive(m: *Media, gpa: Allocator, message: []const u8) struct { f32, u16
         false,
     ) catch unreachable;
 
-    playbuf.write(pcm[0..written]);
+    playbuf.write(io, pcm[0..written]);
 
     var rms: f32 = 0;
     for (pcm[0..written]) |sample| {
@@ -260,6 +261,7 @@ fn audioCallbackPlayout(
     // }
     assert(stream.direction == .playout);
     const m: *Media = @alignCast(@fieldParentPtr("playout", stream));
+    const io = m.io;
 
     const buffer_u8: [*]align(audio.buffer_align) u8 = @ptrCast(buffer);
     const frame_len = stream.format.getFrameLen();
@@ -269,7 +271,7 @@ fn audioCallbackPlayout(
     @memset(out_pcm, 0);
 
     for (m.playout_buffers.values(), m.playout_buffers.keys()) |*playbuf, id| {
-        const n = playbuf.read(out_pcm);
+        const n = playbuf.read(io, out_pcm);
         _ = n;
         _ = id;
         // log.debug("read {} from stream {}", .{ n, id });
@@ -439,7 +441,7 @@ const PlayoutBuffer = struct {
     samples: RingBuffer,
     decoder: *awebo.opus.Decoder,
     resampler: *awebo.opus.Resampler,
-    mutex: std.Thread.Mutex = .{},
+    mutex: Io.Mutex = .init,
 
     pub fn deinit(pb: *PlayoutBuffer, allocator: std.mem.Allocator) void {
         pb.resampler.destroy();
@@ -448,14 +450,14 @@ const PlayoutBuffer = struct {
         pb.* = undefined;
     }
 
-    pub fn write(pb: *PlayoutBuffer, data: []const f32) void {
+    pub fn write(pb: *PlayoutBuffer, io: Io, data: []const f32) void {
         // NOTE(loris): if the sample type used in opus changes, some things here
         //              might need to change past just swapping the types around
         //              which is why I didn't bother being precise with hardcoded
         //              f32 vs awebo.opus.SAMPLE_TYPE
 
-        pb.mutex.lock();
-        defer pb.mutex.unlock();
+        pb.mutex.lockUncancelable(io);
+        defer pb.mutex.unlock(io);
 
         if (opus_format.eql(pb.out_format)) {
             const available = pb.samples.data.len - pb.samples.len();
@@ -572,10 +574,11 @@ const PlayoutBuffer = struct {
     // multiple audio streams into the same buffer.
     pub fn read(
         pb: *PlayoutBuffer,
+        io: Io,
         out_pcm: []u8,
     ) usize {
-        pb.mutex.lock();
-        defer pb.mutex.unlock();
+        pb.mutex.lockUncancelable(io);
+        defer pb.mutex.unlock(io);
 
         if (!pb.started and pb.samples.len() < out_pcm.len) {
             return 0;

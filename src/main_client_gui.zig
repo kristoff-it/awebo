@@ -80,7 +80,7 @@ pub const App = struct {
     environ: *std.process.Environ.Map,
 
     fn init(app: *App, window: *dvui.Window) void {
-        const io = window.io;
+        const io = dvui.io;
         const gpa = window.gpa;
 
         const environ = dvui.App.main_init.?.environ_map;
@@ -140,6 +140,7 @@ pub const App = struct {
     }
 
     fn checkClosing(app: *App) bool {
+        const io = dvui.io;
         const win = dvui.currentWindow();
         const wd = win.data();
         for (dvui.events()) |*e| {
@@ -147,7 +148,7 @@ pub const App = struct {
             if ((e.evt == .window and e.evt.window.action == .close) or (e.evt == .app and e.evt.app.action == .quit)) {
                 e.handle(@src(), wd);
                 log.debug("shutting down core from ui", .{});
-                app.core_future.cancel(win.io);
+                app.core_future.cancel(io);
                 return true;
             }
         }

@@ -84,7 +84,7 @@ fn seed(
         id.new(),
     });
 
-    const epoch = Io.Clock.real.now(io) catch @panic("server needs a clock");
+    const epoch = Io.Clock.real.now(io);
 
     // _ = user;
     // _ = admin;

@@ -2,11 +2,11 @@
     .name = .awebo,
     .version = "0.0.1",
     .fingerprint = 0x50424de2ba07ebcc,
-    .minimum_zig_version = "0.16.0-dev.2213+9d1a39c50",
+    .minimum_zig_version = "0.16.0-dev.2533+355c62600",
     .dependencies = .{
         .dvui = .{
-            .url = "git+https://github.com/david-vanderson/dvui?ref=zig16-dev#d694780efebc0d8feb8376c82699ef7e01e9c84b",
-            .hash = "dvui-0.4.0-dev-AQFJmVkC2wC7V85OfMWNgJ7yPzd0MRaBEqW7FXY50odn",
+            .url = "git+https://github.com/andrewrk/dvui?ref=zig16-dev#8645c8f8b721c2cb53506a73a2aa896aece2bf6e",
+            .hash = "dvui-0.4.0-dev-AQFJmUo32AARvwT2jBzPp6VL8B9hLdbzIxnUjoTPa35B",
         },
         .pulseaudio = .{
             .url = "https://github.com/andrewrk/pulseaudio/archive/909a2ceebcc4efe74418107c279ac239f28e0f61.tar.gz",
@@ -22,8 +22,8 @@
             .hash = "opus_tools-0.0.2-ERo7OrcyAABTrIDA_Er6oZ0S5OzxXN0N3bLw4mtftHnA",
         },
         .zqlite = .{
-            .url = "git+https://github.com/karlseguin/zqlite.zig.git#b44ed5cdc64859b08446c246f307e65ebe2b2d9c",
-            .hash = "zqlite-0.0.0-RWLaY_y_mADh2LdbDrG_2HT2dBAcsAR8Jig_7-dOJd0B",
+            .url = "git+https://github.com/andrewrk/zqlite.zig.git#205dcc49a212b27e5a78868cda09135d0945fc7a",
+            .hash = "zqlite-0.0.1-RWLaY36cmAC0Sznz0iy75CjxMjGCkUjZzIa-Si2pitGe",
         },
         .zigwin32 = .{
             .url = "git+https://github.com/kristoff-it/zigwin32.git?ref=fix/zig16#1102e9b82e8bd50913b6a78035bfb399ebd8cf97",
@@ -35,12 +35,12 @@
             .hash = "known_folders-0.0.0-Fy-PJqHJAAB43zDJmOdlr3nViu69IFI9pNFt7hkHjKk4",
         },
         .vaxis = .{
-            .url = "git+https://github.com/neurocyte/libvaxis?ref=awebo#62f75158347d6640cdc9969c9d9490cdc9b1b574",
-            .hash = "vaxis-0.5.1-BWNV_BFECQBbXeTeFd48uTJRjD5a-KD6kPuKanzzVB01",
+            .url = "git+https://github.com/andrewrk/libvaxis?ref=awebo#06917890fed93daf5b78d951557acb57033e7d16",
+            .hash = "vaxis-0.5.1-BWNV_AxECQCj3p4Hcv4U3Yo1WMUJ7Z2FUj0UkpuJGxQQ",
         },
         .zeit = .{
-            .url = "git+https://github.com/rockorager/zeit?ref=0.16#61557682f1716ec5d00f826ce1ee540928df1a6e",
-            .hash = "zeit-0.6.0-5I6bk0i6AgCI5FJfMKA3xH0ejKdLbLmGE_kQh6coselX",
+            .url = "git+https://github.com/andrewrk/zeit?ref=0.16#c1bf1ae277ed7bbca2a74aab43f0aa0949517a1e",
+            .hash = "zeit-0.6.0-5I6bk3q6AgBfwTZPoKs1yGh2YimzArs2modClYsjI7Yo",
         },
     },
     .paths = .{
