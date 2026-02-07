@@ -56,6 +56,8 @@ pub fn build(b: *std.Build) void {
 
     const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, client_local_cache);
     b.installArtifact(gui);
+    const mac_os_bundle = b.step("mac_os_bundle", "create a mac os bundle");
+    setupMacOsBundle(b, mac_os_bundle, gui);
 
     const tui, const tui_test = setupTui(b, target_tui, optimize, dep_optimize, client_version, client_local_cache);
     b.installArtifact(tui);
@@ -217,6 +219,73 @@ pub fn setupGui(
     });
 
     return .{ gui, gui_test };
+}
+
+pub fn setupMacOsBundle(b: *std.Build, bundle_step: *std.Build.Step, exe: *std.Build.Step.Compile) void {
+    bundle_step.dependOn(&exe.step);
+    const png_path = b.path("assets/AppIcon.png");
+    const icon_set = b.addWriteFiles();
+    const tmp_dir = b.addWriteFiles();
+    for ([_]u32{ 16, 32, 128, 256, 512 }) |s| {
+        const sips_1x_out = b.fmt("icon_{d}x{d}.png", .{ s, s });
+        const sips_1x_path = try sipsCommand(b, tmp_dir, png_path, sips_1x_out, s, s);
+        _ = icon_set.addCopyFile(sips_1x_path, b.pathJoin(&[_][]const u8{ "AppIcon.iconset", sips_1x_out }));
+        const sips_2x_out = b.fmt("icon_{d}x{d}@2x.png", .{ s, s });
+        const sips_2x_path = try sipsCommand(b, tmp_dir, png_path, sips_2x_out, s * 2, s * 2);
+        _ = icon_set.addCopyFile(sips_2x_path, b.pathJoin(&[_][]const u8{ "AppIcon.iconset", sips_2x_out }));
+    }
+    const iconutil = b.addSystemCommand(&[_][]const u8{
+        "iconutil", "-c", "icns",
+    });
+    iconutil.setCwd(icon_set.getDirectory());
+    iconutil.addArg("-o");
+    const icns_path = iconutil.addOutputFileArg("AppIcon.icns");
+    iconutil.addArg("AppIcon.iconset");
+    const app_name = "Awebo";
+    const resource_dir: std.Build.InstallDir = .{ .custom = b.fmt("{s}.app/Contents/Resources", .{app_name}) };
+    const install_icns = b.addInstallFileWithDir(icns_path, resource_dir, "AppIcon.icns");
+    bundle_step.dependOn(&install_icns.step);
+
+    const bundle_dir: std.Build.InstallDir = .{ .custom = b.fmt("{s}.app/Contents/MacOS", .{app_name}) };
+    const install_exe_in_bundle = b.addInstallArtifact(exe, .{
+        .dest_dir = .{ .override = bundle_dir },
+        .dest_sub_path = app_name,
+    });
+    bundle_step.dependOn(&install_exe_in_bundle.step);
+    const install_plist = b.addInstallFile(b.path("assets/macOSBundle/Info.plist"), b.fmt("{s}.app/Contents/Info.plist", .{exe.name}));
+    bundle_step.dependOn(&install_plist.step);
+    const codesign = b.addSystemCommand(&.{
+        "codesign",
+        "-s",
+        "-", // Ad-hoc signing
+        "-f",
+        "--options",
+        "runtime",
+        "--entitlements",
+    });
+    codesign.addFileArg(b.path("assets/macOSBundle/entitlements.plist"));
+    codesign.addArg(b.getInstallPath(bundle_dir, app_name));
+    codesign.step.dependOn(&install_exe_in_bundle.step);
+    bundle_step.dependOn(&codesign.step);
+}
+
+fn sipsCommand(
+    b: *std.Build,
+    wf: *std.Build.Step.WriteFile,
+    src_png: std.Build.LazyPath,
+    out_path: []const u8,
+    w: u32,
+    h: u32,
+) !std.Build.LazyPath {
+    const run = b.addSystemCommand(&[_][]const u8{
+        "sips",
+        "-z",
+    });
+    run.addArgs(&[_][]const u8{ b.fmt("{d}", .{h}), b.fmt("{d}", .{w}) });
+    run.addFileArg(src_png);
+    run.addArg("--out");
+    run.setCwd(wf.getDirectory());
+    return run.addOutputFileArg(out_path);
 }
 
 pub fn setupTui(
