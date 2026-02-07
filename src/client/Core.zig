@@ -148,7 +148,7 @@ pub fn run(core: *Core) void {
     defer log.debug("goodbye", .{});
 
     log.debug("starting audio support", .{});
-    audio.processInit(&core.audio_backend) catch |err| {
+    audio.init(core) catch |err| {
         log.err("failed to initialize audio: {t}", .{err});
 
         var locked = lockState(core);

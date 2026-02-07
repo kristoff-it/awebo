@@ -8,11 +8,9 @@ const audio = @import("../audio.zig");
 const StringPool = @import("../StringPool.zig");
 const Device = @import("../Device.zig");
 
-pub fn processInit(d: *Dummy) !void {
+pub fn init(d: *Dummy) !void {
     _ = d;
 }
-pub fn threadInit() void {}
-pub fn threadDeinit() void {}
 
 const device_count = 5;
 

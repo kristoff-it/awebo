@@ -14,17 +14,17 @@ fn u32FromHr(hr: i32) u32 {
     return @bitCast(hr);
 }
 
-pub fn processInit(w: *Wasapi) !void {
+pub fn init(w: *Wasapi) !void {
     _ = w;
     (try std.Thread.spawn(.{}, audioWarmup, .{})).detach();
 }
-pub fn threadInit() void {
+fn threadInit() void {
     const hr = win32.CoInitializeEx(null, .{});
     // this isn't an error worth handling, if this fails which I've never seen happen
     // we might as well crash, something is probably horribly wrong
     if (hr < 0) std.debug.panic("CoInitializeEx failed, hresult=0x{x}", .{u32FromHr(hr)});
 }
-pub fn threadDeinit() void {
+fn threadDeinit() void {
     win32.CoUninitialize();
 }
 
