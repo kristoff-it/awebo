@@ -151,6 +151,12 @@ pub fn deinit(p: *PulseAudio) void {
     p.context.unref();
     p.props.free();
     p.main_loop.free();
+
+    const gpa = p.core.gpa;
+    clearDevices();
+    p.playout_devices.deinit(gpa);
+    p.capture_devices.deinit(gpa);
+    p.* = undefined;
 }
 
 fn contextStateCallback(context: *pa.context, userdata: ?*anyopaque) callconv(.c) void {
