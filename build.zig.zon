@@ -2,7 +2,7 @@
     .name = .awebo,
     .version = "0.0.1",
     .fingerprint = 0x50424de2ba07ebcc,
-    .minimum_zig_version = "0.16.0-dev.2533+355c62600",
+    .minimum_zig_version = "0.16.0-dev.2510+bcb5218a2",
     .dependencies = .{
         .dvui = .{
             .url = "git+https://github.com/andrewrk/dvui?ref=zig16-dev#d5a043cf769ece1688a369572e3cc95779f2772e",
