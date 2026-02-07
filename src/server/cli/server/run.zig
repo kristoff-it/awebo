@@ -16,6 +16,11 @@ const cli = @import("../../../cli.zig");
 
 const server_log = std.log.scoped(.server);
 
+extern "kernel32" fn SetConsoleCtrlHandler(
+    HandlerRoutine: ?std.os.windows.HANDLER_ROUTINE,
+    Add: std.os.windows.BOOL,
+) callconv(.winapi) std.os.windows.BOOL;
+
 var shutdown_event_io: Io = undefined;
 var shutdown_event: Io.Event = .unset;
 pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
@@ -57,9 +62,9 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
                 }
             };
 
-            win.SetConsoleCtrlHandler(&Impl.handler, true) catch {
+            if (SetConsoleCtrlHandler(&Impl.handler, std.os.windows.TRUE) == 0) {
                 server_log.err("unable to setup ctrl+c handler, continuing anyway", .{});
-            };
+            }
         },
         else => server_log.err(
             "ctrl+c handler for this platform was not implemented, " ++
