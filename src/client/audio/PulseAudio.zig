@@ -227,8 +227,12 @@ pub const DeviceIterator = struct {
     ) error{DeviceIterator}!?Device {
         _ = diags;
         if (di.devices.len - di.next_index == 0) return null;
-        defer di.next_index += 1;
-        return di.devices[di.next_index];
+        const device = di.devices[di.next_index];
+        di.next_index += 1;
+        // The calling code will unref the device but we want to keep our ref.
+        const sp = &di.p.core.string_pool;
+        device.addReference(sp);
+        return device;
     }
 };
 
