@@ -1,11 +1,20 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const zon = @import("build.zig.zon");
 
 const Context = enum { client, server };
 
 pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{});
+    const target_query = b.standardTargetOptionsQueryOnly(.{});
+    const target = b.resolveTargetQuery(target_query);
     const optimize = b.standardOptimizeOption(.{});
+
+    const target_tui = if (builtin.os.tag == .linux and target_query.abi == null) blk: {
+        var query = target_query;
+        query.abi = .musl;
+        break :blk b.resolveTargetQuery(query);
+    } else target;
+
     const dep_optimize = b.option(
         std.builtin.OptimizeMode,
         "dep-optimize",
@@ -48,7 +57,7 @@ pub fn build(b: *std.Build) void {
     const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, client_local_cache);
     b.installArtifact(gui);
 
-    const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, client_version, client_local_cache);
+    const tui, const tui_test = setupTui(b, target_tui, optimize, dep_optimize, client_version, client_local_cache);
     b.installArtifact(tui);
 
     const server_step = b.step("server", "Launch the server executable");
