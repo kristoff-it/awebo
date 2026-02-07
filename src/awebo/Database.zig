@@ -230,9 +230,7 @@ pub fn loadHost(
 }
 
 pub fn fatal(db: Database, src: std.builtin.SourceLocation) noreturn {
-    log.err("{s}:{}: fatal db error: {s}", .{ src.file, src.line, db.conn.lastError() });
-    if (builtin.mode == .Debug) @breakpoint();
-    std.process.exit(1);
+    std.debug.panic("{s}:{}: fatal db error: {s}", .{ src.file, src.line, db.conn.lastError() });
 }
 
 fn fatalErr(err: anyerror) noreturn {
