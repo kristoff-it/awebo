@@ -9,7 +9,7 @@ const Device = @import("Device.zig");
 const StringPool = @import("StringPool.zig");
 
 pub const Backend = switch (native_os) {
-    .windows => @import("audio/wasapi.zig"),
+    .windows => @import("audio/Wasapi.zig"),
     .linux => @import("audio/PulseAudio.zig"),
     else => @import("audio/dummy.zig"),
 };
@@ -95,25 +95,24 @@ pub const Buffer = struct {
 };
 
 /// One-time initialization for any process that uses audio.
-pub const processInit = Backend.processInit;
-/// One-time initiailialization for any thread that uses audio.
-pub const threadInit = Backend.threadInit;
-/// Always call once for every call to threadInit
-pub const threadDeinit = Backend.threadDeinit;
+pub const init = Backend.init;
 
 fn iteration(comptime direction: Core.audio.Direction) type {
     return struct {
         pub const DeviceIteratorError = Backend.DeviceIteratorError;
         pub const DeviceIterator = struct {
             it: Backend.DeviceIterator,
+
             pub fn init(backend: *Backend, err: *DeviceIteratorError) error{DeviceIterator}!DeviceIterator {
                 return .{ .it = try Backend.DeviceIterator.init(backend, direction, err) };
             }
+
             pub fn deinit(self: *DeviceIterator) void {
                 self.it.deinit();
             }
-            pub fn next(self: *DeviceIterator, sp: *StringPool, gpa: Allocator, err: *DeviceIteratorError) error{DeviceIterator}!?Core.Device {
-                return self.it.next(sp, gpa, err);
+
+            pub fn next(self: *DeviceIterator, err: *DeviceIteratorError) error{DeviceIterator}!?Core.Device {
+                return self.it.next(err);
             }
         };
     };

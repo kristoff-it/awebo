@@ -52,7 +52,7 @@ pub fn updateArrayList(
         var it = iteration.DeviceIterator.init(backend, &err) catch break :blk err;
         defer it.deinit();
 
-        while (it.next(sp, gpa, &err) catch break :blk err) |next_device| : (new_device_count += 1) {
+        while (it.next(&err) catch break :blk err) |next_device| : (new_device_count += 1) {
             defer next_device.removeReference(sp, gpa);
 
             // sanity check

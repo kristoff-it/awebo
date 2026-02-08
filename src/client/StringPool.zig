@@ -27,7 +27,7 @@ pub fn getOrCreate(sp: *StringPool, gpa: Allocator, content: []const u8) error{O
         result.key_ptr.* = slice;
         result.value_ptr.* = slice;
     } else {
-        const count_ref = sp.refcount_map.getPtr(result.value_ptr.ptr) orelse @panic("codebug");
+        const count_ref = sp.refcount_map.getPtr(result.value_ptr.ptr).?;
         assert(count_ref.* >= 1);
         count_ref.* += 1;
     }
@@ -51,13 +51,13 @@ pub fn getOrCreateWtf16Le(
 }
 
 pub fn addReference(sp: *StringPool, string: String) void {
-    const count_ref = sp.refcount_map.getPtr(string.slice.ptr) orelse @panic("codebug");
+    const count_ref = sp.refcount_map.getPtr(string.slice.ptr).?;
     assert(count_ref.* >= 1);
     count_ref.* += 1;
 }
 
 pub fn removeReference(sp: *StringPool, string: String, gpa: Allocator) void {
-    const count_ref = sp.refcount_map.getPtr(string.slice.ptr) orelse @panic("codebug");
+    const count_ref = sp.refcount_map.getPtr(string.slice.ptr).?;
     assert(count_ref.* >= 1);
     count_ref.* -= 1;
     if (count_ref.* == 0) {

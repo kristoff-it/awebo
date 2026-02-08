@@ -43,9 +43,6 @@ pub fn init(m: *Media, core: *Core) !void {
         .io = io,
     };
 
-    audio.threadInit();
-    errdefer audio.threadDeinit();
-
     log.debug("opening playout stream", .{});
     var stream_error: audio.Stream.Error = undefined;
     audio.Stream.open(
@@ -116,7 +113,6 @@ pub fn stop(m: *Media, string_pool: *StringPool, gpa: Allocator) void {
     m.capture.close(string_pool, gpa);
     m.playout.stop();
     m.playout.close(string_pool, gpa);
-    audio.threadDeinit();
 }
 
 pub fn deinit(m: *Media, gpa: Allocator) void {
