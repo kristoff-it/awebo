@@ -16,8 +16,10 @@ const cli = @import("../../../cli.zig");
 
 const server_log = std.log.scoped(.server);
 
+const HANDLER_ROUTINE = *const fn (dwCtrlType: std.os.windows.DWORD) callconv(.winapi) std.os.windows.BOOL;
+
 extern "kernel32" fn SetConsoleCtrlHandler(
-    HandlerRoutine: ?std.os.windows.HANDLER_ROUTINE,
+    HandlerRoutine: ?HANDLER_ROUTINE,
     Add: std.os.windows.BOOL,
 ) callconv(.winapi) std.os.windows.BOOL;
 
@@ -52,8 +54,9 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
             const win = std.os.windows;
             const Impl = struct {
                 fn handler(crtl_type: win.DWORD) callconv(.winapi) win.BOOL {
+                    const CTRL_C_EVENT: std.os.windows.DWORD = 0;
                     switch (crtl_type) {
-                        win.CTRL_C_EVENT => {
+                        CTRL_C_EVENT => {
                             shutdown_event.set(shutdown_event_io);
                             return win.TRUE;
                         },

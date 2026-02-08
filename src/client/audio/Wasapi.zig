@@ -9,13 +9,16 @@ const win32 = @import("win32").everything;
 const audio = @import("../audio.zig");
 const StringPool = @import("../StringPool.zig");
 const Device = @import("../Device.zig");
+const Core = @import("../Core.zig");
+
+core: *Core,
 
 fn u32FromHr(hr: i32) u32 {
     return @bitCast(hr);
 }
 
-pub fn init(w: *Wasapi) !void {
-    _ = w;
+pub fn init(core: *Core) !void {
+    core.audio_backend = .{ .core = core };
     (try std.Thread.spawn(.{}, audioWarmup, .{})).detach();
 }
 fn threadInit() void {
@@ -76,13 +79,13 @@ const HResultError = struct {
 
 pub const DeviceIteratorError = HResultError;
 pub const DeviceIterator = struct {
+    w: *Wasapi,
     enumerator: *win32.IMMDeviceEnumerator,
     collection: *win32.IMMDeviceCollection,
     count: u32,
     next_index: u32 = 0,
 
     pub fn init(w: *Wasapi, direction: audio.Direction, err: *HResultError) error{DeviceIterator}!DeviceIterator {
-        _ = w;
         const enumerator: *win32.IMMDeviceEnumerator = blk: {
             var enumerator: *win32.IMMDeviceEnumerator = undefined;
             const hr = win32.CoCreateInstance(
@@ -119,6 +122,7 @@ pub const DeviceIterator = struct {
             break :blk count;
         };
         return .{
+            .w = w,
             .enumerator = enumerator,
             .collection = collection,
             .count = count,
@@ -130,9 +134,10 @@ pub const DeviceIterator = struct {
         self.* = undefined;
     }
 
-    pub fn next(self: *DeviceIterator, sp: *StringPool, gpa: Allocator, err: *HResultError) error{DeviceIterator}!?Device {
-        if (self.next_index == self.count)
-            return null;
+    pub fn next(self: *DeviceIterator, err: *HResultError) error{DeviceIterator}!?Device {
+        if (self.next_index == self.count) return null;
+        const gpa = self.w.core.gpa;
+        const sp = &self.w.core.string_pool;
         const index = self.next_index;
         self.next_index += 1;
         return try nextDevice(sp, gpa, self.collection, index, err);

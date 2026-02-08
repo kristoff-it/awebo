@@ -9,7 +9,7 @@ const Device = @import("Device.zig");
 const StringPool = @import("StringPool.zig");
 
 pub const Backend = switch (native_os) {
-    .windows => @import("audio/wasapi.zig"),
+    .windows => @import("audio/Wasapi.zig"),
     .linux => @import("audio/PulseAudio.zig"),
     else => @import("audio/dummy.zig"),
 };

@@ -31,16 +31,16 @@
             .lazy = true,
         },
         .known_folders = .{
-            .url = "git+https://github.com/ziglibs/known-folders#82027007c0eb199a3242c167a5cffd83b6ee571b",
-            .hash = "known_folders-0.0.0-Fy-PJqHJAAB43zDJmOdlr3nViu69IFI9pNFt7hkHjKk4",
+            .url = "git+https://github.com/andrewrk/known-folders#060fedb7a1253098ca39ed6cb929924c6a2528b1",
+            .hash = "known_folders-0.0.0-Fy-PJiXKAACLbIUjxVqJRTSLc6HNnMkCSBnC5LW0Lx_v",
         },
         .vaxis = .{
             .url = "git+https://github.com/andrewrk/libvaxis?ref=awebo#06917890fed93daf5b78d951557acb57033e7d16",
             .hash = "vaxis-0.5.1-BWNV_AxECQCj3p4Hcv4U3Yo1WMUJ7Z2FUj0UkpuJGxQQ",
         },
         .zeit = .{
-            .url = "git+https://github.com/andrewrk/zeit?ref=0.16#c1bf1ae277ed7bbca2a74aab43f0aa0949517a1e",
-            .hash = "zeit-0.6.0-5I6bk3q6AgBfwTZPoKs1yGh2YimzArs2modClYsjI7Yo",
+            .url = "git+https://github.com/andrewrk/zeit?ref=0.16#ec2953277276acd1d938490a8000782482142d12",
+            .hash = "zeit-0.6.0-5I6bk2i6AgDYOczMsuuKcM7NYuOoTtxWEsZDsg8kSTiv",
         },
     },
     .paths = .{
