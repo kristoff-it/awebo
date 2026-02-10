@@ -5,10 +5,11 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 const audio = @import("../audio.zig");
+const Core = @import("../Core.zig");
 const StringPool = @import("../StringPool.zig");
 const Device = @import("../Device.zig");
 
-pub fn init(d: *Dummy) !void {
+pub fn init(d: *Core) !void {
     _ = d;
 }
 
@@ -21,17 +22,23 @@ pub const DeviceIteratorError = struct {
     }
 };
 pub const DeviceIterator = struct {
+    sp: *StringPool,
+    gpa: Allocator,
     direction: audio.Direction,
     next_index: u8 = 0,
     pub fn init(d: *Dummy, direction: audio.Direction, err: *DeviceIteratorError) error{DeviceIterator}!DeviceIterator {
-        _ = d;
         _ = err;
-        return .{ .direction = direction };
+        const core: *Core = @alignCast(@fieldParentPtr("audio_backend", d));
+        return .{
+            .sp = &core.string_pool,
+            .gpa = core.gpa,
+            .direction = direction,
+        };
     }
     pub fn deinit(self: *DeviceIterator) void {
         _ = self;
     }
-    pub fn next(self: *DeviceIterator, sp: *StringPool, gpa: Allocator, err: *DeviceIteratorError) error{DeviceIterator}!?Device {
+    pub fn next(self: *DeviceIterator, err: *DeviceIteratorError) error{DeviceIterator}!?Device {
         _ = err;
         if (self.next_index == device_count) return null;
         defer self.next_index += 1;
@@ -44,8 +51,8 @@ pub const DeviceIterator = struct {
         ) catch unreachable;
 
         return .{
-            .name = sp.getOrCreate(gpa, name) catch @panic("OOM"),
-            .token = sp.getOrCreate(gpa, &[_]u8{self.next_index}) catch @panic("OOM"),
+            .name = self.sp.getOrCreate(self.gpa, name) catch @panic("OOM"),
+            .token = self.sp.getOrCreate(self.gpa, &[_]u8{self.next_index}) catch @panic("OOM"),
         };
     }
 };
