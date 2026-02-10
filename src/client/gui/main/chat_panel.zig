@@ -29,8 +29,103 @@ pub fn draw(app: *App, frozen: bool) !void {
     );
     defer box.deinit();
 
+    try header(core, h, c);
     try sendBar(core, h, c, frozen);
+
+    const content_and_sidebar_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
+        .expand = .both,
+    });
+    defer content_and_sidebar_box.deinit();
+
     try messageList(app, h, c.id, &c.kind.chat);
+    sidebar(app, h);
+}
+
+var search: struct {
+    state: enum { none, waiting, present } = .none,
+    origin: u64 = undefined,
+    query: awebo.protocol.client.SearchMessages = undefined,
+    reply: awebo.protocol.server.SearchMessagesReply = undefined,
+} = .{};
+
+fn header(core: *Core, host: *Host, channel: *Channel) !void {
+    const box = dvui.box(@src(), .{ .dir = .horizontal }, .{
+        .expand = .horizontal,
+        .background = true,
+        .style = .app2,
+        .gravity_y = 0,
+    });
+    defer box.deinit();
+
+    {
+        const channel_name_layout = dvui.textLayout(@src(), .{}, .{
+            .font = dvui.themeGet().font_title,
+            .gravity_x = 0,
+        });
+        defer channel_name_layout.deinit();
+
+        channel_name_layout.addText("# ", .{});
+        channel_name_layout.addText(channel.name, .{});
+    }
+
+    {
+        var search_placeholder_buf: [128]u8 = undefined;
+        const search_placeholder = std.fmt.bufPrint(&search_placeholder_buf, "Search {s}", .{host.name}) catch return error.OutOfMemory;
+
+        const search_bar = dvui.textEntry(@src(), .{
+            .placeholder = search_placeholder,
+        }, .{
+            .gravity_x = 1,
+        });
+        defer search_bar.deinit();
+
+        if (search_bar.enter_pressed) submit: {
+            sidebar_state.show_search = true;
+            if (search.state != .none) {
+                search.query.deinit(core.gpa);
+                if (search.state == .present) {
+                    search.reply.deinit(core.gpa);
+                }
+                search.state = .none;
+            }
+
+            const search_bar_text = search_bar.textGet();
+            if (search_bar_text.len == 0) {
+                sidebar_state.show_search = false;
+                break :submit;
+            }
+
+            const origin = core.now();
+
+            const query = try core.gpa.dupe(u8, search_bar_text);
+            errdefer core.gpa.free(query);
+
+            search.query = .{ .origin = origin, .query = query };
+            const bytes = try search.query.serializeAlloc(core.gpa);
+            errdefer core.gpa.free(bytes);
+
+            const conn = host.client.connection.?;
+            if (conn.tcp.queue.putOne(core.io, bytes)) {
+                search_bar.enter_pressed = false;
+                search.state = .waiting;
+                search.origin = origin;
+            } else |err| {
+                // log and try again on the next render - don't stop rendering
+                log.warn("unable to queue SearchMessages: {t}", .{err});
+            }
+        }
+
+        if (core.search_messages_reply) |smr| {
+            log.debug("received {d} search results", .{smr.results.len});
+            core.search_messages_reply = null;
+            if (search.state != .none and search.origin == smr.origin) {
+                search.reply = smr;
+                search.state = .present;
+            } else {
+                smr.deinit(core.gpa);
+            }
+        }
+    }
 }
 
 fn sendBar(core: *Core, h: *awebo.Host, c: *Channel, frozen: bool) !void {
@@ -190,7 +285,7 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
     var last_author: awebo.User.Id = undefined;
     var mit: MessageIterator = .init(c.messages.slices());
     while (mit.next()) |m| {
-        drawMessage(h, m.author, m.created.fmt(tz, h.epoch), m.text, m.id);
+        drawMessage(h, m.author, m.created.fmt(tz, h.epoch), .raw, m.text, m.id);
 
         last_author = m.author;
         while (mit.peek()) |maybe_continue| {
@@ -202,6 +297,7 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
                 h,
                 null,
                 message_continuation.created.fmt(tz, h.epoch),
+                .raw,
                 message_continuation.text,
                 message_continuation.id,
             );
@@ -215,6 +311,7 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
                         h,
                         id,
                         null,
+                        .raw,
                         pm.cms.text,
                         pmidx + 1,
                     );
@@ -286,6 +383,7 @@ fn drawMessage(
     author_id: ?awebo.User.Id,
     /// null means that this is a pending message that we wrote
     date_fmt: ?awebo.Date.Formatter,
+    text_fmt: enum { highlighted, raw },
     text: []const u8,
     idx: usize,
 ) void {
@@ -434,5 +532,123 @@ fn drawMessage(
     });
 
     defer tl.deinit();
-    tl.addText(text, .{});
+
+    switch (text_fmt) {
+        .raw => tl.addText(text, .{}),
+        .highlighted => {
+            var rest = text;
+            while (std.mem.cut(u8, rest, &.{ 0x20, 0x0B })) |cut| {
+                const unhighlighted, const highlight_start = cut;
+                tl.addText(unhighlighted, .{});
+                const highlighted, rest = std.mem.cut(u8, highlight_start, &.{ 0x20, 0x0B }).?;
+                tl.addText(highlighted, .{
+                    .background = true,
+                    .color_fill = dvui.themeGet().highlight.fill,
+                });
+            }
+
+            tl.addText(rest, .{});
+        },
+    }
+}
+
+var sidebar_state: struct {
+    show_search: bool = false,
+} = .{};
+
+fn sidebar(app: *App, host: *Host) void {
+    if (!sidebar_state.show_search) return;
+
+    if (sidebar_state.show_search) {
+        const static_width = dvui.themeGet().font_body.size * 25;
+        const box = dvui.box(@src(), .{}, .{
+            .background = true,
+            .style = .app2,
+            .padding = .all(5),
+            .min_size_content = .width(static_width),
+            .max_size_content = .width(static_width),
+        });
+        defer box.deinit();
+
+        {
+            const search_header = dvui.box(@src(), .{ .dir = .horizontal }, .{
+                .expand = .horizontal,
+            });
+            defer search_header.deinit();
+
+            if (search.state != .none) {
+                const font = dvui.themeGet().font_heading.withStyle(.normal).withWeight(.normal);
+                const search_header_search_text = dvui.textLayout(@src(), .{
+                    .show_touch_draggables = false,
+                    .touch_edit_just_focused = false,
+                }, .{
+                    .font = font,
+                });
+                defer search_header_search_text.deinit();
+
+                if (search.state == .waiting) {
+                    search_header_search_text.addText("Searching ", .{});
+                    search_header_search_text.addText(host.name, .{
+                        .font = font.withStyle(.italic).withWeight(.bold),
+                    });
+                } else {
+                    var buffer: [32]u8 = undefined;
+                    const length = std.fmt.bufPrint(&buffer, "{d}", .{search.reply.results.len}) catch unreachable;
+                    search_header_search_text.addText(length, .{});
+                    search_header_search_text.addText(" results", .{});
+                }
+                search_header_search_text.addText(" for \"", .{});
+                search_header_search_text.addText(search.query.query, .{
+                    .font = font.withStyle(.italic).withWeight(.bold),
+                });
+                search_header_search_text.addText("\"", .{});
+                if (search.state == .waiting) search_header_search_text.addText("...", .{});
+            }
+        }
+
+        const scroll = dvui.scrollArea(@src(), .{}, .{
+            .expand = .both,
+        });
+        defer scroll.deinit();
+
+        if (search.state == .present) {
+            var current_channel_id: ?Channel.Id = null;
+            for (search.reply.results, 0..) |result, idx| {
+                if (current_channel_id != result.channel) {
+                    const channel_header = dvui.textLayout(@src(), .{
+                        .show_touch_draggables = false,
+                        .touch_edit_just_focused = false,
+                    }, .{
+                        .id_extra = idx,
+                        .expand = .horizontal,
+                        .font = dvui.themeGet().font_title,
+                        .padding = .{
+                            .x = 5,
+                            .y = 10,
+                            .w = 5,
+                            .h = 0, // bottom padding is guaranteed by card_box
+                        },
+                    });
+                    defer channel_header.deinit();
+
+                    channel_header.addText("# ", .{});
+                    const current_channel = host.channels.get(result.channel).?;
+                    channel_header.addText(current_channel.name, .{});
+                    current_channel_id = result.channel;
+                }
+
+                const card_box = dvui.box(@src(), .{}, .{
+                    .id_extra = idx,
+                    .expand = .horizontal,
+                    .background = true,
+                    .border = .all(2),
+                    .style = .app3,
+                    .padding = .all(5),
+                });
+                defer card_box.deinit();
+
+                drawMessage(host, result.preview.author, result.preview.created.fmt(&app.tz, host.epoch), .highlighted, result.preview.text, idx);
+            }
+        }
+    }
 }

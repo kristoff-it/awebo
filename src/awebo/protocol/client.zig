@@ -227,6 +227,34 @@ pub const ChannelCreate = struct {
     }
 };
 
+pub const SearchMessages = struct {
+    origin: OriginId,
+    query: []const u8,
+
+    pub const marker = 'F';
+    pub const serializeAlloc = proto.MakeSerializeAllocFn(SearchMessages);
+    pub const deserializeAlloc = proto.MakeDeserializeAllocFn(SearchMessages);
+    pub const protocol = struct {
+        pub const sizes = struct {
+            pub const query = u16;
+        };
+    };
+
+    pub fn deinit(sm: SearchMessages, gpa: std.mem.Allocator) void {
+        gpa.free(sm.query);
+    }
+
+    pub fn reply(
+        sm: SearchMessages,
+        results: []const server.SearchMessagesReply.Result,
+    ) server.SearchMessagesReply {
+        return .{
+            .origin = sm.origin,
+            .results = results,
+        };
+    }
+};
+
 comptime {
     var names: []const []const u8 = &.{};
     var values: []const u8 = &.{};

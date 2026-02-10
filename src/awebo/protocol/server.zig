@@ -260,6 +260,34 @@ pub const ChannelsUpdate = struct {
     };
 };
 
+pub const SearchMessagesReply = struct {
+    origin: u64,
+    results: []const Result,
+
+    pub const Result = struct {
+        channel: Channel.Id,
+        preview: Message,
+
+        pub const protocol = struct {};
+    };
+
+    pub fn deinit(smr: SearchMessagesReply, gpa: Allocator) void {
+        for (smr.results) |result| {
+            result.preview.deinit(gpa);
+        }
+        gpa.free(smr.results);
+    }
+
+    pub const marker = 'F';
+    pub const serializeAlloc = proto.MakeSerializeAllocFn(SearchMessagesReply);
+    pub const deserializeAlloc = proto.MakeDeserializeAllocFn(SearchMessagesReply);
+    pub const protocol = struct {
+        pub const sizes = struct {
+            pub const results = u32;
+        };
+    };
+};
+
 comptime {
     var names: []const []const u8 = &.{};
     var values: []const u8 = &.{};
