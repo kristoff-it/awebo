@@ -272,6 +272,11 @@ fn runClientTcpRead(io: Io, gpa: Allocator, client: *Client) !void {
                     log.err("error processing ChannelCreate: {t}", .{err});
                 };
             },
+            awebo.protocol.client.SearchMessages.marker => {
+                client.searchMessages(io, gpa, reader) catch |err| {
+                    log.err("error processing SearchMessages: {t}", .{err});
+                };
+            },
         }
     }
 }
@@ -843,6 +848,42 @@ const Client = struct {
         try client.tcp.queue.putOne(io, msg);
     }
 
+    fn searchMessages(client: *Client, io: Io, gpa: Allocator, reader: *Io.Reader) !void {
+        const sm: awebo.protocol.client.SearchMessages = try .deserializeAlloc(gpa, reader);
+        defer sm.deinit(gpa);
+
+        const locked = lockState(io);
+        defer locked.unlock(io);
+
+        var results: std.ArrayList(awebo.protocol.server.SearchMessagesReply.Result) = .empty;
+        defer results.deinit(gpa);
+
+        var rows = qs.search_messages.run(@src(), db, .{
+            .query = sm.query,
+        });
+        while (rows.next()) |row| {
+            const result = try results.addOne(gpa);
+            result.* = .{
+                .channel = row.get(.channel),
+                .preview = .{
+                    .id = row.get(.message_id),
+                    .origin = row.get(.message_origin),
+                    .created = row.get(.message_created),
+                    .update_uid = row.get(.message_update_uid),
+                    .author = row.get(.message_author),
+                    .text = try row.text(gpa, .message_hl_text),
+                },
+            };
+        }
+
+        const reply = sm.reply(results.items);
+        const reply_bytes = try reply.serializeAlloc(gpa);
+        errdefer gpa.free(reply_bytes);
+
+        const msg: *TcpMessage = .create(gpa, reply_bytes, 1);
+        try client.tcp.queue.putOne(io, msg);
+    }
+
     /// Logger for user-specific operations.
     /// Prefixes each line with the IP address and user id of the current client.
     pub fn scopedLog(client: *const Client) ClientLog {
@@ -1358,6 +1399,36 @@ pub const Queries = struct {
             user: awebo.User.Id,
             kind: awebo.permissions.Kind,
             key: awebo.permissions.Server.Enum,
+        },
+    }),
+
+    search_messages: Query(
+        \\SELECT
+        \\  messages.channel,
+        \\  messages.uid,
+        \\  messages.origin,
+        \\  messages.created,
+        \\  messages.update_uid,
+        \\  messages.author,
+        \\  highlight(messages_search, 2, char(0x20) || char(0x0B), char(0x20) || char(0x0B))
+        \\FROM messages_search
+        \\INNER JOIN messages on messages_search.rowid = messages.uid
+        \\LEFT JOIN users ON messages_search.author == users.id
+        \\WHERE messages_search.body MATCH ?1
+        \\ORDER BY messages.created DESC;
+    , .{
+        .kind = .rows,
+        .args = struct {
+            query: []const u8,
+        },
+        .cols = struct {
+            channel: awebo.Channel.Id,
+            message_id: awebo.Message.Id,
+            message_origin: u64,
+            message_created: awebo.Date,
+            message_update_uid: ?u64,
+            message_author: awebo.User.Id,
+            message_hl_text: []const u8,
         },
     }),
 };

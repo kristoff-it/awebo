@@ -51,6 +51,9 @@ command_queue: Io.Queue(Event),
 refresh: *const RefreshFn,
 start_time: Io.Timestamp,
 
+// this is only set to pass the message to `chat_panel`
+search_messages_reply: ?awebo.protocol.server.SearchMessagesReply = null,
+
 media: Media,
 string_pool: StringPool,
 
@@ -201,6 +204,8 @@ pub fn run(core: *Core) void {
                     .chat_history => |chg| chatHistory(core, msg.host_id, chg),
                     .media_connection_details => |mcd| mediaConnectionDetails(core, msg.host_id, mcd),
                     .callers_update => |cu| callersUpdate(core, msg.host_id, cu),
+
+                    .search_messages_reply => |smr| core.search_messages_reply = smr,
                     // .msg => |msg| switch (msg.bytes[0]) {
                     //     else => std.debug.panic("unexpected marker: '{c}'", .{
                     //         msg.bytes[0],
@@ -239,6 +244,8 @@ pub const Event = union(enum) {
             chat_history: awebo.protocol.server.ChatHistory,
             media_connection_details: awebo.protocol.server.MediaConnectionDetails,
             callers_update: awebo.protocol.server.CallersUpdate,
+
+            search_messages_reply: awebo.protocol.server.SearchMessagesReply,
         },
 
         pub const CallerSpeaking = struct {

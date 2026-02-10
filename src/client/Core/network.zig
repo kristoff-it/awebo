@@ -294,6 +294,11 @@ fn runHostReceive(
                 const cu: awebo.protocol.server.CallersUpdate = try .deserialize(reader);
                 try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .callers_update = cu } } });
             },
+            awebo.protocol.server.SearchMessagesReply.marker => {
+                const smr: awebo.protocol.server.SearchMessagesReply = try .deserializeAlloc(gpa, reader);
+                errdefer smr.deinit(gpa);
+                try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .search_messages_reply = smr } } });
+            },
 
             else => {
                 log.debug("unknown server message marker '{f}', ignoring", .{std.zig.fmtChar(marker)});
