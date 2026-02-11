@@ -255,13 +255,14 @@ pub const SearchMessages = struct {
     }
 };
 
-comptime {
+pub const Enum = blk: {
     var names: []const []const u8 = &.{};
     var values: []const u8 = &.{};
     for (@typeInfo(@This()).@"struct".decls) |d| {
-        if (@typeInfo(@TypeOf(@field(@This(), d.name))) != .@"struct") continue;
-        names = names ++ &[1][]const u8{&.{@field(@This(), d.name).marker}};
+        if (std.mem.eql(u8, d.name, "Enum")) continue;
+        if (@typeInfo(@field(@This(), d.name)) != .@"struct") continue;
+        names = names ++ &[1][]const u8{d.name};
         values = values ++ &[1]u8{@field(@This(), d.name).marker};
     }
-    _ = @Enum(u8, .exhaustive, names, @ptrCast(values.ptr)); // on error we have a tag collision
-}
+    break :blk @Enum(u8, .exhaustive, names, @ptrCast(values.ptr)); // on error we have a tag collision
+};

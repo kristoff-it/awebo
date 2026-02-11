@@ -273,37 +273,37 @@ fn runHostReceive(
     while (true) {
         const marker = try reader.takeByte();
         log.debug("seen marker '{c}'", .{marker});
-        switch (marker) {
-            awebo.protocol.server.HostSync.marker => {
+        const marker_enum: awebo.protocol.server.Enum = @enumFromInt(marker);
+        switch (marker_enum) {
+            .AuthenticateReply, .InviteInfoReply => unreachable, // handled while establishing a connection
+            .HostSync => {
                 const hs: awebo.protocol.server.HostSync = try .deserializeAlloc(gpa, reader);
                 try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .host_sync = hs } } });
             },
-            awebo.protocol.server.ChatMessageNew.marker => {
+            .ChatMessageNew => {
                 const cmn: awebo.protocol.server.ChatMessageNew = try .deserializeAlloc(gpa, reader);
                 try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .chat_message_new = cmn } } });
             },
-            awebo.protocol.server.ChatHistory.marker => {
+            .ChatHistory => {
                 const ch: awebo.protocol.server.ChatHistory = try .deserializeAlloc(gpa, reader);
                 try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .chat_history = ch } } });
             },
-            awebo.protocol.server.MediaConnectionDetails.marker => {
+            .MediaConnectionDetails => {
                 const mcd: awebo.protocol.server.MediaConnectionDetails = try .deserialize(reader);
                 try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .media_connection_details = mcd } } });
             },
-            awebo.protocol.server.CallersUpdate.marker => {
+            .CallersUpdate => {
                 const cu: awebo.protocol.server.CallersUpdate = try .deserialize(reader);
                 try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .callers_update = cu } } });
             },
-            awebo.protocol.server.SearchMessagesReply.marker => {
+            .SearchMessagesReply => {
                 const smr: awebo.protocol.server.SearchMessagesReply = try .deserializeAlloc(gpa, reader);
                 errdefer smr.deinit(gpa);
                 try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .search_messages_reply = smr } } });
             },
 
-            else => {
-                log.debug("unknown server message marker '{f}', ignoring", .{std.zig.fmtChar(marker)});
-                continue;
-            },
+            .ChannelsUpdate => @panic("TODO"),
+            .ClientRequestReply => @panic("TODO"),
         }
     }
 }

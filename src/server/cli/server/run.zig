@@ -241,42 +241,44 @@ fn runClientTcpRead(io: Io, gpa: Allocator, client: *Client) !void {
             return err;
         };
 
-        switch (marker) {
-            else => {
-                // TODO: this should consume runTcpAccept tokens
-                log.debug("bad request marker, closing connection", .{});
-                return error.BadRequest;
-            },
-            awebo.protocol.client.Authenticate.marker => {
+        const marker_enum = std.enums.fromInt(awebo.protocol.client.Enum, marker) orelse {
+            log.debug("unknown request marker, closing", .{});
+            return error.BadRequest;
+        };
+
+        switch (marker_enum) {
+            .Authenticate => {
                 // TODO: this should consume runTcpAccept tokens
                 log.debug("authenticated client attempted to authenticate again", .{});
                 return error.AweboProtocolError;
             },
-            awebo.protocol.client.CallJoin.marker => {
+            .CallJoin => {
                 client.callJoinRequest(io, gpa, reader) catch |err| {
                     log.err("error processing CallJoin: {t}", .{err});
                 };
             },
-            awebo.protocol.client.ChatMessageSend.marker => {
+            .ChatMessageSend => {
                 client.chatMessageSendRequest(io, gpa, reader) catch |err| {
                     log.err("error processing ChatMessageSend: {t}", .{err});
                 };
             },
-            awebo.protocol.client.ChatHistoryGet.marker => {
+            .ChatHistoryGet => {
                 client.chatHistoryGet(io, gpa, reader) catch |err| {
                     log.err("error processing ChatMessageSend: {t}", .{err});
                 };
             },
-            awebo.protocol.client.ChannelCreate.marker => {
+            .ChannelCreate => {
                 client.channelCreate(io, gpa, reader) catch |err| {
                     log.err("error processing ChannelCreate: {t}", .{err});
                 };
             },
-            awebo.protocol.client.SearchMessages.marker => {
+            .SearchMessages => {
                 client.searchMessages(io, gpa, reader) catch |err| {
                     log.err("error processing SearchMessages: {t}", .{err});
                 };
             },
+            .SignUp => @panic("TODO"),
+            .InviteInfo => @panic("TODO"),
         }
     }
 }
