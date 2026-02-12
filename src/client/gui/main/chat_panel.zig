@@ -145,25 +145,34 @@ fn typingActivity(core: *Core, h: *awebo.Host, c: *Channel) !void {
     var len: usize = 0;
     var min_timeout: u64 = std.math.maxInt(u64);
 
-    var it = h.users.items.iterator();
-    while (it.next()) |e| {
-        var u = e.value_ptr;
-        const t = u.client.last_seen_typing orelse continue;
-        if (u.id == h.client.user_id) continue;
-        if (t.channel != c.id) continue;
+    {
+        var i: usize = 0;
+        while (i < c.kind.chat.client.typing.count()) {
+            const uid = c.kind.chat.client.typing.keys()[i];
+            const timestamp = c.kind.chat.client.typing.values()[i];
+            const diff = now - timestamp;
 
-        const diff = now - t.timestamp;
-        if (diff > 3 * std.time.ns_per_s) continue;
-        min_timeout = @min(min_timeout, diff);
+            // Remove expired typing indicators (older than 3 seconds)
+            if (diff > 3 * std.time.ns_per_s) {
+                c.kind.chat.client.typing.orderedRemoveAt(i);
+                continue;
+            }
 
-        users[len] = u;
-        len += 1;
-        if (len > 3) break;
+            i += 1;
+
+            if (uid == h.client.user_id) continue;
+
+            min_timeout = @min(min_timeout, diff);
+
+            users[len] = h.users.get(uid).?;
+            len += 1;
+            if (len > 3) break;
+        }
     }
 
     if (len == 0) return;
 
-    // This timer forces the label to re-render after the min_timeout
+    // Force a re-render when the typing indicator should expire
     dvui.timer(label.data().id, @intCast(min_timeout / std.time.ns_per_us));
 
     if (len > 3) {

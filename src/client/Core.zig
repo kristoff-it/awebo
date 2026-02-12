@@ -346,11 +346,10 @@ fn chatTyping(core: *Core, host_id: HostId, ct: awebo.protocol.server.ChatTyping
 
     const h = core.hosts.get(host_id).?;
     const u = h.users.get(ct.uid).?;
+    const c = &h.channels.get(ct.channel).?.kind.chat;
 
-    u.client.last_seen_typing = .{
-        .channel = ct.channel,
-        .timestamp = core.now(),
-    };
+    _ = c.client.typing.orderedRemove(u.id);
+    c.client.typing.putNoClobber(core.gpa, u.id, core.now()) catch oom();
 }
 
 fn chatMessageNew(core: *Core, host_id: HostId, cmn: awebo.protocol.server.ChatMessageNew) void {
@@ -374,7 +373,7 @@ fn chatMessageNew(core: *Core, host_id: HostId, cmn: awebo.protocol.server.ChatM
         .author = new.author,
         .body = new.text,
     });
-    u.client.last_seen_typing = null;
+    _ = c.client.typing.orderedRemove(u.id);
 
     if (cmn.origin != 0) {
         if (h.client.pending_messages.orderedRemove(cmn.origin)) {
@@ -624,9 +623,9 @@ pub fn chatHistoryGet(
 pub fn chatTypingNotify(core: *Core, h: *Host, c: *Channel) !void {
     // Throttle to 2 seconds
     const throttle = 2 * std.time.ns_per_s;
-    const origin = core.now();
-    if (origin -% h.client.last_sent_typing <= throttle) return;
-    h.client.last_sent_typing = origin;
+    const timestamp = core.now();
+    if (timestamp -% h.client.last_sent_typing <= throttle) return;
+    h.client.last_sent_typing = timestamp;
 
     switch (h.client.connection_status) {
         .connecting, .connected, .disconnected, .reconnecting, .deleting => unreachable, // UI should have prevented this attempt
@@ -636,7 +635,6 @@ pub fn chatTypingNotify(core: *Core, h: *Host, c: *Channel) !void {
 
     const ChatTypingNotify = awebo.protocol.client.ChatTypingNotify;
     const ctn: ChatTypingNotify = .{
-        .origin = origin,
         .channel = c.id,
     };
 

@@ -722,31 +722,15 @@ const Client = struct {
 
         limiter.takeToken(io, .user_action) catch {
             log.debug("exceeded user action limit", .{});
-            const fail: awebo.protocol.server.ClientRequestReply = .{
-                .origin = ctn.origin,
-                .reply_marker = awebo.protocol.client.ChatMessageSend.marker,
-                .result = .rate_limit,
-            };
-
-            const bytes = try fail.serializeAlloc(gpa);
-            const msg: *TcpMessage = .create(gpa, bytes, 1);
-            try client.tcp.queue.putOne(io, msg);
             return;
         };
 
         const channel = state.host.channels.get(ctn.channel) orelse {
             log.debug("unknown channel", .{});
-            const reply = ctn.replyErr(.unknown_channel);
-            const bytes = try reply.serializeAlloc(gpa);
-            errdefer gpa.free(bytes);
-
-            const msg: *TcpMessage = .create(gpa, bytes, 1);
-            try client.tcp.queue.putOne(io, msg);
             return;
         };
 
         const ct: awebo.protocol.server.ChatTyping = .{
-            .origin = ctn.origin,
             .uid = client.authenticated.?,
             .channel = channel.id,
         };

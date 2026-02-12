@@ -160,25 +160,12 @@ pub const ChatHistoryGet = struct {
 };
 
 pub const ChatTypingNotify = struct {
-    origin: OriginId,
     channel: Channel.Id,
 
     pub const marker = 'T';
     pub const serializeAlloc = proto.MakeSerializeAllocFn(ChatTypingNotify);
     pub const deserialize = proto.MakeDeserializeFn(ChatTypingNotify);
     pub const protocol = struct {};
-
-    pub const Error = enum {
-        unknown_channel,
-    };
-
-    pub fn replyErr(ctn: ChatTypingNotify, err: Error) server.ClientRequestReply {
-        return .{
-            .origin = ctn.origin,
-            .reply_marker = marker,
-            .result = .{ .err = .{ .code = @intFromEnum(err) } },
-        };
-    }
 };
 
 pub const ChatMessageSend = struct {

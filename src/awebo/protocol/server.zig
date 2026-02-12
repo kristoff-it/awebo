@@ -219,7 +219,6 @@ pub const MediaConnectionDetails = struct {
 };
 
 pub const ChatTyping = struct {
-    origin: u64,
     uid: User.Id,
     channel: Channel.Id,
 
