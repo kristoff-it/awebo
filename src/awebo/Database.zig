@@ -215,6 +215,7 @@ pub fn loadHost(
                         .origin = m.get(.origin),
                         .created = m.get(.created),
                         .update_uid = m.get(.update_uid),
+                        .kind = m.get(.kind),
                         .author = m.get(.author),
                         .text = try m.text(gpa, .body),
                     };

@@ -101,7 +101,7 @@ select_channels: Query(
 }),
 
 select_channel_messages: Query(
-    \\SELECT uid, origin, created, update_uid, author, body FROM messages
+    \\SELECT uid, origin, created, update_uid, kind, author, body FROM messages
     \\WHERE channel = ? ORDER BY uid DESC LIMIT ?;
 , .{
     .kind = .rows,
@@ -110,6 +110,7 @@ select_channel_messages: Query(
         origin: u64,
         created: awebo.Date,
         update_uid: u64,
+        kind: awebo.Message.Kind,
         author: awebo.User.Id,
         body: []const u8,
     },
@@ -120,7 +121,7 @@ select_channel_messages: Query(
 }),
 
 select_channel_history: Query(
-    \\SELECT uid, origin, created, update_uid, author, body FROM messages
+    \\SELECT uid, origin, created, update_uid, kind, author, body FROM messages
     \\WHERE channel = ?1 AND uid < ?2 ORDER BY uid DESC LIMIT ?3;
 , .{
     .kind = .rows,
@@ -129,6 +130,7 @@ select_channel_history: Query(
         origin: u64,
         created: awebo.Date,
         update_uid: u64,
+        kind: awebo.Message.Kind,
         author: awebo.User.Id,
         body: []const u8,
     },
@@ -140,7 +142,7 @@ select_channel_history: Query(
 }),
 
 select_channel_present: Query(
-    \\SELECT uid, origin, created, update_uid, author, body FROM messages
+    \\SELECT uid, origin, created, update_uid, kind, author, body FROM messages
     \\WHERE channel = ?1 AND uid > ?2 ORDER BY uid ASC LIMIT ?3;
 , .{
     .kind = .rows,
@@ -149,6 +151,7 @@ select_channel_present: Query(
         origin: u64,
         created: awebo.Date,
         update_uid: u64,
+        kind: awebo.Message.Kind,
         author: awebo.User.Id,
         body: []const u8,
     },
@@ -229,9 +232,9 @@ insert_host_kv: Query(
 
 insert_message: Query(
     \\INSERT INTO messages
-    \\    (uid, origin, created, update_uid, channel, author, body)
+    \\    (uid, origin, created, update_uid, channel, kind, author, body)
     \\  VALUES
-    \\    (?, ?, ?, ?, ?, ?, ?)
+    \\    (?, ?, ?, ?, ?, ?, ?, ?)
     \\;
 , .{
     .kind = .exec,
@@ -241,6 +244,7 @@ insert_message: Query(
         created: awebo.Date,
         update_uid: ?u64,
         channel: awebo.Channel.Id,
+        kind: awebo.Message.Kind,
         author: ?awebo.User.Id,
         body: []const u8,
     },
@@ -308,11 +312,11 @@ upsert_channel: Query(
 
 upsert_message: Query(
     \\INSERT INTO
-    \\messages(uid, origin, created, update_uid, channel, author, body, reactions)
-    \\VALUES  (?1,  ?2,     ?3,      ?4,         ?5,      ?6,     ?7,   ?8)
+    \\messages(uid, origin, created, update_uid, channel, kind, author, body, reactions)
+    \\VALUES  (?1,  ?2,     ?3,      ?4,         ?5,      ?6,     ?7,   ?8,   ?9)
     \\ON CONFLICT(uid) DO UPDATE
-    \\SET(origin, created, update_uid, channel, author, body, reactions)
-    \\ = (?2,     ?3,      ?4,         ?5,      ?6,     ?7,   ?8)
+    \\SET(origin, created, update_uid, channel, kind, author, body, reactions)
+    \\ = (?2,     ?3,      ?4,         ?5,      ?6,   ?7,   ?8,   ?9)
     // \\ON CONFLICT(update_uid) DO UPDATE
     // \\SET(origin, created, update_uid, channel, author, body, reactions)
     // \\ = (?2,     ?3,      ?4,         ?5,      ?6,     ?7,   ?8)
@@ -324,6 +328,7 @@ upsert_message: Query(
         created: awebo.Date,
         update_uid: ?u64,
         channel: awebo.Channel.Id,
+        kind: awebo.Message.Kind,
         author: awebo.User.Id,
         body: []const u8,
         reactions: ?[]const u8 = null,

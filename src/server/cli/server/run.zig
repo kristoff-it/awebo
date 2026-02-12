@@ -784,6 +784,7 @@ const Client = struct {
             .origin = cms.origin,
             .created = .now(io, state.host.epoch),
             .update_uid = null,
+            .kind = .chat,
             .author = client.authenticated.?,
             .text = cms.text,
         };
@@ -796,6 +797,7 @@ const Client = struct {
             .created = new.created,
             .update_uid = new.update_uid,
             .channel = channel.id,
+            .kind = new.kind,
             .author = new.author,
             .body = new.text,
         });
@@ -870,6 +872,7 @@ const Client = struct {
                 .origin = r.get(.origin),
                 .created = r.get(.created),
                 .update_uid = r.get(.update_uid),
+                .kind = r.get(.kind),
                 .author = r.get(.author),
                 // TODO: we need protocol metaprogramming to skip this copy
                 .text = try r.text(gpa, .body),
@@ -911,6 +914,7 @@ const Client = struct {
                     .origin = row.get(.message_origin),
                     .created = row.get(.message_created),
                     .update_uid = row.get(.message_update_uid),
+                    .kind = .chat,
                     .author = row.get(.message_author),
                     .text = try row.text(gpa, .message_hl_text),
                 },
@@ -1076,11 +1080,14 @@ var ___state: struct {
                         });
 
                         while (msgs.next()) |m| {
+                            const m_kind = m.get(.kind);
+                            assert(m_kind != .missing_history);
                             const msg: awebo.Message = .{
                                 .id = m.get(.uid),
                                 .origin = m.get(.origin),
                                 .created = m.get(.created),
                                 .update_uid = m.get(.update_uid),
+                                .kind = m_kind,
                                 .author = m.get(.author),
                                 .text = try m.text(gpa, .body),
                             };
@@ -1377,7 +1384,7 @@ pub const Queries = struct {
     }),
 
     select_chat_history: Query(
-        \\SELECT uid, origin, created, update_uid, author, body FROM messages
+        \\SELECT uid, origin, created, update_uid, kind, author, body FROM messages
         \\WHERE channel = ?1 AND uid < ?2 ORDER BY uid DESC LIMIT ?3;
     , .{
         .kind = .rows,
@@ -1386,6 +1393,7 @@ pub const Queries = struct {
             origin: u64,
             created: awebo.Date,
             update_uid: ?u64,
+            kind: awebo.Message.Kind,
             author: awebo.User.Id,
             body: []const u8,
         },

@@ -370,6 +370,7 @@ fn chatMessageNew(core: *Core, host_id: HostId, cmn: awebo.protocol.server.ChatM
         .created = new.created,
         .update_uid = new.update_uid,
         .channel = cmn.channel,
+        .kind = new.kind,
         .author = new.author,
         .body = new.text,
     });
@@ -390,13 +391,14 @@ fn chatHistory(core: *Core, host_id: HostId, ch: awebo.protocol.server.ChatHisto
     };
 
     for (ch.history) |msg| {
-        log.debug("chatHistory: saving history message {}", .{msg.id});
+        log.debug("chatHistory channel ({}): saving history message {}", .{ ch.channel, msg });
         h.client.qs.upsert_message.run(@src(), h.client.db, .{
             .uid = msg.id,
             .origin = msg.origin,
             .created = msg.created,
             .update_uid = msg.update_uid,
             .channel = ch.channel,
+            .kind = msg.kind,
             .author = msg.author,
             .body = msg.text,
             .reactions = null,

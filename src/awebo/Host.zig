@@ -49,32 +49,32 @@ pub fn computeDelta(
     host: *Host,
     gpa: Allocator,
     user_id: User.Id,
-    user_max_uid: u64,
+    client_max_uid: u64,
     server_max_uid: u64,
 ) !HostSync {
     if (context != .server) @compileError("server only");
 
     log.debug("computing delta for user {} max_uid {}", .{
-        user_id, user_max_uid,
+        user_id, client_max_uid,
     });
 
     var delta_users: std.ArrayList(User) = .empty;
     var delta_channels: std.ArrayList(Channel) = .empty;
 
     for (host.users.items.values()) |u| {
-        if (u.update_uid <= user_max_uid) continue;
+        if (u.update_uid <= client_max_uid) continue;
         try delta_users.append(gpa, u);
     }
     for (host.channels.items.values()) |ch| {
         const has_new_message = switch (ch.kind) {
             .voice => false,
             .chat => |chat| if (chat.messages.latest()) |m|
-                m.id > user_max_uid
+                m.id > client_max_uid
             else
                 false,
         };
 
-        if (!has_new_message and ch.update_uid <= user_max_uid) continue;
+        if (!has_new_message and ch.update_uid <= client_max_uid) continue;
 
         try delta_channels.append(gpa, ch);
 
@@ -86,7 +86,7 @@ pub fn computeDelta(
                     chat.messages.len = 0;
                 } else {
                     assert(chat.messages.len > 0);
-                    while (chat.messages.at(0).id <= user_max_uid) {
+                    while (chat.messages.at(0).id <= client_max_uid) {
                         chat.messages.tail +%= 1;
                         chat.messages.len -= 1;
                     }
@@ -184,18 +184,34 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const HostSync) void {
                     switch (new_ch.kind) {
                         .chat => |*chat| {
                             const slices = chat.messages.slices();
+                            var oldest_uid: ?u64 = null;
                             for (slices) |s| for (s) |msg| {
                                 log.debug("first time chat sync, saving to db msg {}", .{msg.id});
+                                oldest_uid = oldest_uid orelse msg.id;
                                 qs.upsert_message.run(@src(), db, .{
                                     .uid = msg.id,
                                     .origin = msg.origin,
                                     .created = msg.created,
                                     .update_uid = msg.update_uid,
+                                    .kind = msg.kind,
                                     .channel = new_ch.id,
                                     .author = msg.author,
                                     .body = msg.text,
                                 });
                             };
+
+                            if (slices[0].len + slices[1].len == Channel.window_size) {
+                                qs.upsert_message.run(@src(), db, .{
+                                    .uid = oldest_uid.? - 1,
+                                    .origin = 0,
+                                    .created = .epoch,
+                                    .update_uid = null,
+                                    .kind = .missing_history,
+                                    .channel = new_ch.id,
+                                    .author = delta.user_id,
+                                    .body = "",
+                                });
+                            }
                         },
                         else => {},
                     }

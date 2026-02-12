@@ -224,7 +224,9 @@ pub fn sync(
 
     const new_chat = &new_channel.kind.chat;
     const slices = new_chat.messages.slices();
+    var oldest_uid: ?u64 = null;
     for (slices) |s| for (s) |msg| {
+        oldest_uid = oldest_uid orelse msg.id;
         log.debug("chat sync, saving to db msg {}", .{msg.id});
         chat.messages.pushNew(gpa, msg) catch @panic("oom");
         qs.upsert_message.run(@src(), db, .{
@@ -233,10 +235,24 @@ pub fn sync(
             .created = msg.created,
             .update_uid = msg.update_uid,
             .channel = new_channel.id,
+            .kind = msg.kind,
             .author = msg.author,
             .body = msg.text,
         });
     };
+
+    if (slices[0].len + slices[1].len == Channel.window_size) {
+        qs.upsert_message.run(@src(), db, .{
+            .uid = oldest_uid.? - 1,
+            .origin = 0,
+            .created = .epoch,
+            .update_uid = null,
+            .kind = .missing_history,
+            .channel = new_channel.id,
+            .author = 2, // TODO
+            .body = "",
+        });
+    }
 
     // const msg_query =
     //     \\INSERT INTO messages(id, origin, updated, channel, author, body)

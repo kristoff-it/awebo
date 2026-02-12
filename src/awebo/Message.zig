@@ -9,8 +9,17 @@ id: Id,
 origin: u64,
 created: awebo.Date,
 update_uid: ?u64,
+kind: Kind,
 author: awebo.User.Id,
 text: []const u8,
+
+pub const Kind = enum(u8) {
+    chat,
+    // For example a "5 messages moved to another channel" type of stuff
+    system,
+    // client-only, used to mark a missing piece of chat history
+    missing_history,
+};
 
 pub const protocol = struct {
     pub const sizes = struct {

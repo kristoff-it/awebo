@@ -95,6 +95,7 @@ fn seed(
             .origin = 0,
             .created = .now(io, epoch.toSeconds()),
             .update_uid = null,
+            .kind = .chat,
             .author = if (i % 2 == 0) admin else user,
             .channel = 1,
             .body = std.fmt.bufPrint(&buf, "message #{}", .{i}) catch unreachable,

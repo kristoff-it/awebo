@@ -266,13 +266,24 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
         });
 
         var count: usize = 0;
+        var missing_history = false;
+        var missing_uid: awebo.Message.Id = 0;
         while (rs.next()) |r| : (count += 1) {
+            const kind = r.get(.kind);
+            if (kind == .missing_history) {
+                // we need to trigger a fetch
+                missing_history = true;
+                missing_uid = r.get(.uid) + 1;
+                log.debug("found a missing history message uid = {}", .{missing_uid});
+                break;
+            }
             log.debug("chat panel: pushing history message {}", .{r.get(.uid)});
             c.messages.pushOld(gpa, .{
                 .id = r.get(.uid),
                 .origin = r.get(.origin),
                 .created = r.get(.created),
                 .update_uid = r.get(.update_uid),
+                .kind = kind,
                 .author = r.get(.author),
                 .text = try r.text(gpa, .body),
             }) catch @panic("oom");
@@ -280,12 +291,13 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
 
         log.debug("loaded {} history messages from db oldest_uid = {}", .{ count, oldest_uid });
 
-        if (count == 0) {
+        if (count == 0 or missing_history) {
             log.debug("fetching history from server", .{});
-            if (c.client.fetched_all_old_messages) {
+            if (c.client.fetched_all_old_messages and !missing_history) {
                 c.client.loaded_all_old_messages = true;
             } else {
-                core.chatHistoryGet(h, channel_id, c, oldest_uid);
+                const uid = if (missing_history) missing_uid else oldest_uid;
+                core.chatHistoryGet(h, channel_id, c, uid);
             }
         } else {
             c.client.loaded_all_new_messages = false;
@@ -307,12 +319,17 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
 
         var count: usize = 0;
         while (rs.next()) |r| : (count += 1) {
+            const kind = r.get(.kind);
+            if (kind == .missing_history) {
+                @panic("TODO");
+            }
             log.debug("chat panel: pushing new message {}", .{r.get(.uid)});
             c.messages.pushNew(gpa, .{
                 .id = r.get(.uid),
                 .origin = r.get(.origin),
                 .created = r.get(.created),
                 .update_uid = r.get(.update_uid),
+                .kind = kind,
                 .author = r.get(.author),
                 .text = try r.text(gpa, .body),
             }) catch @panic("oom");

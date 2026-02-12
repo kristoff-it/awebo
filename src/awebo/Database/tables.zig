@@ -225,6 +225,8 @@ pub const messages: Table = .{
     \\  origin       INTEGER,
     \\  created      DATETIME NOT NULL,
     \\  update_uid   INTEGER NULL DEFAULT NULL,
+    // awebo.Message.Kind
+    \\  kind         ENUM NOT NULL,
     \\  channel      REFERENCES channels ON DELETE CASCADE NOT NULL,
     \\  author       REFERENCES users ON DELETE CASCADE NULL,
     \\  body         TEXT NOT NULL,
