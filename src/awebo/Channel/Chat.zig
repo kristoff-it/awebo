@@ -8,6 +8,7 @@ const options = @import("options");
 const Database = @import("../Database.zig");
 const Channel = @import("../Channel.zig");
 const Message = @import("../Message.zig");
+const User = @import("../User.zig");
 const tcpSize = @import("../protocol.zig").tcpSize;
 const Chat = @This();
 
@@ -174,6 +175,10 @@ const MessageWindow = struct {
 
 pub fn deinit(c: *Chat, gpa: std.mem.Allocator) void {
     c.messages.deinit(gpa);
+    switch (context) {
+        .client => c.client.deinit(gpa),
+        .server => {},
+    }
 }
 
 pub const ClientOnly = struct {
@@ -194,9 +199,17 @@ pub const ClientOnly = struct {
     fetched_all_old_messages: bool = false,
     loaded_all_old_messages: bool = false,
 
+    /// A FIFO hash set of users typing in this chat mapped to the time they started typing.
+    typing: std.AutoArrayHashMapUnmanaged(User.Id, u64) = .empty,
+
     pub const protocol = struct {
         pub const skip = true;
     };
+
+    pub fn deinit(self: *ClientOnly, gpa: std.mem.Allocator) void {
+        self.typing.deinit(gpa);
+        self.* = undefined;
+    }
 };
 
 /// Synchronizes messages in bulk.

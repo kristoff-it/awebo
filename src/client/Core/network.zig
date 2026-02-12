@@ -280,6 +280,10 @@ fn runHostReceive(
                 const hs: awebo.protocol.server.HostSync = try .deserializeAlloc(gpa, reader);
                 try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .host_sync = hs } } });
             },
+            .ChatTyping => {
+                const ct: awebo.protocol.server.ChatTyping = try .deserialize(reader);
+                try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .chat_typing = ct } } });
+            },
             .ChatMessageNew => {
                 const cmn: awebo.protocol.server.ChatMessageNew = try .deserializeAlloc(gpa, reader);
                 try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .chat_message_new = cmn } } });

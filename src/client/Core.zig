@@ -200,6 +200,7 @@ pub fn run(core: *Core) void {
                     },
 
                     .host_sync => |*hs| hostSync(core, msg.host_id, hs),
+                    .chat_typing => |ct| chatTyping(core, msg.host_id, ct),
                     .chat_message_new => |cms| chatMessageNew(core, msg.host_id, cms),
                     .chat_history => |chg| chatHistory(core, msg.host_id, chg),
                     .media_connection_details => |mcd| mediaConnectionDetails(core, msg.host_id, mcd),
@@ -240,6 +241,7 @@ pub const Event = union(enum) {
             caller_speaking: CallerSpeaking,
 
             host_sync: awebo.protocol.server.HostSync,
+            chat_typing: awebo.protocol.server.ChatTyping,
             chat_message_new: awebo.protocol.server.ChatMessageNew,
             chat_history: awebo.protocol.server.ChatHistory,
             media_connection_details: awebo.protocol.server.MediaConnectionDetails,
@@ -338,12 +340,25 @@ fn handleRequestReply(core: *Core, msg: void) !void {
     }
 }
 
+fn chatTyping(core: *Core, host_id: HostId, ct: awebo.protocol.server.ChatTyping) void {
+    var locked = lockState(core);
+    defer locked.unlock();
+
+    const h = core.hosts.get(host_id).?;
+    const u = h.users.get(ct.uid).?;
+    const c = &h.channels.get(ct.channel).?.kind.chat;
+
+    _ = c.client.typing.orderedRemove(u.id);
+    c.client.typing.putNoClobber(core.gpa, u.id, core.now()) catch oom();
+}
+
 fn chatMessageNew(core: *Core, host_id: HostId, cmn: awebo.protocol.server.ChatMessageNew) void {
     var locked = lockState(core);
     defer locked.unlock();
 
     const h = core.hosts.get(host_id).?;
     const c = &h.channels.get(cmn.channel).?.kind.chat;
+    const u = h.users.get(cmn.msg.author).?;
 
     c.messages.pushNew(core.gpa, cmn.msg) catch oom();
 
@@ -358,6 +373,7 @@ fn chatMessageNew(core: *Core, host_id: HostId, cmn: awebo.protocol.server.ChatM
         .author = new.author,
         .body = new.text,
     });
+    _ = c.client.typing.orderedRemove(u.id);
 
     if (cmn.origin != 0) {
         if (h.client.pending_messages.orderedRemove(cmn.origin)) {
@@ -602,6 +618,30 @@ pub fn chatHistoryGet(
 
     conn.tcp.queue.putOne(core.io, bytes) catch oom();
     chat.client.waiting_old_messages = true;
+}
+
+pub fn chatTypingNotify(core: *Core, h: *Host, c: *Channel) !void {
+    // Throttle to 2 seconds
+    const throttle = 2 * std.time.ns_per_s;
+    const timestamp = core.now();
+    if (timestamp -% h.client.last_sent_typing <= throttle) return;
+    h.client.last_sent_typing = timestamp;
+
+    switch (h.client.connection_status) {
+        .connecting, .connected, .disconnected, .reconnecting, .deleting => unreachable, // UI should have prevented this attempt
+        .synced => {},
+    }
+    const conn = h.client.connection.?; // connection must be present if status == .synced
+
+    const ChatTypingNotify = awebo.protocol.client.ChatTypingNotify;
+    const ctn: ChatTypingNotify = .{
+        .channel = c.id,
+    };
+
+    const bytes = try ctn.serializeAlloc(core.gpa);
+    errdefer core.gpa.free(bytes);
+
+    try conn.tcp.queue.putOne(core.io, bytes);
 }
 
 /// On error return, the message was not scheduled for sending and should be

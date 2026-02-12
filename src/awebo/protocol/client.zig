@@ -159,6 +159,15 @@ pub const ChatHistoryGet = struct {
     }
 };
 
+pub const ChatTypingNotify = struct {
+    channel: Channel.Id,
+
+    pub const marker = 'T';
+    pub const serializeAlloc = proto.MakeSerializeAllocFn(ChatTypingNotify);
+    pub const deserialize = proto.MakeDeserializeFn(ChatTypingNotify);
+    pub const protocol = struct {};
+};
+
 pub const ChatMessageSend = struct {
     origin: OriginId,
     channel: Channel.Id,

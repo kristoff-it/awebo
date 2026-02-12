@@ -31,6 +31,7 @@ pub fn draw(app: *App, frozen: bool) !void {
 
     try header(core, h, c);
     try sendBar(core, h, c, frozen);
+    try typingActivity(core, h, c);
 
     const content_and_sidebar_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
         .expand = .both,
@@ -128,6 +129,69 @@ fn header(core: *Core, host: *Host, channel: *Channel) !void {
     }
 }
 
+fn typingActivity(core: *Core, h: *awebo.Host, c: *Channel) !void {
+    const now = core.now();
+
+    var box = dvui.box(@src(), .{ .dir = .horizontal }, .{
+        .gravity_y = 1,
+        .expand = .horizontal,
+    });
+    defer box.deinit();
+
+    var label = dvui.textLayout(@src(), .{}, .{});
+    defer label.deinit();
+
+    var users: [3]?*awebo.User = @splat(null);
+    var len: usize = 0;
+    var min_timeout: u64 = std.math.maxInt(u64);
+
+    {
+        var i: usize = 0;
+        while (i < c.kind.chat.client.typing.count()) {
+            const uid = c.kind.chat.client.typing.keys()[i];
+            const timestamp = c.kind.chat.client.typing.values()[i];
+            const diff = now - timestamp;
+
+            // Remove expired typing indicators (older than 3 seconds)
+            if (diff > 3 * std.time.ns_per_s) {
+                c.kind.chat.client.typing.orderedRemoveAt(i);
+                continue;
+            }
+
+            i += 1;
+
+            if (uid == h.client.user_id) continue;
+
+            min_timeout = @min(min_timeout, diff);
+
+            users[len] = h.users.get(uid).?;
+            len += 1;
+            if (len > 3) break;
+        }
+    }
+
+    if (len == 0) return;
+
+    // Force a re-render when the typing indicator should expire
+    dvui.timer(label.data().id, @intCast(min_timeout / std.time.ns_per_us));
+
+    if (len > 3) {
+        label.format("{d} people are typing", .{len}, .{});
+    } else {
+        for (users[0..len], 0..) |user, i| {
+            if (i > 0) {
+                if (i == len - 1) {
+                    label.addText(if (len == 2) " and " else ", and ", .{});
+                } else {
+                    label.addText(", ", .{});
+                }
+            }
+            label.addText(user.?.display_name, .{});
+        }
+        label.addText(if (len == 1) " is typing" else " are typing", .{});
+    }
+}
+
 fn sendBar(core: *Core, h: *awebo.Host, c: *Channel, frozen: bool) !void {
     const gpa = core.gpa;
 
@@ -161,6 +225,8 @@ fn sendBar(core: *Core, h: *awebo.Host, c: *Channel, frozen: bool) !void {
             try core.messageSend(h, c, text);
             in.textSet("", false);
         }
+    } else if (in.text_changed_added > 0) {
+        try core.chatTypingNotify(h, c);
     }
 }
 

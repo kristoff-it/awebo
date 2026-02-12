@@ -218,6 +218,16 @@ pub const MediaConnectionDetails = struct {
     pub const protocol = struct {};
 };
 
+pub const ChatTyping = struct {
+    uid: User.Id,
+    channel: Channel.Id,
+
+    pub const marker = 'T';
+    pub const serializeAlloc = proto.MakeSerializeAllocFn(ChatTyping);
+    pub const deserialize = proto.MakeDeserializeFn(ChatTyping);
+    pub const protocol = struct {};
+};
+
 pub const ChatMessageNew = struct {
     origin: u64,
     channel: Channel.Id,
