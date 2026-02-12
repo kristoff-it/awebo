@@ -238,6 +238,8 @@ pub const ClientOnly = struct {
     ) = .{},
     pending_requests: std.AutoArrayHashMapUnmanaged(u64, *u8) = .{},
 
+    last_sent_typing: u64 = 0,
+
     pub const ConnectionStatus = union(enum) {
         connecting, // essentially the same as .disconected but should NOT be shown in UI
         connected: *network.HostConnection, // TODO: this maybe should be host state

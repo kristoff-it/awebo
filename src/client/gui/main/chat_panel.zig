@@ -31,6 +31,7 @@ pub fn draw(app: *App, frozen: bool) !void {
 
     try header(core, h, c);
     try sendBar(core, h, c, frozen);
+    try typingActivity(core, h, c);
 
     const content_and_sidebar_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
         .expand = .both,
@@ -128,6 +129,52 @@ fn header(core: *Core, host: *Host, channel: *Channel) !void {
     }
 }
 
+fn typingActivity(core: *Core, h: *awebo.Host, c: *Channel) !void {
+    const now = core.now();
+
+    var box = dvui.box(@src(), .{ .dir = .horizontal }, .{
+        .gravity_y = 1,
+        .expand = .horizontal,
+    });
+    defer box.deinit();
+
+    var label = dvui.textLayout(@src(), .{}, .{});
+    defer label.deinit();
+
+    var users: [3]?*awebo.User = @splat(null);
+    var len: usize = 0;
+
+    var it = h.users.items.iterator();
+    while (it.next()) |e| {
+        var u = e.value_ptr;
+        const t = u.client.last_seen_typing orelse continue;
+        if (u.id == h.client.user_id) continue;
+        if (t.channel != c.id) continue;
+        if (now - t.timestamp > 3 * std.time.ns_per_s) continue;
+        users[len] = u;
+        len += 1;
+        if (len > 3) break;
+    }
+
+    if (len == 0) return;
+
+    if (len > 3) {
+        label.format("{d} people are typing", .{len}, .{});
+    } else {
+        for (users[0..len], 0..) |user, i| {
+            if (i > 0) {
+                if (i == len - 1) {
+                    label.addText(if (len == 2) " and " else ", and ", .{});
+                } else {
+                    label.addText(", ", .{});
+                }
+            }
+            label.addText(user.?.display_name, .{});
+        }
+        label.addText(if (len == 1) " is typing" else " are typing", .{});
+    }
+}
+
 fn sendBar(core: *Core, h: *awebo.Host, c: *Channel, frozen: bool) !void {
     const gpa = core.gpa;
 
@@ -161,6 +208,8 @@ fn sendBar(core: *Core, h: *awebo.Host, c: *Channel, frozen: bool) !void {
             try core.messageSend(h, c, text);
             in.textSet("", false);
         }
+    } else if (in.text_changed_added > 0) {
+        try core.chatTypingNotify(h, c);
     }
 }
 

@@ -28,6 +28,14 @@ server: switch (context) {
         };
     },
 } = .{},
+client: switch (context) {
+    .client => ClientOnly,
+    .server => struct {
+        pub const protocol = struct {
+            pub const skip = true;
+        };
+    },
+} = .{},
 
 /// Permission baseline for this user.
 /// Banned users must fail all permission checks.
@@ -55,6 +63,19 @@ pub const ServerOnly = struct {
     fn deinit(self: @This(), gpa: Allocator) void {
         gpa.free(self.pswd_hash);
     }
+};
+
+pub const ClientOnly = struct {
+    last_seen_typing: ?LastSeenTyping = null,
+
+    pub const protocol = struct {
+        pub const skip = true;
+    };
+
+    pub const LastSeenTyping = struct {
+        channel: awebo.Channel.Id,
+        timestamp: u64 = 0,
+    };
 };
 
 pub const protocol = struct {

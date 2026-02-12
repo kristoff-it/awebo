@@ -257,6 +257,11 @@ fn runClientTcpRead(io: Io, gpa: Allocator, client: *Client) !void {
                     log.err("error processing CallJoin: {t}", .{err});
                 };
             },
+            .ChatTypingNotify => {
+                client.chatTypingNotifyRequest(io, gpa, reader) catch |err| {
+                    log.err("error processing ChatMessageTyping: {t}", .{err});
+                };
+            },
             .ChatMessageSend => {
                 client.chatMessageSendRequest(io, gpa, reader) catch |err| {
                     log.err("error processing ChatMessageSend: {t}", .{err});
@@ -700,6 +705,56 @@ const Client = struct {
         const msg: *TcpMessage = .create(gpa, bytes, 1);
 
         try client.tcp.queue.putOne(io, msg);
+    }
+
+    fn chatTypingNotifyRequest(client: *Client, io: Io, gpa: Allocator, reader: *Io.Reader) !void {
+        const log = client.scopedLog();
+        const ctn = try awebo.protocol.client.ChatTypingNotify.deserialize(reader);
+
+        const locked = lockState(io);
+        defer locked.unlock(io);
+        const state = locked.state;
+
+        const gop = try state.user_limits.getOrPut(gpa, client.authenticated.?);
+        if (!gop.found_existing) gop.value_ptr.* = .init(io, .user_action);
+
+        const limiter = gop.value_ptr;
+
+        limiter.takeToken(io, .user_action) catch {
+            log.debug("exceeded user action limit", .{});
+            const fail: awebo.protocol.server.ClientRequestReply = .{
+                .origin = ctn.origin,
+                .reply_marker = awebo.protocol.client.ChatMessageSend.marker,
+                .result = .rate_limit,
+            };
+
+            const bytes = try fail.serializeAlloc(gpa);
+            const msg: *TcpMessage = .create(gpa, bytes, 1);
+            try client.tcp.queue.putOne(io, msg);
+            return;
+        };
+
+        const channel = state.host.channels.get(ctn.channel) orelse {
+            log.debug("unknown channel", .{});
+            const reply = ctn.replyErr(.unknown_channel);
+            const bytes = try reply.serializeAlloc(gpa);
+            errdefer gpa.free(bytes);
+
+            const msg: *TcpMessage = .create(gpa, bytes, 1);
+            try client.tcp.queue.putOne(io, msg);
+            return;
+        };
+
+        const ct: awebo.protocol.server.ChatTyping = .{
+            .origin = ctn.origin,
+            .uid = client.authenticated.?,
+            .channel = channel.id,
+        };
+
+        const bytes = try ct.serializeAlloc(gpa);
+        errdefer gpa.free(bytes);
+
+        state.tcpBroadcast(io, gpa, bytes);
     }
 
     fn chatMessageSendRequest(client: *Client, io: Io, gpa: Allocator, reader: *Io.Reader) !void {
