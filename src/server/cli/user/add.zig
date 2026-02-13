@@ -47,14 +47,14 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
 
     const max_uid = qs.select_max_uid.run(@src(), db, .{}).?.get(.max_uid);
 
-    _ = qs.insert_user.run(@src(), db, .{
+    _ = qs.insert_user.runReturning(@src(), db, .id, .{
         .created = 0,
         .update_uid = max_uid + 1,
         .invited_by = null,
         .power = .user,
         .handle = cmd.handle,
         .display_name = cmd.display_name,
-    }).?;
+    });
 
     qs.insert_password.run(@src(), db, .{
         .handle = cmd.handle,

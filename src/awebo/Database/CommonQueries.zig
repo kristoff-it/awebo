@@ -187,7 +187,7 @@ insert_user: Query(
     \\RETURNING users.id
     \\;
 , .{
-    .kind = .row,
+    .kind = .returning,
     .cols = struct { id: awebo.User.Id },
     .args = struct {
         created: u64,

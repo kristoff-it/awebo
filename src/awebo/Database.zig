@@ -34,6 +34,7 @@ const Database = @This();
 const context = @import("options").context;
 const builtin = @import("builtin");
 const std = @import("std");
+const assert = std.debug.assert;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const zqlite = @import("zqlite");
@@ -259,11 +260,12 @@ fn Result(config: QueryConfig) type {
         .row => ?Rows(config).Row,
         .rows => Rows(config),
         .exec => void,
+        .returning => @compileError("returning queries must use .runReturning()"),
     };
 }
 
 const QueryConfig = struct {
-    kind: enum { row, rows, exec },
+    kind: enum { returning, row, rows, exec },
     cols: type = struct {},
     args: type = struct {},
 };
@@ -284,6 +286,45 @@ pub fn Query(sql_query: [:0]const u8, config: QueryConfig) type {
             _ = zqlite.c.sqlite3_finalize(q.stmt);
         }
 
+        ///To be used with '.returning' queries.
+        ///Those are INSERT queries that also have a RETURNING clause.
+        ///This function will:
+        /// - run the query
+        /// - assert that it returns one row
+        /// - get the specified column value
+        /// - reset the sqlite query statement
+        ///In particular the early reset is important when this query is
+        ///run within a transaction, see #73 for what happens when the
+        ///statement is not reset before committing the transaction.
+        pub fn runReturning(
+            q: *const @This(),
+            src: std.builtin.SourceLocation,
+            db: Database,
+            comptime col: std.meta.FieldEnum(config.cols),
+            args: config.args,
+        ) ColType(col) {
+            if (config.kind != .returning) {
+                @compileError("only to be used by .returning queries, use .run() instead");
+            }
+
+            const stmt: zqlite.Stmt = .{
+                .conn = db.conn.conn,
+                .stmt = @ptrCast(q.stmt),
+            };
+
+            bind(stmt, db, args);
+
+            const one_row = stmt.step() catch db.fatal(src);
+            assert(one_row);
+
+            const r = Rows(config).Row{ .row = .{ .stmt = stmt } };
+            defer stmt.reset() catch unreachable;
+
+            const C = ColType(col);
+            if (C == void) @compileError("unsupported");
+            return r.coerce(C, @intFromEnum(col));
+        }
+
         pub fn run(
             q: *const @This(),
             src: std.builtin.SourceLocation,
@@ -295,8 +336,26 @@ pub fn Query(sql_query: [:0]const u8, config: QueryConfig) type {
                 .stmt = @ptrCast(q.stmt),
             };
 
-            stmt.reset() catch db.fatal(@src());
+            bind(stmt, db, args);
 
+            switch (config.kind) {
+                .returning => @compileError("use .runReturning()"),
+                .row => {
+                    const one_row = stmt.step() catch db.fatal(src);
+                    if (!one_row) return null;
+                    return Rows(config).Row{ .row = .{ .stmt = stmt } };
+                },
+                .rows => {
+                    return Rows(config){ .rows = .{ .stmt = stmt, .err = null } };
+                },
+                .exec => {
+                    stmt.stepToCompletion() catch db.fatal(src);
+                },
+            }
+        }
+
+        fn bind(stmt: zqlite.Stmt, db: Database, args: config.args) void {
+            stmt.reset() catch db.fatal(@src());
             inline for (@typeInfo(config.args).@"struct".fields, 0..) |f, idx| {
                 if (f.type == AnyArg) {
                     switch (@field(args, f.name)) {
@@ -310,20 +369,11 @@ pub fn Query(sql_query: [:0]const u8, config: QueryConfig) type {
                     else => stmt.bindValue(@field(args, f.name), idx) catch db.fatal(@src()),
                 }
             }
+        }
 
-            switch (config.kind) {
-                .row => {
-                    const one_row = stmt.step() catch db.fatal(src);
-                    if (!one_row) return null;
-                    return Rows(config).Row{ .row = .{ .stmt = stmt } };
-                },
-                .rows => {
-                    return Rows(config){ .rows = .{ .stmt = stmt, .err = null } };
-                },
-                .exec => {
-                    stmt.stepToCompletion() catch db.fatal(src);
-                },
-            }
+        fn ColType(col: std.meta.FieldEnum(config.cols)) type {
+            const c: config.cols = undefined;
+            return @TypeOf(@field(c, @tagName(col)));
         }
     };
 }

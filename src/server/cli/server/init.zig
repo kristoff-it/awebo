@@ -50,28 +50,28 @@ fn seed(
         cli.fatal("unable to hash admin password: {t}", .{err});
     };
 
-    const admin = qs.insert_user.run(@src(), db, .{
+    const admin = qs.insert_user.runReturning(@src(), db, .id, .{
         .created = 0,
         .update_uid = id.new(),
         .handle = cmd.owner.handle,
         .invited_by = 1,
         .power = .owner,
         .display_name = "Admin",
-    }).?.get(.id);
+    });
 
     qs.insert_password.run(@src(), db, .{
         .handle = cmd.owner.handle,
         .hash = pass_str,
     });
 
-    const user = qs.insert_user.run(@src(), db, .{
+    const user = qs.insert_user.runReturning(@src(), db, .id, .{
         .created = 0,
         .update_uid = id.new(),
         .handle = "user",
         .invited_by = 1,
         .power = .user,
         .display_name = "Other User",
-    }).?.get(.id);
+    });
 
     qs.insert_password.run(@src(), db, .{
         .handle = "user",
