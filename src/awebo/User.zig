@@ -15,7 +15,7 @@ pub const Id = u64;
 id: Id,
 created: awebo.Date,
 update_uid: u64,
-invited_by: Id,
+invited_by: ?Id,
 power: Power,
 handle: []const u8,
 display_name: []const u8,
@@ -78,7 +78,7 @@ pub fn deinit(u: User, gpa: Allocator) void {
 
 pub fn format(user: *const User, w: *Io.Writer) !void {
     try w.print(
-        "User(id: {} power: {} invited_by: {} handle: '{s}' display_name: '{s}')",
+        "User(id: {} power: {} invited_by: {?} handle: '{s}' display_name: '{s}')",
         .{ user.id, user.power, user.invited_by, user.handle, user.display_name },
     );
 }

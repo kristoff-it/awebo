@@ -178,7 +178,7 @@ pub const HostSync = struct {
         );
 
         for (hs.users.delta, 0..) |u, i| {
-            try w.print("(id: {} uid: {})", .{ u.id, u.update_uid });
+            try w.print("(id: {} i: {?} uid: {})", .{ u.id, u.invited_by, u.update_uid });
             if (i < hs.users.delta.len - 1) {
                 try w.writeAll(", ");
             }

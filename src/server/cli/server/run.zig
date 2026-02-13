@@ -1377,7 +1377,7 @@ pub const Queries = struct {
             display_name: []const u8,
             update_uid: u64,
             power: awebo.User.Power,
-            invited_by: awebo.User.Id,
+            invited_by: ?awebo.User.Id,
             avatar: []const u8,
         },
         .args = struct { handle: []const u8 },
