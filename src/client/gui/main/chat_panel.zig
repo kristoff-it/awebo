@@ -15,7 +15,7 @@ const log = std.log.scoped(.chat_panel);
 
 pub fn draw(app: *App, frozen: bool) !void {
     const core = &app.core;
-    const h = core.hosts.get(app.active_host).?;
+    const h = core.hosts.get(core.active_host).?;
     const c = h.channels.get(h.client.active_channel.?).?;
 
     var box = dvui.box(
@@ -254,8 +254,8 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
     const stick_to_bottom = scroll_info.offsetFromMax(.vertical) <= 0;
     var scroll_lock_visible = false;
 
-    // are we close enough to the top to load new messages?
-    const oldest_uid = if (c.messages.oldest()) |old| old.id else 1;
+    // are we close enough to the top to load more old messages?
+    const oldest_uid = if (core.message_window.oldest()) |old| old.id else 1;
     const want_more_history = gop.found_existing and scroll_info.offset(.vertical) <= 100;
     if (!c.client.waiting_old_messages and want_more_history and !c.client.loaded_all_old_messages) {
         log.debug("query: {} {}", .{ oldest_uid, channel_id });
@@ -278,7 +278,7 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
                 break;
             }
             log.debug("chat panel: pushing history message {}", .{r.get(.uid)});
-            c.messages.pushOld(gpa, .{
+            core.message_window.pushOld(gpa, .{
                 .id = r.get(.uid),
                 .origin = r.get(.origin),
                 .created = r.get(.created),
@@ -307,7 +307,7 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
 
     // are we close enough to the bottom to want to load newer messages?
     const want_more_present = scroll_info.offset(.vertical) > scroll_info.scrollMax(.vertical) - 150;
-    const newest_uid = if (c.messages.latest()) |new| new.id else 1;
+    const newest_uid = if (core.message_window.latest()) |new| new.id else 1;
     if (!c.client.waiting_new_messages and
         want_more_present and !c.client.loaded_all_new_messages)
     {
@@ -324,7 +324,7 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
                 @panic("TODO");
             }
             log.debug("chat panel: pushing new message {}", .{r.get(.uid)});
-            c.messages.pushNew(gpa, .{
+            core.message_window.pushNew(gpa, .{
                 .id = r.get(.uid),
                 .origin = r.get(.origin),
                 .created = r.get(.created),
@@ -366,7 +366,7 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
     });
 
     var last_author: awebo.User.Id = undefined;
-    var mit: MessageIterator = .init(c.messages.slices());
+    var mit: MessageIterator = .init(core.message_window.slices());
     while (mit.next()) |m| {
         drawMessage(h, m.author, m.created.fmt(tz, h.epoch), .raw, m.text, m.id);
 

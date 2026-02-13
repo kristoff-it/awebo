@@ -9,7 +9,7 @@ const Core = @import("../../Core.zig");
 
 pub fn draw(app: *App) !void {
     const core = &app.core;
-    const h = core.hosts.get(app.active_host).?;
+    const h = core.hosts.get(core.active_host).?;
     var box = dvui.box(@src(), .{ .dir = .vertical }, .{
         .expand = .vertical,
     });
@@ -209,8 +209,7 @@ pub fn channelList(h: *awebo.Host, core: *Core) !void {
     defer menu.deinit();
     for (h.channels.items.values(), 0..) |*channel, idx| {
         switch (channel.kind) {
-            .chat => |chat| {
-                _ = chat;
+            .chat => |*chat| {
                 const item = dvui.menuItem(@src(), .{}, .{
                     .gravity_x = 0,
                     .id_extra = idx,
@@ -219,7 +218,41 @@ pub fn channelList(h: *awebo.Host, core: *Core) !void {
                 defer item.deinit();
 
                 if (item.activated) {
+                    // Save newest loaded message
+                    if (h.client.active_channel) |old_chat_id| {
+                        const old_chat = h.channels.get(old_chat_id).?;
+                        if (old_chat.kind == .chat) {
+                            old_chat.kind.chat.client.last_newest = if (core.message_window.latest()) |l|
+                                l.id + 1
+                            else
+                                std.math.maxInt(i64);
+                        }
+                    }
+
+                    // Reset message window and set new channel
                     h.client.active_channel = channel.id;
+                    core.message_window.reset(core.gpa);
+
+                    // Replace messages in the message window
+                    var rs = h.client.qs.select_channel_history.run(@src(), h.client.db, .{
+                        .below_uid = chat.client.last_newest,
+                        .channel = channel.id,
+                        .limit = 64,
+                    });
+
+                    while (rs.next()) |r| {
+                        const kind = r.get(.kind);
+                        if (kind == .missing_history) break;
+                        core.message_window.backfill(core.gpa, .{
+                            .id = r.get(.uid),
+                            .origin = r.get(.origin),
+                            .created = r.get(.created),
+                            .update_uid = r.get(.update_uid),
+                            .kind = kind,
+                            .author = r.get(.author),
+                            .text = try r.text(core.gpa, .body),
+                        }) catch @panic("oom");
+                    }
                 }
 
                 const active = if (h.client.active_channel) |ac|

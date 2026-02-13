@@ -14,8 +14,7 @@ const Chat = @This();
 
 const log = std.log.scoped(.chat);
 
-messages: MessageWindow = .{},
-
+/// Holds scroll state
 client: switch (context) {
     .client => ClientOnly,
     .server => void,
@@ -24,9 +23,85 @@ client: switch (context) {
     .server => {},
 },
 
+/// Holds latest messages
+server: switch (context) {
+    .client => void,
+    .server => ServerOnly,
+} = switch (context) {
+    .client => {},
+    .server => .{},
+},
+
 pub const protocol = struct {};
 
-const MessageWindow = struct {
+pub fn deinit(c: *Chat, gpa: std.mem.Allocator) void {
+    switch (context) {
+        .client => c.client.deinit(gpa),
+        .server => c.server.deinit(gpa),
+    }
+}
+
+pub const ServerOnly = struct {
+    messages: MessageWindow = .{},
+
+    pub const protocol = struct {
+        pub const skip = true;
+    };
+
+    pub fn deinit(s: *ServerOnly, gpa: std.mem.Allocator) void {
+        s.messages.deinit(gpa);
+    }
+};
+
+pub const ClientOnly = struct {
+    scroll: enum {
+        sticky_bottom,
+        position,
+    } = .sticky_bottom,
+
+    /// Core has pushed new messages in chat.messages,
+    /// UI should set this to false when those messages
+    /// have been rendered.
+    new_messages: bool = false,
+    waiting_new_messages: bool = false,
+    fetched_all_new_messages: bool = false,
+    loaded_all_new_messages: bool = false,
+
+    waiting_old_messages: bool = false,
+    fetched_all_old_messages: bool = false,
+    loaded_all_old_messages: bool = false,
+    last_newest: Message.Id = std.math.maxInt(i64),
+
+    /// A FIFO hash set of users typing in this chat mapped to the time they started typing.
+    typing: std.AutoArrayHashMapUnmanaged(User.Id, u64) = .empty,
+
+    pub const protocol = struct {
+        pub const skip = true;
+    };
+
+    pub fn deinit(self: *ClientOnly, gpa: std.mem.Allocator) void {
+        self.typing.deinit(gpa);
+        self.* = undefined;
+    }
+};
+
+/// Synchronizes messages in bulk.
+pub fn sync(
+    chat: *Chat,
+    gpa: Allocator,
+    db: Database,
+    qs: *Database.CommonQueries,
+    new_channel: *const Channel,
+) void {
+    if (context != .client) @compileError("client only");
+    _ = chat;
+    _ = gpa;
+    _ = db;
+    _ = qs;
+    _ = new_channel;
+}
+
+pub const MessageWindow = struct {
     buffer: [Channel.window_size]Message = undefined,
     tail: Channel.WindowSize = 0,
     len: @TypeOf(Channel.window_size) = 0,
@@ -35,32 +110,10 @@ const MessageWindow = struct {
         id: std.AutoHashMapUnmanaged(Message.Id, usize) = .empty,
     } = .{},
 
-    pub const protocol = struct {
-        pub const sizes = struct {
-            pub const buffer = @Int(.unsigned, @sizeOf(Channel.WindowSize) * 8);
-        };
-
-        pub inline fn serialize(mw: MessageWindow, comptime serializeFn: anytype, w: *Io.Writer) !void {
-            try w.writeInt(sizes.buffer, @intCast(mw.len), .little);
-            for (mw.slices()) |s| for (s) |message| {
-                log.debug("serializing {f}", .{message});
-                try serializeFn(message, w);
-            };
-        }
-
-        pub fn deserializeAlloc(comptime deserializeFn: anytype, gpa: Allocator, r: *Io.Reader) !MessageWindow {
-            var mw: MessageWindow = .{};
-            errdefer mw.deinit(gpa);
-
-            const len = try r.takeInt(sizes.buffer, .little);
-            for (0..len) |_| {
-                const m: Message = try deserializeFn(Message, gpa, r);
-                log.debug("deserialized {f}", .{m});
-                try mw.frontfill(gpa, m);
-            }
-            return mw;
-        }
-    };
+    pub fn reset(mw: *MessageWindow, gpa: std.mem.Allocator) void {
+        mw.deinit(gpa);
+        mw.* = .{};
+    }
 
     pub fn deinit(mw: *MessageWindow, gpa: std.mem.Allocator) void {
         for (mw.slices()) |s| for (s) |msg| msg.deinit(gpa);
@@ -172,104 +225,3 @@ const MessageWindow = struct {
 
     // pub fn load(mw: *MessageWindow, chat_id: Channel.Id, db: Database) !void {}
 };
-
-pub fn deinit(c: *Chat, gpa: std.mem.Allocator) void {
-    c.messages.deinit(gpa);
-    switch (context) {
-        .client => c.client.deinit(gpa),
-        .server => {},
-    }
-}
-
-pub const ClientOnly = struct {
-    scroll: enum {
-        sticky_bottom,
-        position,
-    } = .sticky_bottom,
-
-    /// Core has pushed new messages in chat.messages,
-    /// UI should set this to false when those messages
-    /// have been rendered.
-    new_messages: bool = false,
-    waiting_new_messages: bool = false,
-    fetched_all_new_messages: bool = false,
-    loaded_all_new_messages: bool = false,
-
-    waiting_old_messages: bool = false,
-    fetched_all_old_messages: bool = false,
-    loaded_all_old_messages: bool = false,
-
-    /// A FIFO hash set of users typing in this chat mapped to the time they started typing.
-    typing: std.AutoArrayHashMapUnmanaged(User.Id, u64) = .empty,
-
-    pub const protocol = struct {
-        pub const skip = true;
-    };
-
-    pub fn deinit(self: *ClientOnly, gpa: std.mem.Allocator) void {
-        self.typing.deinit(gpa);
-        self.* = undefined;
-    }
-};
-
-/// Synchronizes messages in bulk.
-pub fn sync(
-    chat: *Chat,
-    gpa: Allocator,
-    db: Database,
-    qs: *Database.CommonQueries,
-    new_channel: *const Channel,
-) void {
-    if (context != .client) @compileError("client only");
-
-    const new_chat = &new_channel.kind.chat;
-    const slices = new_chat.messages.slices();
-    var oldest_uid: ?u64 = null;
-    for (slices) |s| for (s) |msg| {
-        oldest_uid = oldest_uid orelse msg.id;
-        log.debug("chat sync, saving to db msg {}", .{msg.id});
-        chat.messages.pushNew(gpa, msg) catch @panic("oom");
-        qs.upsert_message.run(@src(), db, .{
-            .uid = msg.id,
-            .origin = msg.origin,
-            .created = msg.created,
-            .update_uid = msg.update_uid,
-            .channel = new_channel.id,
-            .kind = msg.kind,
-            .author = msg.author,
-            .body = msg.text,
-        });
-    };
-
-    if (slices[0].len + slices[1].len == Channel.window_size) {
-        qs.upsert_message.run(@src(), db, .{
-            .uid = oldest_uid.? - 1,
-            .origin = 0,
-            .created = .epoch,
-            .update_uid = null,
-            .kind = .missing_history,
-            .channel = new_channel.id,
-            .author = 2, // TODO
-            .body = "",
-        });
-    }
-
-    // const msg_query =
-    //     \\INSERT INTO messages(id, origin, updated, channel, author, body)
-    //     \\VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-    //     \\ON CONFLICT(id) DO UPDATE
-    //     \\SET (origin, updated, channel, author, body)
-    //     \\ = (?2, ?3, ?4, ?5, ?6)
-    // ;
-
-    // for (messages) |slice| for (slice) |m| {
-    //     db.conn.exec(msg_query, .{
-    //         m.id,
-    //         m.origin,
-    //         0, //  m.updated,
-    //         chat_id,
-    //         m.author,
-    //         m.text,
-    //     }) catch db.fatal(@src());
-    // };
-}

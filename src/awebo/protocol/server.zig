@@ -110,74 +110,92 @@ pub const HostSync = struct {
     name: []const u8,
     epoch: i64,
     users: struct {
-        mode: Mode,
-        items: []User,
-
+        full: []User.Id,
+        delta: []User,
         pub const protocol = struct {
             pub const sizes = struct {
-                pub const items = u64;
+                pub const full = u64;
+                pub const delta = u64;
             };
         };
     },
-    // roles: struct { sync: Sync, items: []Role },
     channels: struct {
-        // Whether the client should flush before adding channels
-        mode: Mode,
-        // Whether the client should flush messages before adding
-        // messages, one entry per channel.
-        channel_sync: []Mode = &.{},
-        items: []Channel,
+        full: []Channel.Id,
+        delta: []ChannelDelta,
+
+        pub const protocol = struct {
+            pub const sizes = struct {
+                pub const full = u64;
+                pub const delta = u64;
+            };
+        };
+    },
+
+    pub const ChannelDelta = struct {
+        id: Channel.Id,
+        meta: ?Channel = null,
+        messages: struct {
+            /// Messages are stored in a ring buffer
+            tail: []const Message = &.{},
+            head: []const Message = &.{},
+
+            pub fn slices(messages: *const @This()) [2][]const Message {
+                return .{ messages.tail, messages.head };
+            }
+
+            pub fn totalLen(messages: *const @This()) usize {
+                return @intCast(messages.tail.len + messages.head.len);
+            }
+
+            pub const protocol = struct {
+                pub const sizes = struct {
+                    pub const tail = u8;
+                    pub const head = u8;
+                };
+            };
+        } = .{},
         // modified_messages: []Message,
 
-        pub const protocol = struct {
-            pub const sizes = struct {
-                pub const channel_sync = u64;
-                pub const items = u64;
-            };
-        };
-    },
-
-    // Whether a given resource is being paritally or fully resynced.
-    // Full resyncs imply flushing all cached data first.
-    const Mode = enum(u8) { delta, full };
+        pub const protocol = struct {};
+    };
 
     pub fn deinit(hs: *const HostSync, gpa: Allocator) void {
-        // This type assumes that item slices are sliced from
-        // in-memory server state.
-        gpa.free(hs.channels.channel_sync);
+        _ = hs;
+        _ = gpa;
     }
 
     pub fn format(hs: *const HostSync, w: *Io.Writer) !void {
         try w.print(
-            "HostSync(user_id: {} server_max_uid: {} name: '{s}' users: ({t}/{}) [",
+            "HostSync(user_id: {} server_max_uid: {} name: '{s}' users: ({} {s}) [",
             .{
-                hs.user_id,         hs.server_max_uid,
-                hs.name,            hs.users.mode,
-                hs.users.items.len,
+                hs.user_id, hs.server_max_uid,
+                hs.name,    hs.users.delta.len,
+                if (hs.users.full.len > 0)
+                    "full"
+                else
+                    "",
             },
         );
 
-        for (hs.users.items, 0..) |u, i| {
+        for (hs.users.delta, 0..) |u, i| {
             try w.print("(id: {} uid: {})", .{ u.id, u.update_uid });
-            if (i < hs.users.items.len - 1) {
+            if (i < hs.users.delta.len - 1) {
                 try w.writeAll(", ");
             }
         }
 
-        try w.print("] channels: ({t}/{}) [", .{
-            hs.channels.mode, hs.channels.items.len,
-        });
+        try w.print("] channels: ({}) [", .{hs.channels.delta.len});
 
-        for (hs.channels.items, 0..) |ch, i| {
-            try w.print("(id: {} uid: {} msgs: {?})", .{
+        for (hs.channels.delta, 0..) |ch, i| {
+            try w.print("(id: {} uid: {?} msgs: {?})", .{
                 ch.id,
-                ch.update_uid,
-                switch (ch.kind) {
+                if (ch.meta) |m| m.update_uid else null,
+                if (ch.meta) |m| switch (m.kind) {
                     .voice => null,
-                    .chat => |chat| chat.messages.len,
-                },
+                    .chat => ch.messages.totalLen(),
+                } else null,
             });
-            if (i < hs.channels.items.len - 1) {
+            if (i < hs.channels.delta.len - 1) {
                 try w.writeAll(", ");
             }
         }

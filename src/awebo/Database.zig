@@ -189,7 +189,7 @@ pub fn loadHost(
         var rs = qs.select_channels.run(@src(), db, .{});
         while (rs.next()) |r| {
             const kind = r.get(.kind);
-            var channel: awebo.Channel = .{
+            const channel: awebo.Channel = .{
                 .id = r.get(.id),
                 .name = try r.text(gpa, .name),
                 .update_uid = r.get(.update_uid),
@@ -203,29 +203,31 @@ pub fn loadHost(
                 },
             };
 
-            if (channel.kind == .chat) {
-                var msgs = qs.select_channel_messages.run(@src(), db, .{
-                    .channel = channel.id,
-                    .limit = 64,
-                });
-
-                while (msgs.next()) |m| {
-                    const msg: awebo.Message = .{
-                        .id = m.get(.uid),
-                        .origin = m.get(.origin),
-                        .created = m.get(.created),
-                        .update_uid = m.get(.update_uid),
-                        .kind = m.get(.kind),
-                        .author = m.get(.author),
-                        .text = try m.text(gpa, .body),
-                    };
-                    try channel.kind.chat.messages.backfill(gpa, msg);
-                    log.debug("loaded chat message: {f}", .{msg});
-                }
-            }
-
             try h.channels.set(gpa, channel);
             log.debug("loaded {f}", .{channel});
+
+            //getme
+            // if (channel.kind == .chat) {
+            //     var msgs = qs.select_channel_messages.run(@src(), db, .{
+            //         .channel = channel.id,
+            //         .limit = 64,
+            //     });
+
+            //     while (msgs.next()) |m| {
+            //         const msg: awebo.Message = .{
+            //             .id = m.get(.uid),
+            //             .origin = m.get(.origin),
+            //             .created = m.get(.created),
+            //             .update_uid = m.get(.update_uid),
+            //             .kind = m.get(.kind),
+            //             .author = m.get(.author),
+            //             .text = try m.text(gpa, .body),
+            //         };
+            //         try channel.kind.chat.messages.backfill(gpa, msg);
+            //         log.debug("loaded chat message: {f}", .{msg});
+            //     }
+            // }
+
         }
     }
 }

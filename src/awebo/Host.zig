@@ -59,16 +59,17 @@ pub fn computeDelta(
     });
 
     var delta_users: std.ArrayList(User) = .empty;
-    var delta_channels: std.ArrayList(Channel) = .empty;
+    var delta_channels: std.ArrayList(HostSync.ChannelDelta) = .empty;
 
     for (host.users.items.values()) |u| {
         if (u.update_uid <= client_max_uid) continue;
         try delta_users.append(gpa, u);
     }
-    for (host.channels.items.values()) |ch| {
+
+    for (host.channels.items.values()) |*ch| {
         const has_new_message = switch (ch.kind) {
             .voice => false,
-            .chat => |chat| if (chat.messages.latest()) |m|
+            .chat => |chat| if (chat.server.messages.latest()) |m|
                 m.id > client_max_uid
             else
                 false,
@@ -76,23 +77,36 @@ pub fn computeDelta(
 
         if (!has_new_message and ch.update_uid <= client_max_uid) continue;
 
-        try delta_channels.append(gpa, ch);
+        const delta = try delta_channels.addOne(gpa);
+        delta.* = .{ .id = ch.id };
 
-        const delta_ch = &delta_channels.items[delta_channels.items.len - 1];
-        switch (delta_ch.kind) {
-            .voice => {},
-            .chat => |*chat| {
-                if (!has_new_message) {
-                    chat.messages.len = 0;
-                } else {
-                    assert(chat.messages.len > 0);
-                    while (chat.messages.at(0).id <= client_max_uid) {
-                        chat.messages.tail +%= 1;
-                        chat.messages.len -= 1;
-                    }
-                }
-            },
+        if (ch.update_uid > client_max_uid) {
+            delta.meta = ch.*;
         }
+
+        if (has_new_message) {
+            const messages = &ch.kind.chat.server.messages;
+            assert(messages.len > 0);
+
+            const orig_tail = messages.tail;
+            const orig_len = messages.len;
+            while (messages.at(0).id <= client_max_uid) {
+                messages.tail +%= 1;
+                messages.len -= 1;
+            }
+
+            const slices = messages.slices();
+            delta.messages = .{ .tail = slices[0], .head = slices[1] };
+
+            messages.tail = orig_tail;
+            messages.len = orig_len;
+        }
+    }
+
+    for (delta_channels.items) |dc| {
+        for (dc.messages.slices()) |s| for (s) |m| {
+            log.debug("scanning delta message text = {s}", .{m.text});
+        };
     }
 
     return .{
@@ -100,8 +114,8 @@ pub fn computeDelta(
         .server_max_uid = server_max_uid,
         .name = host.name,
         .epoch = host.epoch,
-        .users = .{ .mode = .delta, .items = delta_users.items },
-        .channels = .{ .mode = .delta, .items = delta_channels.items },
+        .users = .{ .full = &.{}, .delta = delta_users.items },
+        .channels = .{ .full = &.{}, .delta = delta_channels.items },
     };
 }
 
@@ -124,100 +138,81 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const HostSync) void {
         });
     }
 
-    switch (delta.users.mode) {
-        .full => {
-            @panic("TODO");
-        },
-        .delta => {
-            for (delta.users.items) |new_user| {
-                if (host.users.get(new_user.id)) |u| {
-                    u.deinit(gpa);
-                    u.* = new_user;
-                } else {
-                    host.users.set(gpa, new_user) catch @panic("oom");
-                }
+    for (delta.users.delta) |new_user| {
+        if (host.users.get(new_user.id)) |u| {
+            u.deinit(gpa);
+            u.* = new_user;
+        } else {
+            host.users.set(gpa, new_user) catch @panic("oom");
+        }
 
-                std.log.debug("upsert {f}", .{new_user});
+        std.log.debug("upsert {f}", .{new_user});
 
-                qs.upsert_user.run(@src(), db, .{
-                    .id = new_user.id,
-                    .created = 0,
-                    // .update_uid = new_user.update_id,
-                    .update_uid = new_user.id,
-                    .invited_by = new_user.invited_by,
-                    .power = new_user.power,
-                    .handle = new_user.handle,
-                    .display_name = new_user.display_name,
-                    .avatar = null,
-                });
-            }
-        },
+        qs.upsert_user.run(@src(), db, .{
+            .id = new_user.id,
+            .created = 0,
+            // .update_uid = new_user.update_id,
+            .update_uid = new_user.id,
+            .invited_by = new_user.invited_by,
+            .power = new_user.power,
+            .handle = new_user.handle,
+            .display_name = new_user.display_name,
+            .avatar = null,
+        });
     }
 
-    switch (delta.channels.mode) {
-        .full => @panic("TODO"),
-        .delta => {
-            for (delta.channels.items) |new_ch| {
-                if (host.channels.get(new_ch.id)) |ch| {
-                    assert(@as(Channel.Kind.Enum, ch.kind) == new_ch.kind);
-                    ch.sync(gpa, db, qs, &new_ch);
-                    qs.upsert_channel.run(@src(), db, .{
-                        .id = new_ch.id,
-                        .update_uid = new_ch.id,
-                        .section = null,
-                        .sort = 0,
-                        .name = new_ch.name,
-                        .kind = new_ch.kind,
-                        .privacy = new_ch.privacy,
-                    });
-                } else {
-                    host.channels.set(gpa, new_ch) catch @panic("oom");
-                    qs.upsert_channel.run(@src(), db, .{
-                        .id = new_ch.id,
-                        .update_uid = new_ch.id,
-                        .section = null,
-                        .sort = 0,
-                        .name = new_ch.name,
-                        .kind = new_ch.kind,
-                        .privacy = new_ch.privacy,
-                    });
-                    switch (new_ch.kind) {
-                        .chat => |*chat| {
-                            const slices = chat.messages.slices();
-                            var oldest_uid: ?u64 = null;
-                            for (slices) |s| for (s) |msg| {
-                                log.debug("first time chat sync, saving to db msg {}", .{msg.id});
-                                oldest_uid = oldest_uid orelse msg.id;
-                                qs.upsert_message.run(@src(), db, .{
-                                    .uid = msg.id,
-                                    .origin = msg.origin,
-                                    .created = msg.created,
-                                    .update_uid = msg.update_uid,
-                                    .kind = msg.kind,
-                                    .channel = new_ch.id,
-                                    .author = msg.author,
-                                    .body = msg.text,
-                                });
-                            };
+    for (delta.channels.delta) |ch_delta| {
+        const meta = ch_delta.meta;
+        const messages = ch_delta.messages;
+        assert(meta != null or messages.totalLen() > 0);
 
-                            if (slices[0].len + slices[1].len == Channel.window_size) {
-                                qs.upsert_message.run(@src(), db, .{
-                                    .uid = oldest_uid.? - 1,
-                                    .origin = 0,
-                                    .created = .epoch,
-                                    .update_uid = null,
-                                    .kind = .missing_history,
-                                    .channel = new_ch.id,
-                                    .author = delta.user_id,
-                                    .body = "",
-                                });
-                            }
-                        },
-                        else => {},
-                    }
-                }
+        if (meta) |*m| {
+            if (host.channels.get(ch_delta.id)) |ch| {
+                assert(@as(Channel.Kind.Enum, ch.kind) == m.kind);
+                ch.sync(gpa, db, qs, m);
+            } else {
+                host.channels.set(gpa, m.*) catch @panic("oom");
             }
-        },
+
+            qs.upsert_channel.run(@src(), db, .{
+                .id = ch_delta.id,
+                .update_uid = m.update_uid,
+                .section = null,
+                .sort = 0,
+                .name = m.name,
+                .kind = m.kind,
+                .privacy = m.privacy,
+            });
+        }
+
+        var oldest_uid: ?u64 = null;
+        for (ch_delta.messages.slices()) |s| for (s) |msg| {
+            log.debug("upsert msg {}", .{msg.id});
+            oldest_uid = oldest_uid orelse msg.id;
+            qs.upsert_message.run(@src(), db, .{
+                .uid = msg.id,
+                .origin = msg.origin,
+                .created = msg.created,
+                .update_uid = msg.update_uid,
+                .kind = msg.kind,
+                .channel = ch_delta.id,
+                .author = msg.author,
+                .body = msg.text,
+            });
+        };
+
+        if (ch_delta.messages.totalLen() == Channel.window_size) {
+            qs.upsert_message.run(@src(), db, .{
+                .uid = oldest_uid.? - 1,
+                .origin = 0,
+                .created = .epoch,
+                .update_uid = null,
+                .kind = .missing_history,
+                .channel = ch_delta.id,
+                .author = delta.user_id,
+                .body = "",
+            });
+        }
     }
 }
 

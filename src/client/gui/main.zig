@@ -13,11 +13,11 @@ const Voice = awebo.channels.Voice;
 
 pub fn draw(app: *App) !void {
     const core = &app.core;
-    if (app.active_host == 0) {
-        app.active_host = core.hosts.items.keys()[0];
+    if (core.active_host == 0) {
+        core.active_host = core.hosts.items.keys()[0];
     }
 
-    const h = core.hosts.get(app.active_host).?;
+    const h = core.hosts.get(core.active_host).?;
     const frozen = h.client.connection_status != .synced;
 
     host_bar.draw(app);

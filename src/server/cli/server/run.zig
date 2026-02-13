@@ -790,7 +790,7 @@ const Client = struct {
         };
 
         log.debug("adding new message: {f}", .{new});
-        try channel.kind.chat.messages.pushNew(gpa, new);
+        try channel.kind.chat.server.messages.pushNew(gpa, new);
         cqs.insert_message.run(@src(), db, .{
             .uid = new.id,
             .origin = new.origin,
@@ -1091,7 +1091,7 @@ var ___state: struct {
                                 .author = m.get(.author),
                                 .text = try m.text(gpa, .body),
                             };
-                            try channel.kind.chat.messages.backfill(gpa, msg);
+                            try channel.kind.chat.server.messages.backfill(gpa, msg);
                             server_log.debug("loaded chat message: {f}", .{msg});
                         }
                     }

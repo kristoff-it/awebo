@@ -29,6 +29,9 @@ failure: UnrecoverableFailure = .none,
 loaded: bool = false,
 cache_path: []const u8 = undefined,
 hosts: Hosts = .{},
+active_host: awebo.Host.ClientOnly.Id = 0,
+message_window: awebo.Channel.Chat.MessageWindow = .{},
+
 cfg: std.StringHashMapUnmanaged([]const u8) = .{},
 
 user_audio: struct {
@@ -357,10 +360,9 @@ fn chatMessageNew(core: *Core, host_id: HostId, cmn: awebo.protocol.server.ChatM
     defer locked.unlock();
 
     const h = core.hosts.get(host_id).?;
-    const c = &h.channels.get(cmn.channel).?.kind.chat;
+    const channel = h.channels.get(cmn.channel).?;
+    const chat = &channel.kind.chat;
     const u = h.users.get(cmn.msg.author).?;
-
-    c.messages.pushNew(core.gpa, cmn.msg) catch oom();
 
     const db = h.client.db;
     const new = cmn.msg;
@@ -374,11 +376,19 @@ fn chatMessageNew(core: *Core, host_id: HostId, cmn: awebo.protocol.server.ChatM
         .author = new.author,
         .body = new.text,
     });
-    _ = c.client.typing.orderedRemove(u.id);
+    _ = chat.client.typing.orderedRemove(u.id);
 
     if (cmn.origin != 0) {
         if (h.client.pending_messages.orderedRemove(cmn.origin)) {
             core.refresh(core, @src(), 0);
+        }
+    }
+
+    if (host_id == core.active_host) {
+        if (h.client.active_channel) |ac| {
+            if (ac == channel.id) {
+                chat.client.new_messages = true;
+            }
         }
     }
 }
