@@ -68,7 +68,7 @@ pub const protocol = struct {
 pub fn deinit(u: User, gpa: Allocator) void {
     gpa.free(u.handle);
     gpa.free(u.display_name);
-    gpa.free(u.avatar);
+    // gpa.free(u.avatar);
 
     switch (context) {
         .client => {},

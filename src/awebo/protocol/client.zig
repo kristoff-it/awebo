@@ -139,7 +139,10 @@ pub const CallJoin = struct {
 pub const ChatHistoryGet = struct {
     origin: OriginId,
     chat_channel: Channel.Id,
-    oldest_uid: u64,
+    from_uid: u64,
+    direction: Direction,
+
+    pub const Direction = enum(u8) { older, newer };
 
     pub const marker = 'H';
     pub const serializeAlloc = proto.MakeSerializeAllocFn(ChatHistoryGet);

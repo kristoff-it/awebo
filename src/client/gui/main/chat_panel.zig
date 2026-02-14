@@ -230,52 +230,59 @@ fn sendBar(core: *Core, h: *awebo.Host, c: *Channel, frozen: bool) !void {
     }
 }
 
-var channel_infos: std.AutoHashMapUnmanaged(packed struct {
-    host_id: awebo.Host.ClientOnly.Id,
-    channel_id: awebo.Channel.Id,
-}, struct {
-    scroll_info: dvui.ScrollInfo = .{},
-}) = .empty;
-
 fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat) !void {
     const core = &app.core;
     const gpa = core.gpa;
     const tz = &app.tz;
 
-    const gop = try channel_infos.getOrPut(gpa, .{
-        .host_id = h.client.host_id,
-        .channel_id = channel_id,
-    });
-    if (!gop.found_existing) gop.value_ptr.* = .{};
+    const first_load = c.client.scroll_info == null;
+    const scroll_info = @as(?*dvui.ScrollInfo, @ptrCast(@alignCast(c.client.scroll_info))) orelse blk: {
+        const si = try gpa.create(dvui.ScrollInfo);
+        si.* = .{};
+        c.client.scroll_info = si;
+        break :blk si;
+    };
 
-    const channel_info = gop.value_ptr;
-    const scroll_info = &channel_info.scroll_info;
-
-    const stick_to_bottom = scroll_info.offsetFromMax(.vertical) <= 0;
     var scroll_lock_visible = false;
+    const stick_to_bottom = scroll_info.offsetFromMax(.vertical) <= 0;
 
     // are we close enough to the top to load more old messages?
     const oldest_uid = if (core.message_window.oldest()) |old| old.id else 1;
-    const want_more_history = gop.found_existing and scroll_info.offset(.vertical) <= 100;
-    if (!c.client.waiting_old_messages and want_more_history and !c.client.loaded_all_old_messages) {
-        log.debug("query: {} {}", .{ oldest_uid, channel_id });
-        var rs = h.client.qs.select_channel_history.run(@src(), h.client.db, .{
+
+    const want_more_history = c.client.state == .ready and
+        // on first frame layout calculations are not reliable
+        (!first_load and scroll_info.offset(.vertical) <= 100) and
+        !c.client.loaded_all_old_messages;
+
+    if (want_more_history) {
+        var rs = h.client.qs.select_chat_history.run(@src(), h.client.db, .{
             .below_uid = oldest_uid,
             .channel = channel_id,
             .limit = 16,
         });
 
         var count: usize = 0;
-        var missing_history = false;
-        var missing_uid: awebo.Message.Id = 0;
+        var missing_messages: union(enum) {
+            // we successfully fetched some history from the db and don't need to contact the server yet
+            none,
+            // We found a missing_messages_older message, must fetch towards the past
+            older: awebo.Message.Id,
+            // We found a missing_messages_newer message, must fetch towards the present
+            newer: awebo.Message.Id,
+        } = .none;
+
         while (rs.next()) |r| : (count += 1) {
             const kind = r.get(.kind);
-            if (kind == .missing_history) {
-                // we need to trigger a fetch
-                missing_history = true;
-                missing_uid = r.get(.uid) + 1;
-                log.debug("found a missing history message uid = {}", .{missing_uid});
-                break;
+            switch (kind) {
+                else => {},
+                .missing_messages_older => {
+                    missing_messages = .{ .older = r.get(.uid) };
+                    break;
+                },
+                .missing_messages_newer => {
+                    missing_messages = .{ .newer = r.get(.uid) };
+                    break;
+                },
             }
             log.debug("chat panel: pushing history message {}", .{r.get(.uid)});
             core.message_window.pushOld(gpa, .{
@@ -287,43 +294,72 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
                 .author = r.get(.author),
                 .text = try r.text(gpa, .body),
             }) catch @panic("oom");
+        } else {
+            // we didn't find any missing history marker if we loaded less
+            // than a full batch, then we reached the end of chat history
+            if (count != 16) {
+                c.client.loaded_all_old_messages = true;
+            }
+        }
+
+        if (count != 0) {
+            c.client.loaded_all_new_messages = false;
+            scroll_lock_visible = true;
         }
 
         log.debug("loaded {} history messages from db oldest_uid = {}", .{ count, oldest_uid });
 
-        if (count == 0 or missing_history) {
-            log.debug("fetching history from server", .{});
-            if (c.client.fetched_all_old_messages and !missing_history) {
-                c.client.loaded_all_old_messages = true;
-            } else {
-                const uid = if (missing_history) missing_uid else oldest_uid;
-                core.chatHistoryGet(h, channel_id, c, uid);
-            }
-        } else {
-            c.client.loaded_all_new_messages = false;
-            scroll_lock_visible = true;
+        switch (missing_messages) {
+            .none => {},
+            .older => |uid| {
+                log.debug("fetching older history from server from {}", .{uid});
+                core.chatHistoryGet(h, channel_id, uid, .older);
+                c.client.state = .waiting_past;
+            },
+            .newer => |uid| {
+                log.debug("fetching newer history from server from {}", .{uid});
+                core.chatHistoryGet(h, channel_id, uid, .newer);
+                c.client.state = .waiting_past;
+            },
         }
     }
 
     // are we close enough to the bottom to want to load newer messages?
-    const want_more_present = scroll_info.offset(.vertical) > scroll_info.scrollMax(.vertical) - 150;
     const newest_uid = if (core.message_window.latest()) |new| new.id else 1;
-    if (!c.client.waiting_new_messages and
-        want_more_present and !c.client.loaded_all_new_messages)
-    {
-        var rs = h.client.qs.select_channel_present.run(@src(), h.client.db, .{
+    const want_more_present = c.client.state == .ready and
+        (!first_load and scroll_info.offset(.vertical) > scroll_info.scrollMax(.vertical) - 150) and
+        !c.client.loaded_all_new_messages;
+
+    if (want_more_present) {
+        var rs = h.client.qs.select_chat_present.run(@src(), h.client.db, .{
             .above_uid = newest_uid,
             .channel = channel_id,
             .limit = 16,
         });
 
         var count: usize = 0;
+        var missing_messages: union(enum) {
+            // we successfully fetched some history from the db and don't need to contact the server yet
+            none,
+            // We found a missing_messages_older message, must fetch towards the past
+            older: awebo.Message.Id,
+            // We found a missing_messages_newer message, must fetch towards the present
+            newer: awebo.Message.Id,
+        } = .none;
         while (rs.next()) |r| : (count += 1) {
             const kind = r.get(.kind);
-            if (kind == .missing_history) {
-                @panic("TODO");
+            log.debug("loading new message {} {t}", .{ r.get(.uid), kind });
+            switch (kind) {
+                else => {},
+                .missing_messages_older => {
+                    missing_messages = .{ .older = r.get(.uid) };
+                    break;
+                },
+                .missing_messages_newer => {
+                    missing_messages = .{ .newer = r.get(.uid) };
+                    break;
+                },
             }
-            log.debug("chat panel: pushing new message {}", .{r.get(.uid)});
             core.message_window.pushNew(gpa, .{
                 .id = r.get(.uid),
                 .origin = r.get(.origin),
@@ -333,32 +369,42 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
                 .author = r.get(.author),
                 .text = try r.text(gpa, .body),
             }) catch @panic("oom");
+        } else {
+            // we didn't find any missing history marker if we loaded less
+            // than a full batch, then we reached the present
+            if (count != 16) {
+                c.client.loaded_all_new_messages = true;
+            }
         }
 
-        if (count == 0) {
-            log.debug("fetching present from server", .{});
-            c.client.loaded_all_new_messages = true;
-            c.client.fetched_all_new_messages = true;
-            // if (c.client.fetched_all_history) {
-            //     c.client.loaded_all_history = true;
-            // } else {
-            //     core.chatHistoryGet(h, channel_id, c, oldest_uid);
-            // }
-        } else {
+        log.debug("loaded {} new messages from uid {}", .{ count, newest_uid });
+
+        if (count != 0) {
             c.client.loaded_all_old_messages = false;
             scroll_lock_visible = true;
         }
+
+        switch (missing_messages) {
+            .none => {},
+            .older => |uid| {
+                log.debug("fetching older history from server from {}", .{uid});
+                core.chatHistoryGet(h, channel_id, uid, .older);
+                c.client.state = .waiting_present;
+            },
+            .newer => |uid| {
+                log.debug("fetching newer history from server from {}", .{uid});
+                core.chatHistoryGet(h, channel_id, uid, .newer);
+                c.client.state = .waiting_present;
+            },
+        }
     }
 
-    // if (c.client.waiting_history) {
-    //     dvui.spinner(@src(), .{});
-    // }
-
+    var scroll_data: dvui.WidgetData = undefined;
     var scroll = dvui.scrollArea(@src(), .{
         .scroll_info = scroll_info,
         .lock_visible = scroll_lock_visible,
     }, .{
-        // .data_out = scroll_info,
+        .data_out = &scroll_data,
         .min_size_content = .{ .h = 250 },
 
         .expand = .both,
@@ -408,7 +454,22 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
 
     scroll.deinit();
 
-    if (!gop.found_existing or (c.client.new_messages and stick_to_bottom)) {
+    if (c.client.state != .ready) {
+        const r = scroll_data.rectScale().r;
+        const pt: dvui.Point.Physical = .{ .x = r.x + r.w / 2, .y = r.y };
+        var fw: dvui.FloatingWidget = undefined;
+        fw.init(@src(), .{ .from = pt, .from_gravity_y = 1.0 }, .{
+            .background = true,
+            .style = .window,
+            .corner_radius = .all(1000),
+            .padding = .all(4),
+            .margin = .all(4),
+        });
+        dvui.labelNoFmt(@src(), "Loading History...", .{}, .{});
+        fw.deinit();
+    }
+
+    if (first_load or (c.client.new_messages and stick_to_bottom)) {
         c.client.new_messages = false;
         // do this after scrollArea has given scroll_info the new size
         scroll_info.scrollToOffset(.vertical, std.math.floatMax(f32));

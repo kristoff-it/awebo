@@ -18,7 +18,10 @@ pub const Kind = enum(u8) {
     // For example a "5 messages moved to another channel" type of stuff
     system,
     // client-only, used to mark a missing piece of chat history
-    missing_history,
+    // - older: missing messages with < uid
+    // - newer: missing messages with > uid
+    missing_messages_older,
+    missing_messages_newer,
 };
 
 pub const protocol = struct {

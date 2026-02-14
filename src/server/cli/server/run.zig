@@ -854,12 +854,28 @@ const Client = struct {
         };
         _ = channel;
 
-        var rs = qs.select_chat_history.run(@src(), db, .{
-            .channel = chg.chat_channel,
-            .offset = chg.oldest_uid,
-            .limit = awebo.Channel.window_size,
-        });
+        switch (chg.direction) {
+            .older => try chatHistoryGetInner(io, gpa, chg, client, qs.select_chat_history.run(@src(), db, .{
+                .channel = chg.chat_channel,
+                .below_uid = chg.from_uid,
+                .limit = awebo.Channel.window_size,
+            })),
+            .newer => try chatHistoryGetInner(io, gpa, chg, client, qs.select_chat_present.run(@src(), db, .{
+                .channel = chg.chat_channel,
+                .above_uid = chg.from_uid,
+                .limit = awebo.Channel.window_size,
+            })),
+        }
+    }
 
+    fn chatHistoryGetInner(
+        io: Io,
+        gpa: Allocator,
+        chg: awebo.protocol.client.ChatHistoryGet,
+        client: *Client,
+        outer_rs: anytype,
+    ) !void {
+        var rs = outer_rs;
         var messages: std.ArrayList(awebo.Message) = .empty;
         defer {
             for (messages.items) |m| gpa.free(m.text);
@@ -1081,7 +1097,7 @@ var ___state: struct {
 
                         while (msgs.next()) |m| {
                             const m_kind = m.get(.kind);
-                            assert(m_kind != .missing_history);
+                            assert(m_kind != .missing_messages_older and m_kind != .missing_messages_newer);
                             const msg: awebo.Message = .{
                                 .id = m.get(.uid),
                                 .origin = m.get(.origin),
@@ -1383,26 +1399,8 @@ pub const Queries = struct {
         .args = struct { handle: []const u8 },
     }),
 
-    select_chat_history: Query(
-        \\SELECT uid, origin, created, update_uid, kind, author, body FROM messages
-        \\WHERE channel = ?1 AND uid < ?2 ORDER BY uid DESC LIMIT ?3;
-    , .{
-        .kind = .rows,
-        .cols = struct {
-            uid: awebo.Message.Id,
-            origin: u64,
-            created: awebo.Date,
-            update_uid: ?u64,
-            kind: awebo.Message.Kind,
-            author: awebo.User.Id,
-            body: []const u8,
-        },
-        .args = struct {
-            channel: awebo.Channel.Id,
-            offset: u64,
-            limit: u64,
-        },
-    }),
+    select_chat_history: @FieldType(Database.CommonQueries, "select_chat_history"),
+    select_chat_present: @FieldType(Database.CommonQueries, "select_chat_present"),
 
     // select_user_permission: Query(
     //     \\SELECT value FROM user_permissions

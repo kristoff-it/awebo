@@ -388,6 +388,9 @@ fn chatMessageNew(core: *Core, host_id: HostId, cmn: awebo.protocol.server.ChatM
         if (h.client.active_channel) |ac| {
             if (ac == channel.id) {
                 chat.client.new_messages = true;
+                if (chat.client.loaded_all_new_messages) {
+                    core.message_window.pushNew(core.gpa, new) catch @panic("oom");
+                }
             }
         }
     }
@@ -400,22 +403,46 @@ fn chatHistory(core: *Core, host_id: HostId, ch: awebo.protocol.server.ChatHisto
         return;
     };
 
-    for (ch.history) |msg| {
+    for (ch.history, 0..) |msg, idx| {
         log.debug("chatHistory channel ({}): saving history message {}", .{ ch.channel, msg });
-        h.client.qs.upsert_message.run(@src(), h.client.db, .{
-            .uid = msg.id,
-            .origin = msg.origin,
-            .created = msg.created,
-            .update_uid = msg.update_uid,
-            .channel = ch.channel,
-            .kind = msg.kind,
-            .author = msg.author,
-            .body = msg.text,
-            .reactions = null,
-        });
+
+        if (idx != awebo.Channel.window_size - 1) {
+            h.client.qs.upsert_message.run(@src(), h.client.db, .{
+                .uid = msg.id,
+                .origin = msg.origin,
+                .created = msg.created,
+                .update_uid = msg.update_uid,
+                .channel = ch.channel,
+                .kind = msg.kind,
+                .author = msg.author,
+                .body = msg.text,
+                .reactions = null,
+            });
+        } else {
+            // We received a full chunk but we might have already
+            // re-connected to another chunk, meaning that we don't
+            // necessarily need to create a missing messages marker.
+
+            log.debug("saving missing messages marker at uid = {}", .{msg.id});
+
+            const kind: awebo.Message.Kind = if (ch.history[0].id > ch.history[1].id)
+                .missing_messages_older
+            else
+                .missing_messages_newer;
+            h.client.qs.insert_message_or_ignore.run(@src(), h.client.db, .{
+                .uid = msg.id,
+                .origin = msg.origin,
+                .created = msg.created,
+                .update_uid = msg.update_uid,
+                .channel = ch.channel,
+                .kind = kind,
+                .author = msg.author,
+                .body = msg.text,
+            });
+        }
     }
 
-    channel.kind.chat.client.waiting_old_messages = false;
+    channel.kind.chat.client.state = .ready;
     if (ch.history.len < awebo.Channel.window_size) {
         channel.kind.chat.client.fetched_all_old_messages = true;
     }
@@ -610,8 +637,8 @@ pub fn chatHistoryGet(
     core: *Core,
     h: *Host,
     channel_id: awebo.Channel.Id,
-    chat: *awebo.Channel.Chat,
-    next_oldest_uid: u64,
+    from_uid: u64,
+    direction: awebo.protocol.client.ChatHistoryGet.Direction,
 ) void {
     switch (h.client.connection_status) {
         .connecting, .connected, .disconnected, .reconnecting, .deleting => unreachable, // UI should have prevented this attempt
@@ -622,14 +649,17 @@ pub fn chatHistoryGet(
     const chg: awebo.protocol.client.ChatHistoryGet = .{
         .chat_channel = channel_id,
         .origin = 0,
-        .oldest_uid = next_oldest_uid,
+        .direction = direction,
+        .from_uid = switch (direction) {
+            .newer => from_uid - 1,
+            .older => from_uid + 1,
+        },
     };
 
     const bytes = chg.serializeAlloc(core.gpa) catch oom();
     errdefer core.gpa.free(bytes);
 
     conn.tcp.queue.putOne(core.io, bytes) catch oom();
-    chat.client.waiting_old_messages = true;
 }
 
 pub fn chatTypingNotify(core: *Core, h: *Host, c: *Channel) !void {

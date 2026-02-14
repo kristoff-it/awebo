@@ -120,7 +120,7 @@ select_channel_messages: Query(
     },
 }),
 
-select_channel_history: Query(
+select_chat_history: Query(
     \\SELECT uid, origin, created, update_uid, kind, author, body FROM messages
     \\WHERE channel = ?1 AND uid < ?2 ORDER BY uid DESC LIMIT ?3;
 , .{
@@ -141,7 +141,7 @@ select_channel_history: Query(
     },
 }),
 
-select_channel_present: Query(
+select_chat_present: Query(
     \\SELECT uid, origin, created, update_uid, kind, author, body FROM messages
     \\WHERE channel = ?1 AND uid > ?2 ORDER BY uid ASC LIMIT ?3;
 , .{
@@ -236,6 +236,26 @@ insert_message: Query(
     \\  VALUES
     \\    (?, ?, ?, ?, ?, ?, ?, ?)
     \\;
+, .{
+    .kind = .exec,
+    .args = struct {
+        uid: u64,
+        origin: u64,
+        created: awebo.Date,
+        update_uid: ?u64,
+        channel: awebo.Channel.Id,
+        kind: awebo.Message.Kind,
+        author: ?awebo.User.Id,
+        body: []const u8,
+    },
+}),
+
+insert_message_or_ignore: Query(
+    \\INSERT INTO messages
+    \\    (uid, origin, created, update_uid, channel, kind, author, body)
+    \\  VALUES
+    \\    (?, ?, ?, ?, ?, ?, ?, ?)
+    \\ON CONFLICT DO NOTHING;
 , .{
     .kind = .exec,
     .args = struct {

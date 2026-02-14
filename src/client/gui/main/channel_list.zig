@@ -234,15 +234,21 @@ pub fn channelList(h: *awebo.Host, core: *Core) !void {
                     core.message_window.reset(core.gpa);
 
                     // Replace messages in the message window
-                    var rs = h.client.qs.select_channel_history.run(@src(), h.client.db, .{
+                    var rs = h.client.qs.select_chat_history.run(@src(), h.client.db, .{
                         .below_uid = chat.client.last_newest,
                         .channel = channel.id,
                         .limit = 64,
                     });
+                    std.log.debug("loadig from last newest {}", .{chat.client.last_newest});
 
                     while (rs.next()) |r| {
+                        std.log.debug("loading message {}", .{r.get(.uid)});
                         const kind = r.get(.kind);
-                        if (kind == .missing_history) break;
+                        switch (kind) {
+                            .missing_messages_older, .missing_messages_newer => break,
+                            else => {},
+                        }
+                        std.log.debug("continuinig {}", .{r.get(.uid)});
                         core.message_window.backfill(core.gpa, .{
                             .id = r.get(.uid),
                             .origin = r.get(.origin),

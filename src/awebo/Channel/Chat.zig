@@ -54,23 +54,31 @@ pub const ServerOnly = struct {
 };
 
 pub const ClientOnly = struct {
-    scroll: enum {
-        sticky_bottom,
-        position,
-    } = .sticky_bottom,
-
     /// Core has pushed new messages in chat.messages,
     /// UI should set this to false when those messages
     /// have been rendered.
     new_messages: bool = false,
-    waiting_new_messages: bool = false,
+    /// Newest message in the message buffer before we switched to another
+    /// channel. Used to restore scroll state when switching back.
+    /// Defaults to maxint to guarantee that the query loads newest messages
+    /// when showing the channel for the first time.
+    last_newest: Message.Id = std.math.maxInt(i64),
+
+    state: enum {
+        /// Not waiting for any message chunk to load
+        ready,
+        waiting_present,
+        waiting_past,
+    } = .ready,
+
+    fetched_all_old_messages: bool = false,
+    loaded_all_old_messages: bool = false,
     fetched_all_new_messages: bool = false,
     loaded_all_new_messages: bool = false,
 
-    waiting_old_messages: bool = false,
-    fetched_all_old_messages: bool = false,
-    loaded_all_old_messages: bool = false,
-    last_newest: Message.Id = std.math.maxInt(i64),
+    /// UI-managed resource that keeps track of any other scrolling state,
+    /// for example the precise pixel offset that we're scrolled at.
+    scroll_info: ?*anyopaque = null,
 
     /// A FIFO hash set of users typing in this chat mapped to the time they started typing.
     typing: std.AutoArrayHashMapUnmanaged(User.Id, u64) = .empty,
@@ -125,18 +133,21 @@ pub const MessageWindow = struct {
         const gop = try mw.indexes.id.getOrPut(gpa, msg.id);
         if (!gop.found_existing) {
             mw.tail -%= 1;
+
             if (mw.len == Channel.window_size) {
                 assert(mw.indexes.id.remove(mw.buffer[mw.tail].id));
                 mw.buffer[mw.tail].deinit(gpa);
-            }
+            } else mw.len += 1;
+
             mw.buffer[mw.tail] = msg;
             gop.value_ptr.* = mw.tail;
         }
     }
 
     pub fn pushNew(mw: *MessageWindow, gpa: std.mem.Allocator, msg: Message) !void {
-        // if (mw.latest()) |l| assert(l.id < msg.id);
+        if (mw.latest()) |l| assert(l.id < msg.id);
         const gop = try mw.indexes.id.getOrPut(gpa, msg.id);
+        log.debug("buffer {} == {}", .{ msg.id, gop.found_existing });
         if (!gop.found_existing) {
             gop.value_ptr.* = mw.doPushNew(gpa, msg);
         }
@@ -178,17 +189,20 @@ pub const MessageWindow = struct {
     }
 
     fn doPushNew(mw: *MessageWindow, gpa: Allocator, msg: Message) usize {
-        const tail_w: u32 = mw.tail;
-        const head: Channel.WindowSize = @intCast(@mod(tail_w + mw.len, Channel.window_size));
-        if (head == mw.tail and mw.len == Channel.window_size) {
-            assert(mw.indexes.id.remove(mw.buffer[head].id));
-            mw.buffer[head].deinit(gpa);
+        const new_head = if (mw.len == Channel.window_size) blk: {
+            const new_head = mw.tail;
+            assert(mw.indexes.id.remove(mw.buffer[new_head].id));
+            mw.buffer[new_head].deinit(gpa);
             mw.tail +%= 1;
-        } else {
+            break :blk new_head;
+        } else blk: {
+            const tail_w: u32 = mw.tail;
+            const head: Channel.WindowSize = @intCast(@mod(tail_w + mw.len, Channel.window_size));
             mw.len += 1;
-        }
-        mw.buffer[head] = msg;
-        return head;
+            break :blk head;
+        };
+        mw.buffer[new_head] = msg;
+        return new_head;
     }
 
     pub fn latest(mw: *const MessageWindow) ?*const Message {

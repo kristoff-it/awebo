@@ -185,10 +185,26 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const HostSync) void {
             });
         }
 
-        var oldest_uid: ?u64 = null;
+        var first = true;
+        const total_len = ch_delta.messages.totalLen();
         for (ch_delta.messages.slices()) |s| for (s) |msg| {
+            if (total_len == Channel.window_size and first) {
+                qs.insert_message_or_ignore.run(@src(), db, .{
+                    .uid = msg.id,
+                    .origin = msg.origin,
+                    .created = msg.created,
+                    .update_uid = msg.update_uid,
+                    .channel = ch_delta.id,
+                    .kind = .missing_messages_older,
+                    .author = msg.author,
+                    .body = msg.text,
+                });
+
+                first = false;
+                continue;
+            }
+
             log.debug("upsert msg {}", .{msg.id});
-            oldest_uid = oldest_uid orelse msg.id;
             qs.upsert_message.run(@src(), db, .{
                 .uid = msg.id,
                 .origin = msg.origin,
@@ -200,19 +216,6 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const HostSync) void {
                 .body = msg.text,
             });
         };
-
-        if (ch_delta.messages.totalLen() == Channel.window_size) {
-            qs.upsert_message.run(@src(), db, .{
-                .uid = oldest_uid.? - 1,
-                .origin = 0,
-                .created = .epoch,
-                .update_uid = null,
-                .kind = .missing_history,
-                .channel = ch_delta.id,
-                .author = delta.user_id,
-                .body = "",
-            });
-        }
     }
 }
 
