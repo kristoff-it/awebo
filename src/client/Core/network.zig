@@ -305,9 +305,16 @@ fn runHostReceive(
                 errdefer smr.deinit(gpa);
                 try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .search_messages_reply = smr } } });
             },
-
-            .ChannelsUpdate => @panic("TODO"),
-            .ClientRequestReply => @panic("TODO"),
+            .ClientRequestReply => {
+                const crr: awebo.protocol.server.ClientRequestReply = try .deserializeAlloc(gpa, reader);
+                errdefer crr.deinit(gpa);
+                try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .client_request_reply = crr } } });
+            },
+            .ChannelsUpdate => {
+                const cu: awebo.protocol.server.ChannelsUpdate = try .deserializeAlloc(gpa, reader);
+                errdefer cu.deinit(gpa);
+                try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .channels_update = cu } } });
+            },
         }
     }
 }

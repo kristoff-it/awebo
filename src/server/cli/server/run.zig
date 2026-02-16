@@ -596,7 +596,6 @@ const Client = struct {
     }
 
     fn channelCreate(client: *Client, io: Io, gpa: Allocator, reader: *Io.Reader) !void {
-        if (true) @panic("TODO");
         const cc = try awebo.protocol.client.ChannelCreate.deserializeAlloc(gpa, reader);
         assert(cc.kind == .chat);
 
@@ -604,17 +603,39 @@ const Client = struct {
         defer locked.unlock(io);
         const state = locked.state;
 
-        const chat = state.host.channels.create(gpa, cc.name) catch |err| switch (err) {
-            error.OutOfMemory => @panic("oom"),
-            error.NameTaken => {
-                const ccr = cc.reply(.name_taken);
-                const bytes = try ccr.serializeAlloc(gpa);
-                errdefer gpa.free(bytes);
-                const msg: *TcpMessage = .create(gpa, bytes, 1);
-                try client.tcp.queue.putOne(io, msg);
-                return;
+        if (state.host.channels.name(cc.name) != null) {
+            const ccr = cc.reply(.name_taken);
+            const bytes = try ccr.serializeAlloc(gpa);
+            errdefer gpa.free(bytes);
+            const msg: *TcpMessage = .create(gpa, bytes, 1);
+            try client.tcp.queue.putOne(io, msg);
+            return;
+        }
+
+        const uid = state.id.new();
+        const channel_id = cqs.insert_channel.runReturning(@src(), db, .id, .{
+            .update_uid = uid,
+            .sort = 0,
+            .name = cc.name,
+            .kind = cc.kind,
+            .privacy = .private,
+        });
+
+        const channel: awebo.Channel = .{
+            .id = channel_id,
+            .update_uid = uid,
+            .name = cc.name,
+            .kind = switch (cc.kind) {
+                inline else => |tag| @unionInit(
+                    awebo.Channel.Kind,
+                    @tagName(tag),
+                    .{},
+                ),
             },
+            .privacy = .private,
         };
+
+        try state.host.channels.set(gpa, channel);
 
         {
             const ccr = cc.reply(.ok);
@@ -627,8 +648,8 @@ const Client = struct {
 
         {
             const cu: awebo.protocol.server.ChannelsUpdate = .{
-                .kind = .delta,
-                .channels = &.{chat.*},
+                .op = .create,
+                .channels = &.{channel},
             };
 
             const bytes = try cu.serializeAlloc(gpa);

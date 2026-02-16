@@ -193,11 +193,11 @@ pub const channels: Table = .{
     \\  update_uid   INTEGER UNIQUE NOT NULL,
     // Before deleting a section all connected channels
     // must be detached first.
-    \\  section      REFERENCES sections ON DELETE CASCADE,
+    \\  section      REFERENCES sections ON DELETE CASCADE NULL,
     \\  sort         INTEGER NOT NULL,
     \\  name         TEXT NOT NULL,
     //  awebo.Channel.Kind.Enum
-    \\  kind         INTEGER,
+    \\  kind         ENUM,
     //  awebo.Channel.Privacy
     \\  privacy      ENUM NOT NULL,
     \\

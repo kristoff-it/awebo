@@ -119,6 +119,8 @@ pub const ChannelCreate = struct {
         .connection_failure,
         .name_taken,
         .ok,
+        .rate_limit,
+        .no_permission,
     });
 
     pub fn destroy(cc: *ChannelCreate, gpa: Allocator) void {

@@ -100,6 +100,13 @@ pub const ClientRequestReply = struct {
         };
     };
 
+    pub fn deinit(crr: *const ClientRequestReply, gpa: Allocator) void {
+        switch (crr.result) {
+            else => {},
+            .err => |err| gpa.free(err.msg),
+        }
+    }
+
     pub const serializeAlloc = proto.MakeSerializeAllocFn(ClientRequestReply);
     pub const deserializeAlloc = proto.MakeDeserializeAllocFn(ClientRequestReply);
 };
@@ -275,12 +282,17 @@ pub const ChatHistory = struct {
 };
 
 pub const ChannelsUpdate = struct {
-    kind: enum(u8) { full, delta },
+    op: enum(u8) { create, delete },
     channels: []const Channel,
+
+    /// Assumes that each Channel entry has been consumed.
+    pub fn deinit(cu: *const ChannelsUpdate, gpa: Allocator) void {
+        gpa.free(cu.channels);
+    }
 
     pub const marker = 'H';
     pub const serializeAlloc = proto.MakeSerializeAllocFn(ChannelsUpdate);
-    pub const deserialize = proto.MakeDeserializeFn(ChannelsUpdate);
+    pub const deserializeAlloc = proto.MakeDeserializeAllocFn(ChannelsUpdate);
     pub const protocol = struct {
         pub const sizes = struct {
             pub const channels = u32;

@@ -199,17 +199,23 @@ insert_user: Query(
     },
 }),
 
-insert_channels: Query(std.fmt.comptimePrint(
+insert_channel: Query(
     \\INSERT INTO channels
     \\  (update_uid, section, sort, name, kind, privacy)
-    \\ VALUES
-    \\  (?1, NULL, 0, 'Default Chat Channel', 0, {0}),
-    \\  (?2, NULL, 0, 'Second Chat Channel', 0, {0}),
-    \\  (?3, NULL, 0, 'Default Voice Channel', 1, {0})
+    \\  VALUES
+    \\  (?1,         NULL,    ?2,   ?3,  ?4,    ?5)
+    \\RETURNING channels.id
     \\;
-, .{@intFromEnum(awebo.Channel.Privacy.private)}), .{
-    .kind = .exec,
-    .args = struct { u64, u64, u64 },
+, .{
+    .kind = .returning,
+    .cols = struct { id: awebo.Channel.Id },
+    .args = struct {
+        update_uid: u64,
+        sort: u64,
+        name: []const u8,
+        kind: awebo.Channel.Kind.Enum,
+        privacy: awebo.Channel.Privacy,
+    },
 }),
 
 insert_roles: Query(

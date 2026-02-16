@@ -212,18 +212,8 @@ pub fn run(core: *Core) void {
                     .callers_update => |cu| callersUpdate(core, msg.host_id, cu),
 
                     .search_messages_reply => |smr| core.search_messages_reply = smr,
-                    // .msg => |msg| switch (msg.bytes[0]) {
-                    //     else => std.debug.panic("unexpected marker: '{c}'", .{
-                    //         msg.bytes[0],
-                    //     }),
-                    //     awebo.protocol.server.ChannelsUpdate.marker => {
-                    //         try channelsUpdate(msg);
-                    //     },
-                    //     awebo.protocol.server.ClientRequestReply.marker => {
-                    //         try handleRequestReply(core);
-                    //     },
-                    // },
-
+                    .client_request_reply => |crr| core.handleRequestReply(crr),
+                    .channels_update => |cu| core.channelsUpdate(cu),
                 }
             },
             .audio_ready => {
@@ -253,6 +243,9 @@ pub const Event = union(enum) {
             callers_update: awebo.protocol.server.CallersUpdate,
 
             search_messages_reply: awebo.protocol.server.SearchMessagesReply,
+
+            channels_update: awebo.protocol.server.ChannelsUpdate,
+            client_request_reply: awebo.protocol.server.ClientRequestReply,
         },
 
         pub const CallerSpeaking = struct {
@@ -300,46 +293,57 @@ fn hostSync(core: *Core, id: HostId, hs: *const awebo.protocol.server.HostSync) 
     }
 }
 
-fn channelsUpdate(core: *Core, msg: void) !void {
+fn channelsUpdate(core: *Core, cu: awebo.protocol.server.ChannelsUpdate) void {
     const gpa = core.gpa;
-
-    var fbs = std.io.fixedBufferStream(msg.bytes[1..]);
-    const crr = try awebo.protocol.server.ChannelsUpdate.parseAlloc(gpa, fbs.reader());
-    log.debug("CU: {any}", .{crr});
-
-    std.debug.assert(crr.kind == .delta);
 
     var locked = lockState(core);
     defer locked.unlock();
 
     const h = core.hosts.get(1).?;
-    for (crr.channels) |chat| {
-        try h.chats.set(gpa, chat);
+    switch (cu.op) {
+        .create => {
+            for (cu.channels) |channel| {
+                h.client.qs.upsert_channel.run(@src(), h.client.db, .{
+                    .id = channel.id,
+                    .update_uid = channel.update_uid,
+                    .section = null,
+                    .sort = 0,
+                    .name = channel.name,
+                    .kind = channel.kind,
+                    .privacy = channel.privacy,
+                });
+                h.channels.set(gpa, channel) catch oom();
+            }
+        },
+        .delete => {},
     }
 }
-fn handleRequestReply(core: *Core, msg: void) !void {
-    var fbs = std.io.fixedBufferStream(msg.bytes[1..]);
-    const crr = try awebo.protocol.server.ClientRequestReply.parseAlloc(core.gpa, fbs.reader());
-    log.debug("CRR: {any}", .{crr});
-
+fn handleRequestReply(core: *Core, crr: awebo.protocol.server.ClientRequestReply) void {
     var locked = lockState(core);
     defer locked.unlock();
+
+    log.debug("Reply(m: '{c}' orig: {} res: {t})", .{
+        crr.reply_marker,
+        crr.origin,
+        crr.result,
+    });
 
     switch (crr.reply_marker) {
         awebo.protocol.client.ChannelCreate.marker => {
             const h = core.hosts.get(1).?;
 
             if (h.client.pending_requests.get(crr.origin)) |status| {
-                const server: awebo.protocol.client.ChannelCreate.Result = @enumFromInt(crr.result);
-                const new: ui.ChannelCreate.Status.Enum = switch (server) {
+                const new: ui.ChannelCreate.Status.Enum = switch (crr.result) {
                     .ok => .ok,
-                    .name_taken => .name_taken,
-                    .fail => @panic("TODO"),
+                    .rate_limit => .rate_limit,
+                    .no_permission => .no_permission,
+                    .err => |err| @enumFromInt(err.code),
                 };
+
                 @atomicStore(u8, status, @intFromEnum(new), .release);
             }
         },
-        else => std.debug.panic("unhandled ClientRequestReply marker '{c}'", .{
+        else => log.warn("unhandled ClientRequestReply marker '{c}'", .{
             crr.reply_marker,
         }),
     }
@@ -381,7 +385,7 @@ fn chatMessageNew(core: *Core, host_id: HostId, cmn: awebo.protocol.server.ChatM
     _ = chat.client.typing.orderedRemove(u.id);
 
     if (cmn.origin != 0) {
-        if (h.client.pending_messages.orderedRemove(cmn.origin)) {
+        if (chat.client.pending_messages.orderedRemove(cmn.origin)) {
             core.refresh(core, @src(), 0);
         }
     }
@@ -715,8 +719,8 @@ pub fn messageSend(core: *Core, h: *Host, c: *Channel, text: []const u8) !void {
 
     // peding_messages now owns `text` and is expected to free it once confirmation arrives
     // in case of network errors, this is where the "retry" option will also be present
-    const gop = try h.client.pending_messages.getOrPut(gpa, cms.origin);
-    errdefer _ = h.client.pending_messages.swapRemove(cms.origin);
+    const gop = try c.kind.chat.client.pending_messages.getOrPut(gpa, cms.origin);
+    errdefer _ = c.kind.chat.client.pending_messages.swapRemove(cms.origin);
     assert(!gop.found_existing);
     gop.value_ptr.* = .{
         .cms = cms,
@@ -731,18 +735,16 @@ pub fn messageSend(core: *Core, h: *Host, c: *Channel, text: []const u8) !void {
 pub fn channelCreate(core: *Core, cmd: *ui.ChannelCreate) !void {
     const gpa = core.gpa;
     const io = core.io;
-    std.debug.panic("unimplemented", .{});
-    try network.command_queue.putOne(io, .{
-        .channel_create = .{
-            .hc = cmd.host.client.connection orelse return error.NotConnected,
-            .cmd = .{
-                .origin = cmd.origin,
-                .kind = cmd.kind,
-                .name = cmd.name,
-            },
-        },
-    });
+
+    const msg: awebo.protocol.client.ChannelCreate = .{
+        .kind = .chat,
+        .name = cmd.name,
+        .origin = cmd.origin,
+    };
+
+    const bytes = try msg.serializeAlloc(gpa);
     try cmd.host.client.pending_requests.put(gpa, cmd.origin, @ptrCast(&cmd.status.impl.raw));
+    try cmd.host.client.connection.?.tcp.queue.putOne(io, bytes);
 }
 
 /// Returns a future representing the frist connection attempt.

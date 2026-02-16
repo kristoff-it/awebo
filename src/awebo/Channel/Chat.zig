@@ -9,7 +9,8 @@ const Database = @import("../Database.zig");
 const Channel = @import("../Channel.zig");
 const Message = @import("../Message.zig");
 const User = @import("../User.zig");
-const tcpSize = @import("../protocol.zig").tcpSize;
+const proto = @import("../protocol.zig");
+const tpcSize = proto.tcpSize;
 const Chat = @This();
 
 const log = std.log.scoped(.chat);
@@ -79,6 +80,15 @@ pub const ClientOnly = struct {
     /// UI-managed resource that keeps track of any other scrolling state,
     /// for example the precise pixel offset that we're scrolled at.
     scroll_info: ?*anyopaque = null,
+
+    /// Messages that we are in the process of sending (or that have failed)
+    pending_messages: std.AutoArrayHashMapUnmanaged(
+        proto.client.OriginId,
+        struct {
+            cms: proto.client.ChatMessageSend,
+            push_future: Io.Future(error{ Closed, Canceled }!void),
+        },
+    ) = .{},
 
     /// A FIFO hash set of users typing in this chat mapped to the time they started typing.
     typing: std.AutoArrayHashMapUnmanaged(User.Id, u64) = .empty,

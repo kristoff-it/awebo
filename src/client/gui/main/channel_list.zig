@@ -19,13 +19,13 @@ pub fn draw(app: *App) !void {
         try newChatFloatingWindow(app, h);
     }
 
-    hostName(h);
+    hostName(app, h);
     try channelList(h, core);
     try joinedVoice(core);
     try userbox(app, h);
 }
 
-pub fn hostName(h: *awebo.Host) void {
+pub fn hostName(app: *App, h: *awebo.Host) void {
     {
         var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{
             .expand = .horizontal,
@@ -53,9 +53,8 @@ pub fn hostName(h: *awebo.Host) void {
             defer fw.deinit();
 
             if (dvui.menuItemLabel(@src(), "New Chat", .{}, .{}) != null) {
-                // main.state.show_new_chat = true;
-                // dvui.menuGet().?.close();
-                std.log.debug("todo", .{});
+                app.show_new_chat = true;
+                m.close();
             }
             if (dvui.menuItemLabel(@src(), "DVUI Debug Window", .{}, .{}) != null) {
                 dvui.toggleDebugWindow();
@@ -105,6 +104,8 @@ pub fn newChatFloatingWindow(app: *App, h: *awebo.Host) !void {
             .pending => "pending...",
             .connection_failure => "connection failure",
             .name_taken => "name already taken",
+            .rate_limit => "rate limit error",
+            .no_permission => "no permission",
             .ok => {
                 app.pending_new_chat = null;
                 app.show_new_chat = false;

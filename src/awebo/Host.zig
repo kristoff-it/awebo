@@ -243,13 +243,6 @@ pub const ClientOnly = struct {
     connection: ?*network.HostConnection = null,
     connection_status: ConnectionStatus = .connecting,
 
-    pending_messages: std.AutoArrayHashMapUnmanaged(
-        proto.client.OriginId,
-        struct {
-            cms: proto.client.ChatMessageSend,
-            push_future: Io.Future(error{ Closed, Canceled }!void),
-        },
-    ) = .{},
     pending_requests: std.AutoArrayHashMapUnmanaged(u64, *u8) = .{},
 
     last_sent_typing: u64 = 0,
@@ -367,34 +360,6 @@ pub const Channels = struct {
         while (it.next()) |kv| kv.value_ptr.deinit(gpa);
         @constCast(&c.items).deinit(gpa);
         @constCast(&c.indexes.name).deinit(gpa);
-    }
-
-    pub fn create(
-        u: *Channels,
-        gpa: std.mem.Allocator,
-        channel_name: []const u8,
-    ) error{ OutOfMemory, NameTaken }!*Channel {
-        if (true) @panic("todo");
-        if (context != .server) @compileError("server only");
-
-        const host: *Host = @fieldParentPtr("channels", u);
-        _ = host;
-        if (u.indexes.name.get(channel_name) != null) {
-            return error.NameTaken;
-        }
-        const chat_counter = 10;
-        const gop = try u.items.getOrPut(gpa, chat_counter);
-        if (gop.found_existing) unreachable;
-
-        gop.value_ptr.* = .{
-            .id = chat_counter,
-            .name = channel_name,
-            .kind = .{ .chat = .{} },
-            .privacy = .private,
-        };
-
-        try u.indexes.name.put(gpa, channel_name, chat_counter);
-        return gop.value_ptr;
     }
 
     pub fn set(u: *@This(), gpa: std.mem.Allocator, channel: Channel) !void {

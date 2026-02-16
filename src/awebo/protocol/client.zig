@@ -205,11 +205,11 @@ pub const ChatMessageSend = struct {
 
 pub const ChannelCreate = struct {
     origin: OriginId,
-    kind: Channel.Kind,
+    kind: Channel.Kind.Enum,
     name: []const u8,
 
     pub const marker = 'C';
-    pub const serialize = proto.MakeSerializeFn(ChannelCreate);
+    pub const serializeAlloc = proto.MakeSerializeAllocFn(ChannelCreate);
     pub const deserializeAlloc = proto.MakeDeserializeAllocFn(ChannelCreate);
     pub const protocol = struct {
         pub const sizes = struct {

@@ -15,10 +15,21 @@ const log = std.log.scoped(.db);
 pub const Queries = struct {
     insert_user: @FieldType(Database.CommonQueries, "insert_user"),
     insert_password: @FieldType(user_add.Queries, "insert_password"),
-    insert_channels: @FieldType(Database.CommonQueries, "insert_channels"),
     insert_message: @FieldType(Database.CommonQueries, "insert_message"),
     insert_roles: @FieldType(Database.CommonQueries, "insert_roles"),
     insert_host_kv: @FieldType(Database.CommonQueries, "insert_host_kv"),
+    insert_channels: Query(std.fmt.comptimePrint(
+        \\INSERT INTO channels
+        \\  (update_uid, section, sort, name, kind, privacy)
+        \\ VALUES
+        \\  (?1, NULL, 0, 'Default Chat Channel', 0, {0}),
+        \\  (?2, NULL, 0, 'Second Chat Channel', 0, {0}),
+        \\  (?3, NULL, 0, 'Default Voice Channel', 1, {0})
+        \\;
+    , .{@intFromEnum(awebo.Channel.Privacy.private)}), .{
+        .kind = .exec,
+        .args = struct { u64, u64, u64 },
+    }),
 };
 
 pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {

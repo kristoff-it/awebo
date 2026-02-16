@@ -433,9 +433,9 @@ fn messageList(app: *App, h: *awebo.Host, channel_id: awebo.Channel.Id, c: *Chat
         }
 
         if (mit.peek() == null) {
-            if (h.client.pending_messages.count() > 0) {
+            if (c.client.pending_messages.count() > 0) {
                 var id = if (last_author != h.client.user_id) h.client.user_id else null;
-                for (h.client.pending_messages.values(), 0..) |pm, pmidx| {
+                for (c.client.pending_messages.values(), 0..) |pm, pmidx| {
                     drawMessage(
                         h,
                         id,
