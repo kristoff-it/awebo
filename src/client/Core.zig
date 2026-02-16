@@ -15,6 +15,8 @@ const Voice = Channel.Voice;
 const Media = @import("Media.zig");
 const network = @import("Core/network.zig");
 const persistence = @import("Core/persistence.zig");
+const screen_capture = @import("media/screen-capture.zig");
+const ScreenShare = screen_capture.ScreenShare;
 
 gpa: Allocator,
 io: Io,
@@ -794,9 +796,13 @@ pub fn callJoin(
     core.active_call = call;
 }
 
+var screenshare: *ScreenShare = undefined;
 pub fn callBeginScreenShare(core: *Core) !void {
     // TODO: network setup will go here
     core.screenshare_intent = true;
+    // getAvailableSources(core);
+    screenshare = .init();
+    screenshare.showPicker();
 }
 
 pub fn callLeave(core: *Core) !void {

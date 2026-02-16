@@ -56,6 +56,7 @@ pub fn build(b: *std.Build) void {
 
     const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, client_local_cache);
     b.installArtifact(gui);
+
     const mac_os_bundle = b.step("mac_os_bundle", "create a mac os bundle");
     setupMacOsBundle(b, mac_os_bundle, gui);
 
@@ -197,6 +198,12 @@ pub fn setupGui(
     addSqlite(gui, zqlite, .client);
 
     switch (target.result.os.tag) {
+        .macos => {
+            gui.root_module.linkFramework("ScreenCaptureKit", .{});
+            gui.root_module.addCSourceFile(.{
+                .file = b.path("src/client/media/screen-capture-macos.m"),
+            });
+        },
         .windows => {
             if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
                 gui.root_module.addImport("win32", win32_dep.module("win32"));
@@ -433,7 +440,7 @@ fn addSqlite(
 
 fn runArtifact(b: *std.Build, step: *std.Build.Step, artifact: *std.Build.Step.Compile) void {
     const run_cmd = b.addRunArtifact(artifact);
-    run_cmd.step.dependOn(b.getInstallStep());
+    // run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {
         run_cmd.addArgs(args);
     }

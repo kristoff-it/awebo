@@ -75,6 +75,6 @@ pub fn draw(app: *App) !void {
     }
 
     if (core.screenshare_intent) {
-        try screenshare_box.draw();
+        try screenshare_box.draw(core);
     }
 }
