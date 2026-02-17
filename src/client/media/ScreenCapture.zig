@@ -10,6 +10,9 @@ const Core = @import("../Core.zig");
 // windows: []Window
 // displays: []Display
 
+// True when the user initiated screen sharing
+share_intent: bool = false,
+
 /// While capturing, this value is atomically replaced
 /// with a new frame by the OS.
 /// Should be processed by the UI to show a preview of
@@ -61,7 +64,7 @@ pub fn swapFrame(sc: *ScreenCapture, new: ?*Frame) callconv(.c) ?*Frame {
 }
 
 /// See 'media/screen-share-macos.m'
-const MacOsInterface = opaque {
+pub const MacOsInterface = opaque {
     comptime {
         @export(&swapFrame, .{ .linkage = .strong, .name = "aweboScreenCaptureSwapFrame" });
     }
@@ -94,7 +97,7 @@ const MacOsInterface = opaque {
     }
 };
 
-const DummyInterface = opaque {
+pub const DummyInterface = opaque {
     pub fn init(sc: *ScreenCapture) *DummyInterface {
         _ = sc;
         return undefined;

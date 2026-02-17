@@ -3,18 +3,40 @@ const WebcamCapture = @This();
 const builtin = @import("builtin");
 const std = @import("std");
 const Core = @import("../Core.zig");
+const ScreenCapture = @import("ScreenCapture.zig");
 const log = std.log.scoped(.webcam_capture);
+
+/// True when the user initiated webcam sharing
+share_intent: bool = false,
 
 /// The device currently selected. Null means system default.
 /// The device might not be connected.
 selected: ?[:0]const u8,
 /// Keyed by the device's unique ID.
 devices: std.StringArrayHashMapUnmanaged(Webcam),
+
+/// While capturing, this value is atomically replaced
+/// with a new frame by the OS.
+/// Should be processed by the UI to show a preview of
+/// the current stream, if desireable.
+/// The application can ignore this value, in which case
+/// the OS is expected to clean it up but, if used, the
+/// client is expected to:
+/// 1. call swapFrame() to swap the value with null
+/// 2. if it got a new frame, quickly copy pixel data
+///    out and call deinit.
+new_frame: std.atomic.Value(?*Frame),
+
 /// Os interface
 os: switch (builtin.target.os.tag) {
     .macos => *MacOsInterface,
     else => *DummyInterface,
 },
+
+pub const Frame = switch (builtin.target.os.tag) {
+    .macos => MacOsInterface.MacOsFrame,
+    else => DummyInterface.DummyFrame,
+};
 
 pub const Webcam = struct {
     id: [:0]const u8,
@@ -28,6 +50,7 @@ pub fn init() WebcamCapture {
     return .{
         .selected = null,
         .devices = .empty,
+        .new_frame = .init(null),
         .os = .init(),
     };
 }
@@ -55,6 +78,12 @@ pub fn discoverDevicesAndListen(wc: *WebcamCapture) void {
 pub fn startCapture(wc: *WebcamCapture) void {
     const id = if (wc.selected) |s| s.ptr else null;
     _ = wc.os.startCapture(id, 1920, 1080, 30);
+}
+
+/// Function with C callconv that the OS can invoke whenever
+/// a new screen capture frame is ready.
+pub fn swapFrame(sc: *WebcamCapture, new: ?*Frame) callconv(.c) ?*Frame {
+    return sc.new_frame.swap(new, .acq_rel);
 }
 
 /// Function with C callconv that OS APIs can call to update the device list.
@@ -92,8 +121,11 @@ fn upsertDevice(
 /// See `media/webcam-capture-macos.m`
 const MacOsInterface = opaque {
     comptime {
-        @export(&upsertDevice, .{ .linkage = .strong, .name = "aweboWebcamUpsertCallback" });
+        @export(&upsertDevice, .{ .linkage = .strong, .name = "aweboWebcamUpsert" });
+        @export(&swapFrame, .{ .linkage = .strong, .name = "aweboWebcamSwapFrame" });
     }
+
+    pub const MacOsFrame = ScreenCapture.MacOsInterface.MacOsFrame;
 
     extern fn webcamCaptureManagerInit() *MacOsInterface;
     pub fn init() *MacOsInterface {
@@ -117,6 +149,8 @@ const MacOsInterface = opaque {
 };
 
 const DummyInterface = opaque {
+    pub const DummyFrame = ScreenCapture.DummyInterface.DummyFrame;
+
     pub fn init() *DummyInterface {
         return undefined;
     }

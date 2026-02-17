@@ -7,12 +7,15 @@ typedef struct VideoDevice {
   bool isConnected;
 } VideoDevice;
 
-// Defined in the objc implementation of WebcamCapture.
-void aweboWebcamUpsertCallback(void *, const char *, const char *, bool);
-__attribute__((weak)) void aweboWebcamUpsertCallback(void *userdata,
-                                                     const char *id,
-                                                     const char *name,
-                                                     bool active) {
+void aweboWebcamUpsert(void *, const char *, const char *, bool);
+__attribute__((weak)) void aweboWebcamUpsert(void *userdata, const char *id,
+                                             const char *name, bool active) {
+  __builtin_unreachable();
+}
+
+CVPixelBufferRef aweboWebcamSwapFrame(void *, CVPixelBufferRef);
+__attribute__((weak)) CVPixelBufferRef
+aweboWebcamSwapFrame(void *userdata, CVPixelBufferRef ref) {
   __builtin_unreachable();
 }
 
@@ -75,9 +78,8 @@ void webcamDiscoverDevicesAndListen(void *ptr, void *userdata) {
 
   for (int i = 0; i < devices.count; i++) {
     AVCaptureDevice *device = devices[i];
-    aweboWebcamUpsertCallback(userdata, [device.uniqueID UTF8String],
-                              [device.localizedName UTF8String],
-                              device.isConnected);
+    aweboWebcamUpsert(userdata, [device.uniqueID UTF8String],
+                      [device.localizedName UTF8String], device.isConnected);
   }
 }
 
@@ -87,18 +89,16 @@ void webcamDiscoverDevicesAndListen(void *ptr, void *userdata) {
   AVCaptureDevice *device = notification.object;
   NSLog(@"Device connected: %@ (%@)", device.localizedName, device.uniqueID);
 
-  aweboWebcamUpsertCallback(self.userdata, [device.uniqueID UTF8String],
-                            [device.localizedName UTF8String],
-                            device.isConnected);
+  aweboWebcamUpsert(self.userdata, [device.uniqueID UTF8String],
+                    [device.localizedName UTF8String], device.isConnected);
 }
 
 - (void)deviceWasDisconnected:(NSNotification *)notification {
   AVCaptureDevice *device = notification.object;
   NSLog(@"Device disconnected: %@ (%@)", device.localizedName, device.uniqueID);
 
-  aweboWebcamUpsertCallback(self.userdata, [device.uniqueID UTF8String],
-                            [device.localizedName UTF8String],
-                            device.isConnected);
+  aweboWebcamUpsert(self.userdata, [device.uniqueID UTF8String],
+                    [device.localizedName UTF8String], device.isConnected);
 }
 
 // MARK: - Capture Session
@@ -262,18 +262,10 @@ void webcamStopCapture(void *manager) {
 }
 
 // MARK: - Frame Processing (reuses your existing functions)
-
-// Import the same swapFrame function from your screen capture code
-CVPixelBufferRef swapFrame(CVPixelBufferRef);
-__attribute__((weak)) CVPixelBufferRef swapFrame(CVPixelBufferRef ref) {
-  NSLog(@"Default implementation of swapFrame %p", ref);
-  return NULL;
-}
-
 - (void)processVideoFrame:(CVPixelBufferRef)pixelBuffer {
   CVPixelBufferRetain(pixelBuffer);
-  CVPixelBufferRef dropped_frame = swapFrame(pixelBuffer);
-  // NSLog(@"webcam frame: %p", pixelBuffer);
+  CVPixelBufferRef dropped_frame =
+      aweboWebcamSwapFrame(self.userdata, pixelBuffer);
   if (dropped_frame) {
     CVPixelBufferRelease(dropped_frame);
   }

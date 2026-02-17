@@ -74,7 +74,7 @@ pub fn draw(app: *App) !void {
         }
     }
 
-    if (core.screenshare_intent) {
+    if (core.webcam_capture.share_intent or core.screen_capture.share_intent) {
         try screenshare_box.draw(core);
     }
 }

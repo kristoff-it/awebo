@@ -6,7 +6,6 @@ const awebo = @import("../../../awebo.zig");
 const Channel = awebo.Channel;
 const App = @import("../../../main_client_gui.zig").App;
 const Core = @import("../../Core.zig");
-const wc = @import("../../media/webcam-capture.zig");
 
 pub fn draw(app: *App) !void {
     const core = &app.core;
@@ -487,11 +486,11 @@ fn userbox(app: *App, h: *awebo.Host) !void {
         });
     }
 
-    if (!core.screenshare_intent and dvui.button(@src(), "Webcam", .{}, .{ .expand = .vertical })) {
+    if (!core.webcam_capture.share_intent and dvui.button(@src(), "Webcam", .{}, .{ .expand = .vertical })) {
         try core.callBeginWebcamShare();
     }
 
-    if (!core.screenshare_intent and dvui.button(@src(), "Screen", .{}, .{ .expand = .vertical })) {
+    if (!core.screen_capture.share_intent and dvui.button(@src(), "Screen", .{}, .{ .expand = .vertical })) {
         try core.callBeginScreenShare();
     }
 

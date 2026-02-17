@@ -45,13 +45,7 @@ audio_playout: audio.Directional = .{ .direction = .playout },
 
 active_call: ?ActiveCall = null,
 
-// This is temporarily put in the main state scope so that it can be
-// tested locally without needing to enter a voice channel first.
-// Once the lcoal work is done and we decide to start wiring it over
-// the network, it will have to be moved into `active_call` and
-// integrated with the call lifecycle.
-screenshare_intent: bool = false,
-screen_capture: ScreenCapture = undefined, // inited in core.run
+screen_capture: ScreenCapture = undefined,
 webcam_capture: WebcamCapture,
 
 command_queue: Io.Queue(Event),
@@ -809,12 +803,12 @@ pub fn callJoin(
 }
 
 pub fn callBeginScreenShare(core: *Core) !void {
-    core.screenshare_intent = true;
+    core.screen_capture.share_intent = true;
     core.screen_capture.showOsPicker();
 }
 
 pub fn callBeginWebcamShare(core: *Core) !void {
-    core.screenshare_intent = true;
+    core.webcam_capture.share_intent = true;
     _ = core.webcam_capture.startCapture();
 }
 
