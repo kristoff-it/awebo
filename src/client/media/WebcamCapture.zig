@@ -12,7 +12,7 @@ selected: ?[:0]const u8,
 devices: std.StringArrayHashMapUnmanaged(Webcam),
 /// Os interface
 os: switch (builtin.target.os.tag) {
-    .macos => *MacOSInterface,
+    .macos => *MacOsInterface,
     else => *DummyInterface,
 },
 
@@ -90,28 +90,28 @@ fn upsertDevice(
 }
 
 /// See `media/webcam-capture-macos.m`
-const MacOSInterface = opaque {
+const MacOsInterface = opaque {
     comptime {
         @export(&upsertDevice, .{ .linkage = .strong, .name = "aweboWebcamUpsertCallback" });
     }
 
-    extern fn webcamCaptureManagerInit() *MacOSInterface;
-    pub fn init() *MacOSInterface {
+    extern fn webcamCaptureManagerInit() *MacOsInterface;
+    pub fn init() *MacOsInterface {
         return webcamCaptureManagerInit();
     }
 
-    extern fn webcamCaptureManagerDeinit(*MacOSInterface) void;
-    pub fn deinit(mi: *MacOSInterface) void {
+    extern fn webcamCaptureManagerDeinit(*MacOsInterface) void;
+    pub fn deinit(mi: *MacOsInterface) void {
         return webcamCaptureManagerDeinit(mi);
     }
 
-    extern fn webcamDiscoverDevicesAndListen(*MacOSInterface, *WebcamCapture) void;
-    pub fn discoverDevicesAndListen(mi: *MacOSInterface, wc: *WebcamCapture) void {
+    extern fn webcamDiscoverDevicesAndListen(*MacOsInterface, *WebcamCapture) void;
+    pub fn discoverDevicesAndListen(mi: *MacOsInterface, wc: *WebcamCapture) void {
         webcamDiscoverDevicesAndListen(mi, wc);
     }
 
-    extern fn webcamStartCapture(*MacOSInterface, id: ?[*:0]const u8, width: c_int, height: c_int, fps: c_int) bool;
-    pub fn startCapture(mi: *MacOSInterface, id: ?[*:0]const u8, width: i32, height: i32, fps: i32) bool {
+    extern fn webcamStartCapture(*MacOsInterface, id: ?[*:0]const u8, width: c_int, height: c_int, fps: c_int) bool;
+    pub fn startCapture(mi: *MacOsInterface, id: ?[*:0]const u8, width: i32, height: i32, fps: i32) bool {
         return webcamStartCapture(mi, id, width, height, fps);
     }
 };

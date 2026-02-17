@@ -3,13 +3,23 @@
 @interface ScreenCaptureManager : NSObject <SCContentSharingPickerObserver>
 @property(strong) SCContentSharingPicker *picker;
 @property(strong) SCStream *stream;
+@property void *userdata;
 @end
 
 @implementation ScreenCaptureManager
 
-ScreenCaptureManager *screenCaptureManagerInit() {
+typedef struct Pixels {
+  size_t width;
+  size_t height;
+  uint8_t *pixels;
+} Pixels;
+
+ScreenCaptureManager *screenCaptureManagerInit(void *userdata) {
   NSLog(@"creating capture manager");
-  return [ScreenCaptureManager alloc];
+  ScreenCaptureManager *manager = [[ScreenCaptureManager alloc] init];
+  manager.userdata = userdata;
+
+  return (__bridge_retained void *)manager;
 }
 
 void screenCaptureManagerDeinit(void *ptr) {
@@ -49,7 +59,6 @@ void screenCaptureManagerShowPicker(void *manager) {
          didUpdateWithFilter:(SCContentFilter *)filter
                    forStream:(SCStream *)stream {
   NSLog(@"User selected content");
-  NSLog(@"stream in the picker is nil? %p", stream);
 
   // This is called when user selects something
   // Start capturing with the provided filter
@@ -140,16 +149,17 @@ void screenCaptureManagerShowPicker(void *manager) {
   }
 }
 
-CVPixelBufferRef swapFrame(CVPixelBufferRef);
-__attribute__((weak)) CVPixelBufferRef swapFrame(CVPixelBufferRef ref) {
-  NSLog(@"Default implementation of swapFrame %p", ref);
-  return NULL;
+CVPixelBufferRef aweboScreenCaptureSwapFrame(void *, CVPixelBufferRef);
+__attribute__((weak)) CVPixelBufferRef
+aweboScreenCaptureSwapFrame(void *userdata, CVPixelBufferRef ref) {
+  __builtin_unreachable();
 }
 
 - (void)processVideoFrame:(CVPixelBufferRef)pixelBuffer {
   CVPixelBufferRetain(pixelBuffer);
-  CVPixelBufferRef dropped_frame = swapFrame(pixelBuffer);
-  NSLog(@"swappy! %p", pixelBuffer);
+  CVPixelBufferRef dropped_frame =
+      aweboScreenCaptureSwapFrame(self.userdata, pixelBuffer);
+
   if (dropped_frame) {
     CVPixelBufferRelease(dropped_frame);
   }
@@ -188,12 +198,6 @@ __attribute__((weak)) CVPixelBufferRef swapFrame(CVPixelBufferRef ref) {
     NSLog(@"error getting audio data: %i", (int)status);
   }
 }
-
-typedef struct Pixels {
-  size_t width;
-  size_t height;
-  uint8_t *pixels;
-} Pixels;
 
 Pixels frameGetPixels(CVPixelBufferRef pixelBuffer) {
   // Lock the pixel buffer to get access to the memory

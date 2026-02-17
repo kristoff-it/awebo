@@ -3,29 +3,15 @@ const std = @import("std");
 const dvui = @import("dvui");
 const Backend = @import("SDLBackend");
 const Core = @import("../../Core.zig");
-const screen_capture = @import("../../media/screen-capture.zig");
-const Frame = screen_capture.Frame;
-// var last_frame: Frame.Pixels = .{
-//     .width = 0,
-//     .height = 0,
-//     .pixels = 0,
-// };
-var new_frame: std.atomic.Value(?*Frame) = .init(null);
+
 var texture: ?dvui.Texture = null;
 
-export fn swapFrame(new: *Frame) ?*Frame {
-    std.log.debug("swappy", .{});
-    return new_frame.swap(new, .acq_rel);
-}
-
 pub fn draw(core: *Core) !void {
-    _ = core;
-
     const id = dvui.Id.extendId(null, @src(), 0);
     const millis_per_frame = std.time.ms_per_s / 60;
 
     if (dvui.timerDoneOrNone(id)) {
-        if (new_frame.swap(null, .acq_rel)) |new| {
+        if (core.screen_capture.swapFrame(null)) |new| {
             defer new.deinit();
             const img = new.getPixels();
             const pixels = img.pixels orelse {
