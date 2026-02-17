@@ -82,8 +82,8 @@ void screenCaptureManagerShowPicker(void *manager) {
 
   // AUDIO CONFIGURATION
   config.capturesAudio = YES;
-  config.sampleRate = 48000; // 48kHz
-  config.channelCount = 2;   // Stereo
+  config.sampleRate = 44100;
+  config.channelCount = 2; // Stereo
 
   // Exclude your own app's audio from capture
   config.excludesCurrentProcessAudio = YES;

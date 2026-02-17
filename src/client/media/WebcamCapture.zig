@@ -9,10 +9,12 @@ const log = std.log.scoped(.webcam_capture);
 /// True when the user initiated webcam sharing
 share_intent: bool = false,
 
-/// The device currently selected. Null means system default.
+/// The unique id of the device currently selected.
+/// Null means system default.
 /// The device might not be connected.
 selected: ?[:0]const u8,
-/// Keyed by the device's unique ID.
+
+/// Keyed by the device unique ID.
 devices: std.StringArrayHashMapUnmanaged(Webcam),
 
 /// While capturing, this value is atomically replaced
@@ -70,7 +72,6 @@ pub fn deinit(wc: *WebcamCapture) void {
     wc.devices.deinit(core.gpa);
 }
 
-/// Collects device
 pub fn discoverDevicesAndListen(wc: *WebcamCapture) void {
     wc.os.discoverDevicesAndListen(wc);
 }

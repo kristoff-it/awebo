@@ -87,16 +87,20 @@ void webcamDiscoverDevicesAndListen(void *ptr, void *userdata) {
 
 - (void)deviceWasConnected:(NSNotification *)notification {
   AVCaptureDevice *device = notification.object;
-  NSLog(@"Device connected: %@ (%@)", device.localizedName, device.uniqueID);
+  if (![device hasMediaType:AVMediaTypeVideo])
+    return;
 
+  NSLog(@"Device connected: %@ (%@)", device.localizedName, device.uniqueID);
   aweboWebcamUpsert(self.userdata, [device.uniqueID UTF8String],
                     [device.localizedName UTF8String], device.isConnected);
 }
 
 - (void)deviceWasDisconnected:(NSNotification *)notification {
   AVCaptureDevice *device = notification.object;
-  NSLog(@"Device disconnected: %@ (%@)", device.localizedName, device.uniqueID);
+  if (![device hasMediaType:AVMediaTypeVideo])
+    return;
 
+  NSLog(@"Device disconnected: %@ (%@)", device.localizedName, device.uniqueID);
   aweboWebcamUpsert(self.userdata, [device.uniqueID UTF8String],
                     [device.localizedName UTF8String], device.isConnected);
 }

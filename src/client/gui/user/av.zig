@@ -135,7 +135,6 @@ pub fn audioDeviceDropdown(
         } else {
             dd.init_options.selected_index = 0;
         }
-
         if (dd.addChoiceLabel("(system default)")) {
             new_selection = .{ .device = null };
         }
@@ -174,11 +173,24 @@ pub fn webcamDeviceDropdown(
         }
 
         for (wc.devices.values(), 0..) |cam, i| {
+            var marker: []const u8 = "  ";
             if (wc.selected) |selected_id| if (selected_id.ptr == cam.id.ptr) {
                 dd.init_options.selected_index = i;
+                marker = "x";
             };
 
-            if (dd.addChoiceLabel(cam.name)) {
+            var mi = dd.addChoice();
+            defer mi.deinit();
+
+            var style = mi.data().options.strip().override(mi.style());
+            if (!cam.connected) {
+                style.color_text = .red;
+                style.font.?.weight = .bold;
+            }
+            dvui.label(@src(), "[{s}] {s}", .{ marker, cam.name }, style);
+
+            if (mi.activeRect()) |_| {
+                dd.close();
                 wc.selected = cam.id;
                 changed = true;
             }
