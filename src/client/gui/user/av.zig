@@ -21,7 +21,6 @@ pub fn draw(app: *App) !void {
     });
     _ = dvui.separator(@src(), .{ .expand = .horizontal });
 
-    // _ = dvui.spacer(@src(), dvui.Size.all(5), .{});
     _ = dvui.spacer(@src(), .{});
 
     {
@@ -42,7 +41,7 @@ pub fn draw(app: *App) !void {
                 .font = dvui.Font.theme(.title).larger(2),
                 .expand = .horizontal,
             });
-            if (try deviceDropdown(core, @src(), &core.user_audio.capture, .{
+            if (try audioDeviceDropdown(core, @src(), &core.user_audio.capture, .{
                 .gravity_x = 0.5,
                 .font = dvui.Font.theme(.title),
                 .expand = .horizontal,
@@ -70,7 +69,7 @@ pub fn draw(app: *App) !void {
                 .expand = .horizontal,
             });
 
-            if (try deviceDropdown(core, @src(), &core.user_audio.playout, .{
+            if (try audioDeviceDropdown(core, @src(), &core.user_audio.playout, .{
                 .gravity_x = 0.5,
                 .font = dvui.Font.theme(.title),
                 .expand = .horizontal,
@@ -85,9 +84,28 @@ pub fn draw(app: *App) !void {
             });
         }
     }
+
+    {
+        var box = dvui.box(@src(), .{ .dir = .vertical }, .{
+            .expand = .horizontal,
+            .margin = dvui.Rect.all(8),
+        });
+        defer box.deinit();
+
+        dvui.labelNoFmt(@src(), "Camera", .{}, .{
+            .gravity_x = 0.5,
+            .font = dvui.Font.theme(.title).larger(2),
+            .expand = .horizontal,
+        });
+        if (try webcamDeviceDropdown(@src(), &core.webcam_capture, .{
+            .gravity_x = 0.5,
+            .font = dvui.Font.theme(.title),
+            .expand = .horizontal,
+        })) {}
+    }
 }
 
-pub fn deviceDropdown(
+pub fn audioDeviceDropdown(
     core: *Core,
     src: std.builtin.SourceLocation,
     audio_state: *Core.UserAudio,
@@ -130,4 +148,43 @@ pub fn deviceDropdown(
 
     dd.deinit();
     return if (new_selection) |_| true else false;
+}
+
+pub fn webcamDeviceDropdown(
+    src: std.builtin.SourceLocation,
+    wc: *Core.WebcamCapture,
+    opts: dvui.Options,
+) !bool {
+    var dd: dvui.DropdownWidget = undefined;
+    dd.init(
+        src,
+        .{
+            .label = if (wc.selected) |id| wc.devices.get(id).?.name else "(system default)",
+        },
+        opts,
+    );
+    // try dd.install();
+
+    var changed = false;
+    if (dd.dropped()) {
+        if (wc.selected == null) dd.init_options.selected_index = 0;
+        if (dd.addChoiceLabel("(system default)")) {
+            wc.selected = null;
+            changed = true;
+        }
+
+        for (wc.devices.values(), 0..) |cam, i| {
+            if (wc.selected) |selected_id| if (selected_id.ptr == cam.id.ptr) {
+                dd.init_options.selected_index = i;
+            };
+
+            if (dd.addChoiceLabel(cam.name)) {
+                wc.selected = cam.id;
+                changed = true;
+            }
+        }
+    }
+
+    dd.deinit();
+    return changed;
 }

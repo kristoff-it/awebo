@@ -15,8 +15,9 @@ const Voice = Channel.Voice;
 const Media = @import("Media.zig");
 const network = @import("Core/network.zig");
 const persistence = @import("Core/persistence.zig");
-const screen_capture = @import("media/screen-capture.zig");
-const ScreenShare = screen_capture.ScreenShare;
+const sc = @import("media/screen-capture.zig");
+const ScreenShare = sc.ScreenShare;
+pub const WebcamCapture = @import("media/WebcamCapture.zig");
 
 gpa: Allocator,
 io: Io,
@@ -51,6 +52,7 @@ active_call: ?ActiveCall = null,
 // the network, it will have to be moved into `active_call` and
 // integrated with the call lifecycle.
 screenshare_intent: bool = false,
+webcam_capture: WebcamCapture,
 
 command_queue: Io.Queue(Event),
 refresh: *const RefreshFn,
@@ -135,6 +137,7 @@ pub fn init(
         .media = undefined,
         .string_pool = .{},
         .audio_backend = undefined,
+        .webcam_capture = .init(),
     };
 }
 
@@ -165,6 +168,10 @@ pub fn run(core: *Core) void {
         core.failure = .{ .audio_process_init = err };
         return;
     };
+
+    log.debug("discovering camera devices", .{});
+    core.webcam_capture.discoverDevicesAndListen();
+    defer core.webcam_capture.deinit();
 
     log.debug("load state and begin connecting to hosts", .{});
     var first_connect_group: Io.Group = .init;
@@ -800,11 +807,15 @@ pub fn callJoin(
 
 var screenshare: *ScreenShare = undefined;
 pub fn callBeginScreenShare(core: *Core) !void {
-    // TODO: network setup will go here
     core.screenshare_intent = true;
-    // getAvailableSources(core);
+
     screenshare = .init();
     screenshare.showPicker();
+}
+
+pub fn callBeginWebcamShare(core: *Core) !void {
+    core.screenshare_intent = true;
+    _ = core.webcam_capture.startCapture();
 }
 
 pub fn callLeave(core: *Core) !void {

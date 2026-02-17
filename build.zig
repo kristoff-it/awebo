@@ -200,8 +200,12 @@ pub fn setupGui(
     switch (target.result.os.tag) {
         .macos => {
             gui.root_module.linkFramework("ScreenCaptureKit", .{});
-            gui.root_module.addCSourceFile(.{
-                .file = b.path("src/client/media/screen-capture-macos.m"),
+            gui.root_module.linkFramework("AVFoundation", .{});
+            gui.root_module.addCSourceFiles(.{
+                .files = &.{
+                    "src/client/media/screen-capture-macos.m",
+                    "src/client/media/webcam-capture-macos.m",
+                },
             });
         },
         .windows => {
