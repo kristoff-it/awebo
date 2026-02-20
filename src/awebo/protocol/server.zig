@@ -116,6 +116,7 @@ pub const HostSync = struct {
     server_max_uid: u64,
     name: []const u8,
     epoch: i64,
+    callers: []const Caller,
     users: struct {
         full: []User.Id,
         delta: []User,
@@ -216,6 +217,7 @@ pub const HostSync = struct {
     pub const protocol = struct {
         pub const sizes = struct {
             pub const name = u64;
+            pub const callers = u64;
         };
     };
 };

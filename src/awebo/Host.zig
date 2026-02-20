@@ -48,6 +48,7 @@ pub fn deinit(hs: *const Host, gpa: std.mem.Allocator) void {
 pub fn computeDelta(
     host: *Host,
     gpa: Allocator,
+    clients: anytype, // sorry horrible temp hack
     user_id: User.Id,
     client_max_uid: u64,
     server_max_uid: u64,
@@ -109,6 +110,19 @@ pub fn computeDelta(
         };
     }
 
+    var callers: std.ArrayList(Caller) = .empty;
+    var maybe_client = clients.head;
+    while (maybe_client) |c| : (maybe_client = c.next) {
+        const udp = &(c.udp orelse continue);
+        const voice = c.voice orelse continue;
+        const uid = c.authenticated orelse continue;
+        try callers.append(gpa, .{
+            .id = udp.id,
+            .user = uid,
+            .voice = voice.id,
+        });
+    }
+
     return .{
         .user_id = user_id,
         .server_max_uid = server_max_uid,
@@ -116,6 +130,7 @@ pub fn computeDelta(
         .epoch = host.epoch,
         .users = .{ .full = &.{}, .delta = delta_users.items },
         .channels = .{ .full = &.{}, .delta = delta_channels.items },
+        .callers = try callers.toOwnedSlice(gpa),
     };
 }
 
@@ -216,6 +231,10 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const HostSync) void {
                 .body = msg.text,
             });
         };
+    }
+
+    for (delta.callers) |c| {
+        host.client.callers.set(gpa, c) catch oom();
     }
 }
 
@@ -462,3 +481,7 @@ pub const Callers = struct {
         return room.keys();
     }
 };
+
+fn oom() noreturn {
+    std.process.fatal("oom", .{});
+}

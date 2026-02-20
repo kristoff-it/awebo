@@ -15,7 +15,7 @@ pub fn drawSource(core: *Core, source: enum { webcam, screen }) !void {
     const extra = @intFromEnum(source);
 
     const id = dvui.Id.extendId(null, @src(), extra);
-    const millis_per_frame = std.time.ms_per_s / 60;
+    const millis_per_frame = 250;
 
     if (dvui.timerDoneOrNone(id)) {
         const maybe_frame = switch (source) {

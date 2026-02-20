@@ -81,6 +81,10 @@ pub fn startCapture(wc: *WebcamCapture) void {
     _ = wc.os.startCapture(id, 1920, 1080, 30);
 }
 
+pub fn stopCapture(wc: *WebcamCapture) void {
+    wc.os.stopCapture();
+}
+
 /// Function with C callconv that the OS can invoke whenever
 /// a new screen capture frame is ready.
 pub fn swapFrame(sc: *WebcamCapture, new: ?*Frame) callconv(.c) ?*Frame {
@@ -147,6 +151,11 @@ const MacOsInterface = opaque {
     pub fn startCapture(mi: *MacOsInterface, id: ?[*:0]const u8, width: i32, height: i32, fps: i32) bool {
         return webcamStartCapture(mi, id, width, height, fps);
     }
+
+    extern fn webcamStopCapture(*MacOsInterface) void;
+    pub fn stopCapture(mi: *MacOsInterface) void {
+        webcamStopCapture(mi);
+    }
 };
 
 const DummyInterface = opaque {
@@ -176,6 +185,10 @@ const DummyInterface = opaque {
         _ = height;
         _ = fps;
         return false;
+    }
+
+    pub fn stopCapture(mi: *DummyInterface) void {
+        _ = mi;
     }
 };
 

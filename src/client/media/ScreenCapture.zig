@@ -53,8 +53,14 @@ pub fn deinit(sc: *ScreenCapture) void {
 
 /// Shows the OS-provided screenshare picker.
 /// Might not be available on all OSs.
+/// Once the user has selected a window or display to share,
+/// a the stream will start automatically.
 pub fn showOsPicker(sc: *ScreenCapture) void {
     sc.os.showOsPicker();
+}
+
+pub fn stopCapture(sc: *ScreenCapture) void {
+    sc.os.stopCapture();
 }
 
 /// Function with C callconv that the OS can invoke whenever
@@ -95,6 +101,11 @@ pub const MacOsInterface = opaque {
     pub fn showOsPicker(mi: *MacOsInterface) void {
         screenCaptureManagerShowPicker(mi);
     }
+
+    extern fn screenCaptureManagerStopCapture(*MacOsInterface) void;
+    pub fn stopCapture(mi: *MacOsInterface) void {
+        screenCaptureManagerStopCapture(mi);
+    }
 };
 
 pub const DummyInterface = opaque {
@@ -108,6 +119,10 @@ pub const DummyInterface = opaque {
     }
 
     pub fn showOsPicker(di: *DummyInterface) void {
+        _ = di;
+    }
+
+    pub fn stopCapture(di: *DummyInterface) void {
         _ = di;
     }
 

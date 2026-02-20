@@ -136,6 +136,14 @@ pub const CallJoin = struct {
     pub const protocol = struct {};
 };
 
+pub const CallLeave = struct {
+    pub const marker = 'j';
+    pub const serialize = proto.MakeSerializeFn(CallLeave);
+    pub const serializeAlloc = proto.MakeSerializeAllocFn(CallLeave);
+    pub const deserialize = proto.MakeDeserializeFn(CallLeave);
+    pub const protocol = struct {};
+};
+
 pub const ChatHistoryGet = struct {
     origin: OriginId,
     chat_channel: Channel.Id,

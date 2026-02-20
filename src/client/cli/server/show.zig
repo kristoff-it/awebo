@@ -6,7 +6,7 @@ const Core = @import("../../Core.zig");
 const persistence = @import("../../Core/persistence.zig");
 const cli = @import("../../../cli.zig");
 
-pub fn run(io: Io, gpa: Allocator, environ: *std.process.Environ.Map, it: *std.process.Args.Iterator) void {
+pub fn run(io: Io, gpa: Allocator, environ: *std.process.Environ.Map, it: *std.process.Args.Iterator) !void {
     var identity_arg: ?[]const u8 = null;
 
     const eql = std.mem.eql;
@@ -24,7 +24,7 @@ pub fn run(io: Io, gpa: Allocator, environ: *std.process.Environ.Map, it: *std.p
         exitHelp(1);
     };
 
-    var core: Core = .init(gpa, io, environ, noopRefresh, &.{});
+    var core: Core = try .init(gpa, io, environ, noopRefresh, &.{}, &.{}, .{ &.{}, &.{} });
     defer core.deinit();
 
     persistence.load(&core) catch |e| {

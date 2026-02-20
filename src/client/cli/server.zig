@@ -13,7 +13,7 @@ const Subcommand = enum {
     @"-h",
 };
 
-pub fn run(io: Io, gpa: Allocator, environ: *std.process.Environ.Map, it: *std.process.Args.Iterator) void {
+pub fn run(io: Io, gpa: Allocator, environ: *std.process.Environ.Map, it: *std.process.Args.Iterator) !void {
     const subcmd_arg = it.next() orelse {
         std.debug.print("error: missing subcommand for server resource\n", .{});
         exitHelp(1);

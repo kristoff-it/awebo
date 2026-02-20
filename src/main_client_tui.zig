@@ -33,7 +33,7 @@ pub fn main(init: process.Init) !void {
         .version => exitVersion(),
         .help, .@"--help", .@"-h" => exitHelp(0),
 
-        .server => @import("client/cli/server.zig").run(init.io, gpa, environ, &it),
+        .server => try @import("client/cli/server.zig").run(init.io, gpa, environ, &it),
         .tui => @import("client/tui.zig").run(init.io, gpa, &it),
     }
 }

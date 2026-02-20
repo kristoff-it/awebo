@@ -4,15 +4,17 @@
 //     @cDefine("RANDOM_PREFIX", "speex");
 //     @cInclude("speex_resampler.h");
 // });
-
 const opus_h = @import("opus.h.zig");
 const speex_h = @import("speex_resampler.h.zig");
 
+const std = @import("std");
+const assert = std.debug.assert;
+
 pub const SAMPLE_SIZE = @sizeOf(f32);
-pub const CHANNELS = 2;
+pub const CHANNELS = 1;
 pub const FREQ = 48000;
-pub const FRAME_COUNT = FREQ / 100; // 10ms
-pub const SAMPLE_BUF_SIZE = FRAME_COUNT * CHANNELS;
+pub const FRAME_COUNT = 960; // 20ms
+pub const PACKET_SIZE = FRAME_COUNT * CHANNELS;
 
 pub const Encoder = opaque {
     pub fn create() !*Encoder {
@@ -27,8 +29,14 @@ pub const Encoder = opaque {
     }
 
     /// Returns the number of bytes written to `out`.
-    pub fn encodeFloat(e: *Encoder, pcm: *const [SAMPLE_BUF_SIZE]f32, out: []u8) !usize {
-        const res = opus_h.opus_encode_float(@ptrCast(e), pcm, FRAME_COUNT, out.ptr, @intCast(out.len));
+    pub fn encodeFloat(e: *Encoder, pcm: *const [PACKET_SIZE]f32, out: []u8) !usize {
+        const res = opus_h.opus_encode_float(
+            @ptrCast(e),
+            pcm,
+            FRAME_COUNT,
+            out.ptr,
+            @intCast(out.len),
+        );
         return @intCast(res);
     }
 };
@@ -47,12 +55,13 @@ pub const Decoder = opaque {
 
     /// Returns the number of SAMPLES written to `out`.
     pub fn decodeFloat(d: *Decoder, in: []const u8, pcm: []f32, fec: bool) !usize {
+        assert(@divExact(pcm.len, CHANNELS) == FRAME_COUNT);
         const res = opus_h.opus_decode_float(
             @ptrCast(d),
             in.ptr,
             @intCast(in.len),
             pcm.ptr,
-            @intCast(@divExact(pcm.len, CHANNELS)),
+            FRAME_COUNT,
             if (fec) 1 else 0,
         );
 
@@ -60,8 +69,7 @@ pub const Decoder = opaque {
             try checkErr(res);
         }
 
-        // We multiply by 2 because opus returns the number of *frames*.
-        return @intCast(res * 2);
+        return @intCast(res * CHANNELS);
     }
 
     /// pcm.len defines how much silence to produce
@@ -207,7 +215,6 @@ pub const Resampler = opaque {
 };
 
 // From https://github.com/hexops/mach/blob/main/src/sysaudio/conv.zig
-const std = @import("std");
 pub fn floatToUnsigned(
     comptime SrcType: type,
     src_stride: u8,

@@ -79,18 +79,38 @@ pub const App = struct {
     err_msg: ?[]const u8 = null,
     environ: *std.process.Environ.Map,
 
+    capture_buf: []f32,
+    playback_buf_left: []f32,
+    playback_buf_right: []f32,
+
     fn init(app: *App, window: *dvui.Window) void {
         const io = dvui.io;
         const gpa = window.gpa;
 
         const environ = dvui.App.main_init.?.environ_map;
+        const capture_buf = gpa.alloc(f32, 4096) catch oom();
+        const playback_buf_left = gpa.alloc(f32, 4096) catch oom();
+        const playback_buf_right = gpa.alloc(f32, 4096) catch oom();
 
         app.* = .{
+            .capture_buf = capture_buf,
+            .playback_buf_left = playback_buf_left,
+            .playback_buf_right = playback_buf_right,
             .active_screen = .main,
             .window = window,
             .command_queue_buffer = undefined,
             .environ = environ,
-            .core = .init(gpa, io, environ, refresh, &app.command_queue_buffer),
+            .core = Core.init(
+                gpa,
+                io,
+                environ,
+                refresh,
+                &app.command_queue_buffer,
+                capture_buf,
+                .{ playback_buf_left, playback_buf_right },
+            ) catch |err| {
+                std.process.fatal("unable to init core: {t}", .{err});
+            },
             .core_future = io.concurrent(Core.run, .{&app.core}) catch |err| {
                 cli.fatal("unable to start awebo client core: {t}", .{err});
             },
@@ -189,4 +209,8 @@ fn loadingFrame() !dvui.App.Result {
 
 test {
     _ = Core;
+}
+
+fn oom() noreturn {
+    std.process.fatal("oom", .{});
 }

@@ -6,14 +6,14 @@ const Core = @import("../../Core.zig");
 const persistence = @import("../../Core/persistence.zig");
 const cli = @import("../../../cli.zig");
 
-pub fn run(io: Io, gpa: Allocator, environ: *std.process.Environ.Map, it: *std.process.Args.Iterator) void {
+pub fn run(io: Io, gpa: Allocator, environ: *std.process.Environ.Map, it: *std.process.Args.Iterator) !void {
     const eql = std.mem.eql;
     while (it.next()) |arg| {
         if (eql(u8, arg, "--help") or eql(u8, arg, "-h")) exitHelp(0);
         cli.fatal("unknown argument '{s}'", .{arg});
     }
 
-    var core: Core = .init(gpa, io, environ, noopRefresh, &.{});
+    var core: Core = try .init(gpa, io, environ, noopRefresh, &.{}, &.{}, .{ &.{}, &.{} });
     defer core.deinit();
 
     persistence.load(&core) catch |e| {

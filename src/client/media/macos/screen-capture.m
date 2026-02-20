@@ -79,6 +79,11 @@ void screenCaptureManagerShowPicker(void *manager) {
   config.minimumFrameInterval = CMTimeMake(1, 30); // 30 fps
   // config.pixelFormat = kCVPixelFormatType_32RGBA;
   config.pixelFormat = kCVPixelFormatType_32BGRA;
+  config.ignoreGlobalClipDisplay = true;
+  config.ignoreGlobalClipSingleWindow = true;
+  config.scalesToFit = true;
+  // config.showMouseClicks = false;
+  // config.showsCursor = true;
 
   // AUDIO CONFIGURATION
   config.capturesAudio = YES;
@@ -220,6 +225,10 @@ void frameDeinit(CVPixelBufferRef pixelBuffer) {
 }
 
 // MARK: - Cleanup
+void screenCaptureManagerStopCapture(void *manager) {
+  ScreenCaptureManager *self = (__bridge ScreenCaptureManager *)manager;
+  [self stopCapture];
+}
 
 - (void)stopCapture {
   [self.stream stopCaptureWithCompletionHandler:^(NSError *error) {

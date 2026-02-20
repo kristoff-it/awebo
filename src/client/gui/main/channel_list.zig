@@ -7,6 +7,15 @@ const Channel = awebo.Channel;
 const App = @import("../../../main_client_gui.zig").App;
 const Core = @import("../../Core.zig");
 
+const debug = struct {
+    var window = false;
+    var playback = false;
+    var capture = false;
+    var capture_pump: Io.Future(void) = undefined;
+    var screen = false;
+    var webcam = false;
+};
+
 pub fn draw(app: *App) !void {
     const core = &app.core;
     const h = core.hosts.get(core.active_host).?;
@@ -56,10 +65,17 @@ pub fn hostName(app: *App, h: *awebo.Host) void {
                 app.show_new_chat = true;
                 m.close();
             }
+            if (dvui.menuItemLabel(@src(), "Awebo A/V Debug Window", .{}, .{}) != null) {
+                debug.window = !debug.window;
+                m.close();
+            }
             if (dvui.menuItemLabel(@src(), "DVUI Debug Window", .{}, .{}) != null) {
                 dvui.toggleDebugWindow();
+                m.close();
             }
         }
+
+        if (debug.window) renderAVDebugWindow(&app.core);
 
         dvui.labelNoFmt(@src(), h.name, .{}, .{
             .gravity_x = 0.5,
@@ -396,7 +412,22 @@ fn renderVoiceChannel(h: *awebo.Host, core: *Core, v: *const Channel, idx: usize
         } else false;
 
         const text_color: dvui.Color = if (caller.user == h.client.user_id and pending) .gray else .white;
-        const speaking = caller.client.speaking_last_ms + 250 >= core.now();
+
+        var speaking = false;
+        if (core.active_call) |*ac| {
+            if (ac.callers.get(caller.id)) |c| {
+                speaking = c.speaking_last_ns + (250 * std.time.ns_per_ms) >= core.now();
+            }
+        }
+
+        if (dvui.timerDoneOrNone(box.data().id)) {
+            const millis_per_frame = std.time.ms_per_s / 60;
+            const millis = @divFloor(dvui.frameTimeNS(), 1_000_000);
+            const left = @as(i32, @intCast(@rem(millis, millis_per_frame)));
+            const wait = 260 * (millis_per_frame - left);
+            dvui.timer(box.data().id, wait);
+        }
+
         const bg_color: ?dvui.Color = if (speaking) .yellow else null;
 
         dvui.labelNoFmt(@src(), m.display_name, .{}, .{
@@ -404,7 +435,8 @@ fn renderVoiceChannel(h: *awebo.Host, core: *Core, v: *const Channel, idx: usize
             .id_extra = caller.id,
             .color_text = text_color,
             .background = true,
-            .color_fill = bg_color,
+            .color_border = bg_color,
+            .border = .all(2),
         });
     }
 }
@@ -442,8 +474,6 @@ fn joinedVoice(core: *Core) !void {
 }
 
 fn userbox(app: *App, h: *awebo.Host) !void {
-    const core = &app.core;
-
     var user_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
         .expand = .horizontal,
         // x left, y top, w right, h bottom
@@ -486,15 +516,99 @@ fn userbox(app: *App, h: *awebo.Host) !void {
         });
     }
 
-    if (!core.webcam_capture.share_intent and dvui.button(@src(), "Webcam", .{}, .{ .expand = .vertical })) {
-        try core.callBeginWebcamShare();
-    }
-
-    if (!core.screen_capture.share_intent and dvui.button(@src(), "Screen", .{}, .{ .expand = .vertical })) {
-        try core.callBeginScreenShare();
-    }
-
     if (dvui.button(@src(), "Settings", .{}, .{})) {
         app.active_screen = .user_settings;
+    }
+}
+
+fn renderAVDebugWindow(core: *Core) void {
+    const fw = dvui.floatingWindow(@src(), .{ .modal = true }, .{
+        .padding = dvui.Rect.all(10),
+    });
+    defer fw.deinit();
+
+    fw.dragAreaSet(dvui.windowHeader("Awebo A/V Debug", "", &debug.window));
+
+    const capture_label = if (debug.capture) "Microphone OFF" else "Microphone ON";
+    if (dvui.button(@src(), capture_label, .{}, .{})) {
+        if (debug.capture) {
+            debug.capture = false;
+            debug.capture_pump.cancel(core.io);
+            core.audio.captureStop();
+        } else {
+            debug.capture = true;
+            debug.capture_pump = core.io.concurrent(opusDance, .{core}) catch unreachable;
+            core.audio.captureStart();
+        }
+    }
+
+    const webcam_label = if (debug.webcam) "Camera OFF" else "Camera ON";
+    if (dvui.button(@src(), webcam_label, .{}, .{})) {
+        if (debug.webcam) {
+            debug.webcam = false;
+            _ = core.webcam_capture.stopCapture();
+        } else {
+            debug.webcam = true;
+            _ = core.webcam_capture.startCapture();
+        }
+    }
+
+    const screen_label = if (debug.screen) "Screenshare OFF" else "Screenshare ON";
+    if (dvui.button(@src(), screen_label, .{}, .{})) {
+        if (debug.screen) {
+            debug.screen = false;
+            _ = core.screen_capture.stopCapture();
+        } else {
+            debug.screen = true;
+            _ = core.screen_capture.showOsPicker();
+        }
+    }
+
+    const screenshare_box = @import("screenshare_box.zig");
+    if (debug.webcam) screenshare_box.drawSource(core, .webcam) catch unreachable;
+    if (debug.screen) screenshare_box.drawSource(core, .screen) catch unreachable;
+}
+
+fn opusDance(core: *Core) void {
+    std.log.debug("dancing!", .{});
+
+    const io = core.io;
+    const audio = &core.audio;
+
+    while (true) {
+        core.audio.capture_stream.mutex.lockUncancelable(io);
+        defer core.audio.capture_stream.mutex.unlock(io);
+        core.audio.capture_stream.condition.wait(io, &core.audio.capture_stream.mutex) catch return;
+
+        var data_buf: [1280]u8 = undefined;
+
+        if (audio.capture_stream.channels[0].len() < awebo.opus.PACKET_SIZE) {
+            continue;
+        }
+
+        var sample_buf: [awebo.opus.PACKET_SIZE]f32 = undefined;
+        audio.capture_stream.channels[0].readFirstAssumeCount(
+            &sample_buf,
+            awebo.opus.PACKET_SIZE,
+        );
+
+        core.audio.playback_stream.writeBoth(io, &sample_buf) catch return;
+        if (true) continue;
+
+        const len = audio.capture_encoder.encodeFloat(&sample_buf, &data_buf) catch |err| {
+            std.log.debug("opus encoder error: {t}", .{err});
+            return error.EncodingFailure;
+        };
+
+        const encoded_data = data_buf[0..len];
+
+        var pcm: [awebo.opus.PACKET_SIZE]f32 = undefined;
+        const written = core.audio.playback_decoder.decodeFloat(
+            encoded_data,
+            &pcm,
+            false,
+        ) catch unreachable;
+
+        core.audio.playback_stream.writeBoth(io, pcm[0..written]);
     }
 }

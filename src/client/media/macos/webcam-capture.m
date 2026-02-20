@@ -69,6 +69,8 @@ void webcamDiscoverDevicesAndListen(void *ptr, void *userdata) {
   AVCaptureDeviceDiscoverySession *session = [AVCaptureDeviceDiscoverySession
       discoverySessionWithDeviceTypes:@[
         AVCaptureDeviceTypeBuiltInWideAngleCamera, // Built-in cameras
+        AVCaptureDeviceTypeContinuityCamera,       // lmao iphones
+        AVCaptureDeviceTypeDeskViewCamera,         // iiipphonnees
         AVCaptureDeviceTypeExternal                // USB/external cameras
       ]
                             mediaType:AVMediaTypeVideo

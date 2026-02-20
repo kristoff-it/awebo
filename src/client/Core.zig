@@ -12,16 +12,15 @@ const HostId = awebo.Host.ClientOnly.Id;
 const Channel = awebo.Channel;
 const Chat = Channel.Chat;
 const Voice = Channel.Voice;
-const Media = @import("Media.zig");
 const network = @import("Core/network.zig");
 const persistence = @import("Core/persistence.zig");
-const ScreenCapture = @import("media/ScreenCapture.zig");
+pub const ScreenCapture = @import("media/ScreenCapture.zig");
 pub const WebcamCapture = @import("media/WebcamCapture.zig");
+pub const Audio = @import("media/Audio.zig");
 
 gpa: Allocator,
 io: Io,
 environ: *std.process.Environ.Map,
-audio_backend: audio.Backend,
 /// Protects all the fields after this one.
 mutex: Io.Mutex = .init,
 /// Set to an error message when the core logic encounters an unrecoverable error.
@@ -36,15 +35,9 @@ message_window: awebo.Channel.Chat.MessageWindow = .{},
 
 cfg: std.StringHashMapUnmanaged([]const u8) = .{},
 
-user_audio: struct {
-    capture: UserAudio = .{ .direction = .capture, .volume = 0.5 },
-    playout: UserAudio = .{ .direction = .playout, .volume = 0.5 },
-} = .{},
-audio_capture: audio.Directional = .{ .direction = .capture },
-audio_playout: audio.Directional = .{ .direction = .playout },
-
 active_call: ?ActiveCall = null,
 
+audio: Audio,
 screen_capture: ScreenCapture = undefined,
 webcam_capture: WebcamCapture,
 
@@ -55,10 +48,6 @@ start_time: Io.Timestamp,
 // this is only set to pass the message to `chat_panel`
 search_messages_reply: ?awebo.protocol.server.SearchMessagesReply = null,
 
-media: Media,
-string_pool: StringPool,
-
-pub const audio = @import("audio.zig");
 pub const ui = @import("Core/ui.zig");
 pub const Device = @import("Device.zig");
 pub const StringPool = @import("StringPool.zig");
@@ -120,7 +109,9 @@ pub fn init(
     environ: *std.process.Environ.Map,
     refreshFn: *const RefreshFn,
     command_queue_buffer: []Event,
-) Core {
+    capture_buf: []f32,
+    playback_bufs: [2][]f32,
+) !Core {
     return .{
         .gpa = gpa,
         .io = io,
@@ -128,10 +119,8 @@ pub fn init(
         .start_time = .now(io, .awake),
         .refresh = refreshFn,
         .command_queue = .init(command_queue_buffer),
-        .media = undefined,
-        .string_pool = .{},
-        .audio_backend = undefined,
         .webcam_capture = .init(),
+        .audio = try .init(capture_buf, playback_bufs),
     };
 }
 
@@ -153,15 +142,12 @@ pub fn run(core: *Core) void {
     defer log.debug("goodbye", .{});
 
     log.debug("starting audio support", .{});
-    audio.init(core) catch |err| {
-        log.err("failed to initialize audio: {t}", .{err});
-
-        var locked = lockState(core);
-        defer locked.unlock();
-
-        core.failure = .{ .audio_process_init = err };
-        return;
-    };
+    core.audio.discoverDevicesAndListen();
+    core.audio.playbackStart();
+    defer {
+        core.audio.playbackStop();
+        core.audio.deinit();
+    }
 
     log.debug("starting screen capture support", .{});
     core.screen_capture.init();
@@ -192,6 +178,12 @@ pub fn run(core: *Core) void {
         });
     }
 
+    defer {
+        if (core.active_call) |*ac| {
+            ac.disconnect(core);
+        }
+    }
+
     while (true) {
         const event = core.command_queue.getOne(io) catch return;
         switch (event) {
@@ -202,10 +194,10 @@ pub fn run(core: *Core) void {
                     .caller_speaking => |cs| {
                         var locked = lockState(core);
                         defer locked.unlock();
-
-                        const host = core.hosts.get(msg.host_id).?;
-                        const caller = host.client.callers.get(cs.caller) orelse continue;
-                        caller.client.speaking_last_ms = cs.time_ms;
+                        if (core.active_call) |*ac| {
+                            const caller = ac.callers.get(cs.caller orelse ac.caller_id orelse continue) orelse continue;
+                            caller.speaking_last_ns = cs.time_ns;
+                        }
                     },
 
                     .host_sync => |*hs| hostSync(core, msg.host_id, hs),
@@ -253,8 +245,8 @@ pub const Event = union(enum) {
         },
 
         pub const CallerSpeaking = struct {
-            time_ms: u64,
-            caller: awebo.Caller.Id,
+            time_ns: u64,
+            caller: ?awebo.Caller.Id, // null means ourselves
         };
     };
 };
@@ -463,11 +455,28 @@ fn callersUpdate(core: *Core, host_id: HostId, cu: awebo.protocol.server.Callers
 
     const h = core.hosts.get(host_id).?;
 
-    if (cu.action == .join and cu.caller.user == h.client.user_id) {
-        if (core.active_call) |*ac| {
+    if (core.active_call) |*ac| if (cu.caller.voice == ac.voice_id) {
+        // if we see ourselves join, we know we're in
+        if (cu.action == .join and cu.caller.user == h.client.user_id) {
+            ac.caller_id = cu.caller.id;
             _ = ac.status.updateCompare(core, @src(), .connecting, .connected);
         }
-    }
+
+        switch (cu.action) {
+            .join => {
+                const entry = ac.callers.getOrPut(core.gpa, cu.caller.id) catch oom();
+                log.debug("ACTIVE CALL JOIN cid = {}", .{cu.caller.id});
+                assert(!entry.found_existing);
+                entry.value_ptr.* = Audio.Caller.create(core.gpa, core) catch oom();
+            },
+            .update => {},
+            .leave => {
+                if (ac.callers.fetchSwapRemove(cu.caller.id)) |entry| {
+                    entry.value.destroy(core.gpa, &core.audio);
+                }
+            },
+        }
+    };
 
     switch (cu.action) {
         .join, .update => h.client.callers.set(core.gpa, cu.caller) catch oom(),
@@ -494,12 +503,12 @@ fn mediaConnectionDetails(
                 }
 
                 // Activates audio streams
-                core.media.init(core) catch |err| std.debug.panic("err staring audio: {t}", .{err});
+                core.audio.captureStart();
 
                 // Asks to the network layer to start the UDP data transfer
                 // for this call.
                 const host = core.hosts.get(host_id).?;
-                _ = io.concurrent(network.runHostMediaManager, .{
+                ac.manager_future = io.concurrent(network.runHostMediaManager, .{
                     core,
                     host_id,
                     host.client.connection.?,
@@ -549,76 +558,14 @@ pub const UpdateDevicesEvent = union(enum) {
     },
 };
 
-fn logAudioDeviceEvent(comptime direction: audio.Direction) *const fn (UpdateDevicesEvent) void {
-    return struct {
-        pub fn onEvent(event: UpdateDevicesEvent) void {
-            switch (event) {
-                .device_added => |device| {
-                    std.log.info("audio {t} device added: {f}", .{ direction, device.name });
-                },
-                .device_removed => |device| {
-                    std.log.info("audio {t} device removed: {f}", .{ direction, device.name });
-                },
-                .device_name_changed => |info| {
-                    std.log.info(
-                        "audio {t} device named changed from '{f}' to '{f}'",
-                        .{ direction, info.old_name, info.new_name },
-                    );
-                },
-            }
-        }
-    }.onEvent;
-}
-
-pub const UserAudio = struct {
-    direction: audio.Direction,
-    volume: f32,
-    device: ?Device = null,
-
-    selecting_devices: ?[]Device = null,
-    pub fn selectInit(self: *UserAudio, core: *Core) []Device {
-        if (self.selecting_devices == null) {
-            const on_event = switch (self.direction) {
-                .capture => logAudioDeviceEvent(.capture),
-                .playout => logAudioDeviceEvent(.playout),
-            };
-            const directional = core.audioDirectional(self.direction);
-            switch (directional.updateDevices(core.gpa, &core.audio_backend, on_event, &core.string_pool)) {
-                .locked => {
-                    std.log.err("unable to update devices, something else has a lock?", .{});
-                },
-                .result => |maybe_err| if (maybe_err) |err| {
-                    // TODO: display this to the user
-                    std.log.err(
-                        "error while updating audio {t} devices: {f}",
-                        .{ self.direction, err },
-                    );
-                },
-            }
-            self.selecting_devices = directional.lockDeviceUpdates();
-        }
-        return self.selecting_devices.?;
-    }
-    pub fn deinitSelect(self: *UserAudio, core: *Core, maybe_selection: ?DeviceSelection) void {
-        std.debug.assert(self.selecting_devices != null);
-        if (maybe_selection) |selection| {
-            const directional = core.audioDirectional(self.direction);
-            directional.unlockDeviceUpdates();
-            self.device = selection.device;
-            if (self.device) |d| {
-                d.addReference(&core.string_pool);
-            }
-            self.selecting_devices = null;
-        }
-    }
-};
-
 pub const ActiveCall = struct {
     host_id: Host.ClientOnly.Id = undefined,
+    caller_id: ?awebo.Caller.Id = null,
     voice_id: Channel.Id = undefined,
     status: Status = .{},
     push_future: ?Io.Future(error{ Closed, Canceled }!void) = null,
     manager_future: ?Io.Future(void) = null,
+    callers: std.AutoArrayHashMapUnmanaged(awebo.Caller.Id, *Audio.Caller),
 
     pub const Status = ui.AtomicEnum(true, .intent, &.{
         .connecting,
@@ -633,12 +580,16 @@ pub const ActiveCall = struct {
     pub fn disconnect(ac: *const ActiveCall, core: *Core) void {
         _ = ac;
         const io = core.io;
-        const gpa = core.gpa;
         const call = &(core.active_call orelse return);
+        core.audio.captureStop();
+        log.debug("stopped capturing, cleaning up futures", .{});
         if (call.push_future) |*push_future| push_future.cancel(io) catch {};
+        log.debug("push future done", .{});
         if (call.manager_future) |*manager_future| manager_future.cancel(io);
-        core.media.stop(&core.string_pool, gpa);
-        core.media.deinit(gpa);
+        log.debug("manager future done", .{});
+        for (call.callers.values()) |caller| {
+            caller.destroy(core.gpa, &core.audio);
+        }
         core.active_call = null;
     }
 };
@@ -787,6 +738,15 @@ pub fn callJoin(
     var call: ActiveCall = .{
         .host_id = host_id,
         .voice_id = voice_id,
+        .callers = blk: {
+            var map: std.AutoArrayHashMapUnmanaged(awebo.Caller.Id, *Audio.Caller) = .empty;
+            if (host.client.callers.getVoiceRoom(voice_id)) |callers| {
+                for (callers) |c| {
+                    try map.put(gpa, c, try Audio.Caller.create(gpa, core));
+                }
+            }
+            break :blk map;
+        },
     };
 
     // Attempt to push immediately, in case of contention spawn a coroutine for doing it.
@@ -813,21 +773,23 @@ pub fn callBeginWebcamShare(core: *Core) !void {
 }
 
 pub fn callLeave(core: *Core) !void {
+    const io = core.io;
+    const gpa = core.gpa;
+
     const ac = &(core.active_call orelse return);
+    const host_id = ac.host_id;
     ac.disconnect(core);
+
+    const host = core.hosts.get(host_id).?;
+    const msg: awebo.protocol.client.CallLeave = .{};
+    const bytes = try msg.serializeAlloc(gpa);
+    try host.client.connection.?.tcp.queue.putOne(io, bytes);
 }
 
 pub fn now(core: *Core) u64 {
     const io = core.io;
     const n = Io.Clock.awake.now(io);
     return @intCast(core.start_time.durationTo(n).toNanoseconds());
-}
-
-pub fn audioDirectional(core: *Core, direction: audio.Direction) *audio.Directional {
-    return switch (direction) {
-        .capture => &core.audio_capture,
-        .playout => &core.audio_playout,
-    };
 }
 
 fn oom() noreturn {

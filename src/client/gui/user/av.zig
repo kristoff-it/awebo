@@ -1,6 +1,5 @@
 const std = @import("std");
 const dvui = @import("dvui");
-const audio = @import("audio");
 const Core = @import("../../Core.zig");
 const App = @import("../../../main_client_gui.zig").App;
 
@@ -41,13 +40,13 @@ pub fn draw(app: *App) !void {
                 .font = dvui.Font.theme(.title).larger(2),
                 .expand = .horizontal,
             });
-            if (try audioDeviceDropdown(core, @src(), &core.user_audio.capture, .{
+            if (try audioDeviceDropdown(@src(), &core.audio, .capture, .{
                 .gravity_x = 0.5,
                 .font = dvui.Font.theme(.title),
                 .expand = .horizontal,
             })) {}
 
-            const in_volume = &core.user_audio.capture.volume;
+            const in_volume = &core.audio.capture_volume;
             _ = dvui.slider(@src(), .{
                 .dir = .horizontal,
                 .fraction = in_volume,
@@ -69,13 +68,13 @@ pub fn draw(app: *App) !void {
                 .expand = .horizontal,
             });
 
-            if (try audioDeviceDropdown(core, @src(), &core.user_audio.playout, .{
+            if (try audioDeviceDropdown(@src(), &core.audio, .playback, .{
                 .gravity_x = 0.5,
                 .font = dvui.Font.theme(.title),
                 .expand = .horizontal,
             })) {}
 
-            const out_volume = &core.user_audio.playout.volume;
+            const out_volume = &core.audio.playback_volume;
             _ = dvui.slider(@src(), .{
                 .dir = .horizontal,
                 .fraction = out_volume,
@@ -106,47 +105,65 @@ pub fn draw(app: *App) !void {
 }
 
 pub fn audioDeviceDropdown(
-    core: *Core,
     src: std.builtin.SourceLocation,
-    audio_state: *Core.UserAudio,
+    audio: *Core.Audio,
+    kind: enum { playback, capture },
     opts: dvui.Options,
 ) !bool {
+    const selected = switch (kind) {
+        .capture => &audio.capture_selected,
+        .playback => &audio.playback_selected,
+    };
+
     var dd: dvui.DropdownWidget = undefined;
     dd.init(
         src,
         .{
-            .label = if (audio_state.device) |device| device.name.slice else "(system default)",
+            .label = if (selected.*) |id| audio.devices.values()[id].name else "(system default)",
         },
         opts,
     );
     // try dd.install();
 
-    var new_selection: ?Core.DeviceSelection = null;
+    var changed = false;
     if (dd.dropped()) {
-        const devices = audio_state.selectInit(core);
-        defer audio_state.deinitSelect(core, new_selection);
-
-        if (audio_state.device) |selected_device| {
-            for (devices, 1..) |d, i| {
-                if (d.token.slice.ptr == selected_device.token.slice.ptr) {
-                    dd.init_options.selected_index = i;
-                }
-            }
-        } else {
-            dd.init_options.selected_index = 0;
-        }
+        if (selected.* == null) dd.init_options.selected_index = 0;
         if (dd.addChoiceLabel("(system default)")) {
-            new_selection = .{ .device = null };
+            selected.* = null;
+            changed = true;
         }
-        for (devices) |d| {
-            if (dd.addChoiceLabel(d.name.slice)) {
-                new_selection = .{ .device = d };
+
+        for (audio.devices.values(), 0..) |device, i| {
+            switch (kind) {
+                .capture => if (device.channels_in_count == 0) continue,
+                .playback => if (device.channels_out_count == 0) continue,
+            }
+
+            var marker: []const u8 = "  ";
+            if (selected.*) |selected_id| if (selected_id == i) {
+                dd.init_options.selected_index = i;
+                marker = "x";
+            };
+
+            var mi = dd.addChoice();
+            defer mi.deinit();
+
+            var style = mi.data().options.strip().override(mi.style());
+            if (!device.connected) {
+                style.color_text = .red;
+                style.font.?.weight = .bold;
+            }
+            dvui.label(@src(), "[{s}] {s}", .{ marker, device.name }, style);
+
+            if (mi.activeRect()) |_| {
+                dd.close();
+                selected.* = i;
+                changed = true;
             }
         }
     }
-
     dd.deinit();
-    return if (new_selection) |_| true else false;
+    return changed;
 }
 
 pub fn webcamDeviceDropdown(
