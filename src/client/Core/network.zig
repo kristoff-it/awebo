@@ -386,6 +386,7 @@ pub fn runHostMediaReceiver(
     server: *const Io.net.IpAddress,
     host_id: HostId,
 ) !void {
+    _ = host_id;
     const gpa = core.gpa;
     const io = core.io;
 
@@ -393,28 +394,28 @@ pub fn runHostMediaReceiver(
     defer log.debug("{s} exited", .{@src().fn_name});
 
     var imbuf: [64]Io.net.IncomingMessage = undefined;
-    var csbuf_idx: usize = 0;
     const dbuf = gpa.alloc(u8, imbuf.len * 1280) catch oom();
     while (true) {
         const m = try sock.receive(io, dbuf);
         log.debug("got media! {}", .{m.data.len});
         if (!m.from.eql(server)) continue;
         log.debug("right server! {}", .{m.data.len});
-        const power, const cid = (try receive(core, m.data) orelse continue);
+        try receive(core, m.data);
+        // const power, const cid = (try receive(core, m.data) orelse continue);
         // log.debug("cid: {} pow: {}", .{ cid, power });
-        if (power > 200) {
-            try core.putEvent(.{ .network = .{
-                .host_id = host_id,
-                .cmd = .{
-                    .caller_speaking = .{
-                        .time_ns = core.now(),
-                        .caller = cid,
-                    },
-                },
-            } });
-        }
+        // if (power > 200) {
+        //     try core.putEvent(.{ .network = .{
+        //         .host_id = host_id,
+        //         .cmd = .{
+        //             .caller_speaking = .{
+        //                 .time_ns = core.now(),
+        //                 .caller = cid,
+        //             },
+        //         },
+        //     } });
+        // }
 
-        _ = &csbuf_idx;
+        // _ = &csbuf_idx;
         //     const err, const n = sock.receiveManyTimeout(io, &imbuf, dbuf, .{}, .none);
         //     if (err) |e| return e;
 
@@ -442,8 +443,7 @@ pub fn runHostMediaReceiver(
     }
 }
 
-fn receive(core: *Core, message: []const u8) !?struct { f32, u16 } {
-    const io = core.io;
+fn receive(core: *Core, message: []const u8) !void {
     const data = message[@sizeOf(awebo.protocol.media.Header)..];
     const message_header = std.mem.bytesAsValue(
         awebo.protocol.media.Header,
@@ -451,29 +451,36 @@ fn receive(core: *Core, message: []const u8) !?struct { f32, u16 } {
     );
 
     const cid = message_header.id.client_id;
-    log.debug("receive cid = {}", .{cid});
+    log.debug("receive cid = {} seq = {}", .{ cid, message_header.sequence });
 
-    const active_call = &(core.active_call orelse return null);
-    const caller = active_call.callers.get(cid) orelse return null;
+    const active_call = &(core.active_call orelse return);
+    const caller = active_call.callers.get(cid) orelse return;
 
     log.debug("caller found!", .{});
 
-    var pcm: [awebo.opus.PACKET_SIZE]f32 = undefined;
-    const written = caller.decoder.decodeFloat(
-        data,
-        &pcm,
-        false,
-    ) catch unreachable;
+    const gpa = core.gpa;
+    const p = gpa.create(Core.Audio.JitterBuffer.Packet) catch return;
+    errdefer gpa.destroy(p);
+    p.seq = message_header.sequence;
+    p.opus_data = gpa.dupe(u8, data) catch return;
+    caller.packets.writePacket(p);
 
-    try caller.voice.writeBoth(io, pcm[0..written]);
+    // var pcm: [awebo.opus.PACKET_SIZE]f32 = undefined;
+    // const written = caller.decoder.decodeFloat(
+    //     data,
+    //     &pcm,
+    //     false,
+    // ) catch unreachable;
 
-    var rms: f32 = 0;
-    for (pcm[0..written]) |sample| {
-        rms += sample * sample;
-    }
-    rms /= @floatFromInt(written);
-    rms = std.math.sqrt(rms);
-    return .{ rms * 100000, @intCast(cid) };
+    // try caller.voice.writeBoth(io, pcm[0..written]);
+
+    // var rms: f32 = 0;
+    // for (pcm[0..written]) |sample| {
+    //     rms += sample * sample;
+    // }
+    // rms /= @floatFromInt(written);
+    // rms = std.math.sqrt(rms);
+    // return .{ rms * 100000, @intCast(cid) };
 }
 
 pub fn runHostMediaSender(
@@ -521,6 +528,10 @@ pub fn runHostMediaSender(
 
 var seq: u32 = 0;
 fn send(audio: *Core.Audio, outbuf: *[1280]u8) !struct { []const u8, f32 } {
+    if (audio.capture_stream.channels[0].len() < awebo.opus.PACKET_SIZE) {
+        return error.NotReady;
+    }
+
     seq += 1;
 
     const header: awebo.protocol.media.Header = .{
@@ -532,12 +543,10 @@ fn send(audio: *Core.Audio, outbuf: *[1280]u8) !struct { []const u8, f32 } {
         .timestamp = 0,
     };
 
+    log.debug("mic -> {}", .{header.sequence});
+
     var w = Io.Writer.fixed(outbuf);
     w.writeAll(std.mem.asBytes(&header)) catch unreachable;
-
-    if (audio.capture_stream.channels[0].len() < awebo.opus.PACKET_SIZE) {
-        return error.NotReady;
-    }
 
     var pcm: [awebo.opus.PACKET_SIZE]f32 = undefined;
     audio.capture_stream.channels[0].readFirstAssumeCount(

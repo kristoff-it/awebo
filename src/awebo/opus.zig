@@ -55,7 +55,6 @@ pub const Decoder = opaque {
 
     /// Returns the number of SAMPLES written to `out`.
     pub fn decodeFloat(d: *Decoder, in: []const u8, pcm: []f32, fec: bool) !usize {
-        assert(@divExact(pcm.len, CHANNELS) == FRAME_COUNT);
         const res = opus_h.opus_decode_float(
             @ptrCast(d),
             in.ptr,
@@ -73,13 +72,13 @@ pub const Decoder = opaque {
     }
 
     /// pcm.len defines how much silence to produce
-    pub fn decodeMissing(d: *Decoder, pcm: []f32, fec: bool) !usize {
+    pub fn decodeMissing(d: *Decoder, pcm: []f32, fec: bool) usize {
         const res = opus_h.opus_decode_float(
             @ptrCast(d),
             null,
             0,
             pcm.ptr,
-            @intCast(@divExact(pcm.len, CHANNELS)),
+            FRAME_COUNT,
             if (fec) 1 else 0,
         );
         return @intCast(res);

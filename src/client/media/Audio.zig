@@ -73,6 +73,7 @@ pub const Caller = struct {
     core: *Core,
     speaking_last_ns: u64 = 0,
     decoder: *awebo.opus.Decoder,
+    packets: JitterBuffer,
     voice: Stream(f32, 1),
     os: switch (builtin.target.os.tag) {
         .macos => MacOsInterface.MacOsCaller,
@@ -85,6 +86,7 @@ pub const Caller = struct {
         caller.* = .{
             .core = core,
             .decoder = try .create(),
+            .packets = .init(try gpa.alloc(*JitterBuffer.Packet, 16)),
             .voice = .init(.{try gpa.alloc(f32, 4096)}),
             .os = .init(caller, &core.audio),
         };
@@ -100,21 +102,44 @@ pub const Caller = struct {
 
     /// Called by the OS audio thread to get new audio data
     fn playbackSourceMonoFill(caller: *Caller, samples: [*]f32, frame_count: u32) callconv(.c) void {
-        const core = caller.core;
-
-        caller.voice.mutex.lockUncancelable(core.io);
-        defer {
-            // cb.condition.signal(io);
-            caller.voice.mutex.unlock(core.io);
-        }
-
-        const playback_count = caller.voice.channels[0].len();
+        const voice = &caller.voice.channels[0];
+        const playback_count = voice.len();
         const s = samples[0..@min(frame_count, playback_count)];
-
         caller.voice.channels[0].readFirstAssumeCount(s, s.len);
 
         if (frame_count > playback_count) {
-            @memset(samples[playback_count..frame_count], 0);
+            assert(voice.len() == 0); // invariant
+            switch (caller.packets.nextPacket()) {
+                .starting => {
+                    log.debug("starting", .{});
+                    @memset(samples[playback_count..frame_count], 0);
+                },
+                .buffering => {
+                    log.debug("buffering", .{});
+                    // TODO: we should inderact with opus. maybe.
+                    @memset(samples[playback_count..frame_count], 0);
+                },
+                .playing => |maybe_packet| {
+                    const written = if (maybe_packet) |p| caller.decoder.decodeFloat(
+                        p.opus_data,
+                        voice.data,
+                        false,
+                    ) catch |err| {
+                        log.debug("error parsing opus data: {t}", .{err});
+                        @memset(samples[playback_count..frame_count], 0);
+                        return;
+                    } else caller.decoder.decodeMissing(voice.data, false);
+
+                    const remaining = frame_count - playback_count;
+                    assert(written > remaining);
+
+                    @memcpy(samples[playback_count..frame_count], voice.data.ptr);
+                    voice.write_index = written;
+                    voice.read_index = remaining;
+
+                    return;
+                },
+            }
         }
     }
 };
@@ -622,7 +647,7 @@ fn oom() noreturn {
 
 fn Stream(SampleType: type, channels: u32) type {
     return struct {
-        channels: [channels]RingBuffer(SampleType),
+        channels: [channels]RingBuffer(SampleType, false),
 
         // used to wake up the thread that writes to the network
         condition: Io.Condition = .init,
@@ -659,3 +684,114 @@ fn Stream(SampleType: type, channels: u32) type {
         }
     };
 }
+
+pub const JitterBuffer = struct {
+    state: enum {
+        /// Waiting for the buffer to fill up for the first time
+        starting,
+        /// Playing audio normally
+        playing,
+        /// After we started playing, we emptied our buffer and
+        /// are now waiting for the buffer to fill up again
+        buffering,
+    } = .starting,
+
+    /// Current sequence number.
+    /// Assumes that network packets start at 1.
+    current_seq: u32 = 0,
+
+    buffer: RingBuffer(*Packet, true),
+
+    pub const Packet = struct {
+        seq: u32,
+        opus_data: []const u8,
+    };
+
+    /// Number of packets that must be present in the buffer
+    /// before we start playing.
+    const buffer_count = 5; // 5 packets @ 20ms = 100ms jitter
+
+    pub fn init(buffer: []*Packet) JitterBuffer {
+        assert(buffer.len > buffer_count); // should have a bit of space for extra packets
+        return .{ .buffer = .init(buffer) };
+    }
+
+    /// This function is meant to be called by the network thread.
+    pub fn writePacket(jb: *JitterBuffer, packet: *Packet) void {
+        jb.buffer.write(packet) catch {
+            log.warn("dropping audio packet, audio thread is too slow!", .{});
+        };
+    }
+
+    const NextPacket = union(enum) {
+        /// When starting we should play silence.
+        starting,
+        /// We started playing but we ran out of data and are now buffering.
+        buffering,
+        /// If payload is null it means that the packet was lost.
+        playing: ?*Packet,
+    };
+
+    /// This function is meant to be called by the audio thread.
+    pub fn nextPacket(jb: *JitterBuffer) NextPacket {
+        const r, const l = jb.buffer.readIndices();
+        const available_packets = jb.buffer.sliceAt(r, l);
+        switch (available_packets.len()) {
+            0 => if (jb.state == .playing) {
+                jb.state = .buffering;
+            },
+            1...buffer_count - 1 => {},
+            else => jb.state = .playing,
+        }
+
+        switch (jb.state) {
+            .starting => return .starting,
+            .buffering => return .buffering,
+            .playing => {},
+        }
+
+        assert(available_packets.len() > 0); // invariant
+
+        const slices = [2][]*Packet{
+            available_packets.first,
+            available_packets.second,
+        };
+
+        log.debug("buffer size: {}", .{available_packets.len()});
+
+        // sort packets in case any has arrived out of order
+        for (slices) |slice| {
+            std.sort.pdq(*Packet, slice, {}, struct {
+                fn lt(_: void, lhs: *Packet, rhs: *Packet) bool {
+                    return lhs.seq < rhs.seq;
+                }
+            }.lt);
+        }
+
+        var idx: usize = 0;
+        for (slices) |slice| for (slice) |next| {
+            idx += 1;
+            if (next.seq <= jb.current_seq) {
+                continue;
+            }
+
+            jb.current_seq += 1;
+            if (next.seq == jb.current_seq) {
+                jb.buffer.read_index.store(jb.buffer.mask2(r + idx), .release);
+                return .{ .playing = next };
+            }
+
+            assert(next.seq > jb.current_seq);
+            if (idx > 1) {
+                jb.buffer.read_index.store(jb.buffer.mask2(r + idx - 1), .release);
+            }
+            return .{ .playing = null };
+        };
+
+        // We looked through the full buffer and only found old data
+        // which means we're back to buffering mode.
+        jb.buffer.read_index.store(jb.buffer.mask2(r + idx), .release);
+        jb.state = .buffering;
+        return .buffering;
+    }
+};

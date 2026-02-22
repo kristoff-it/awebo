@@ -421,10 +421,10 @@ fn renderVoiceChannel(h: *awebo.Host, core: *Core, v: *const Channel, idx: usize
         }
 
         if (dvui.timerDoneOrNone(box.data().id)) {
-            const millis_per_frame = std.time.ms_per_s / 60;
+            const millis_per_frame = 300;
             const millis = @divFloor(dvui.frameTimeNS(), 1_000_000);
             const left = @as(i32, @intCast(@rem(millis, millis_per_frame)));
-            const wait = 260 * (millis_per_frame - left);
+            const wait = 1000 * (millis_per_frame - left);
             dvui.timer(box.data().id, wait);
         }
 
@@ -522,7 +522,7 @@ fn userbox(app: *App, h: *awebo.Host) !void {
 }
 
 fn renderAVDebugWindow(core: *Core) void {
-    const fw = dvui.floatingWindow(@src(), .{ .modal = true }, .{
+    const fw = dvui.floatingWindow(@src(), .{ .modal = false }, .{
         .padding = dvui.Rect.all(10),
     });
     defer fw.deinit();

@@ -203,11 +203,12 @@ bool audioPlaybackStart(void *ptr, void *userdata, AudioDeviceID deviceID) {
 
   manager.playbackMainSourceNode = source;
 
+  AVAudioFormat *hwFormat = [engine.outputNode outputFormatForBus:0];
+  NSLog(@"output hardware format: %@", hwFormat);
+
   [engine attachNode:source];
   [engine connect:source to:engine.mainMixerNode format:manager.stereoFormat];
-  [engine connect:engine.mainMixerNode
-               to:engine.outputNode
-           format:[engine.outputNode outputFormatForBus:0]];
+  [engine connect:engine.mainMixerNode to:engine.outputNode format:hwFormat];
 
   NSError *error = nil;
   if (![engine startAndReturnError:&error]) {
