@@ -400,7 +400,7 @@ fn runArtifact(
     artifact: *std.Build.Step.Compile,
 ) void {
     if (!target.query.isNative()) {
-        b.installArtifact(artifact);
+        step.dependOn(&b.addInstallArtifact(artifact, .{}).step);
         return;
     }
 

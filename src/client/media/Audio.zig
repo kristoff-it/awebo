@@ -7,7 +7,9 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const awebo = @import("../../awebo.zig");
 const Core = @import("../Core.zig");
+const JitterBuffer = @import("JitterBuffer.zig");
 const RingBuffer = @import("../RingBuffer.zig").RingBuffer;
+const CapturePacketRing = @import("CapturePacketRing.zig");
 const log = std.log.scoped(.audio);
 
 const SourceKind = enum(u32) { mono = 1, stereo = 2 };
@@ -29,8 +31,10 @@ capture_selected: ?usize = null,
 capture_default: ?usize = null,
 /// Volume from awebo user settings
 capture_volume: f32 = 1.0,
+capture_threshold: f32 = 0.2,
 capture_stream: Stream(f32, 1),
 capture_encoder: *awebo.opus.Encoder,
+capture_packets: CapturePacketRing = .empty,
 
 /// Same as input, but for the playback device
 playback_selected: ?usize = null,
@@ -73,6 +77,7 @@ pub const Caller = struct {
     core: *Core,
     speaking_last_ns: u64 = 0,
     decoder: *awebo.opus.Decoder,
+    packets: JitterBuffer,
     voice: Stream(f32, 1),
     os: switch (builtin.target.os.tag) {
         .macos => MacOsInterface.MacOsCaller,
@@ -85,7 +90,14 @@ pub const Caller = struct {
         caller.* = .{
             .core = core,
             .decoder = try .create(),
-            .voice = .init(.{try gpa.alloc(f32, 4096)}),
+            .packets = .init,
+            .voice = .init(.{try gpa.alloc(
+                f32,
+                std.math.ceilPowerOfTwoAssert(
+                    usize,
+                    awebo.opus.PACKET_SAMPLE_COUNT,
+                ),
+            )}),
             .os = .init(caller, &core.audio),
         };
         return caller;
@@ -100,21 +112,70 @@ pub const Caller = struct {
 
     /// Called by the OS audio thread to get new audio data
     fn playbackSourceMonoFill(caller: *Caller, samples: [*]f32, frame_count: u32) callconv(.c) void {
-        const core = caller.core;
+        const voice_read = &caller.voice.channels[0];
+        const available_count = voice_read.len();
+        const s = samples[0..@min(frame_count, available_count)];
+        voice_read.readFirstAssumeCount(s, s.len);
 
-        caller.voice.mutex.lockUncancelable(core.io);
-        defer {
-            // cb.condition.signal(io);
-            caller.voice.mutex.unlock(core.io);
-        }
+        var remaining = samples[s.len..frame_count];
+        while (remaining.len != 0) {
+            assert(voice_read.len() == 0); // invariant leveraged below
+            switch (caller.packets.nextPacketBegin()) {
+                .starting => {
+                    @memset(remaining, 0);
+                    return;
+                },
+                .playing => |maybe_playing| {
+                    if (remaining.len >= awebo.opus.PACKET_SAMPLE_COUNT) {
+                        if (maybe_playing) |playing| {
+                            const written = caller.decoder.decodeFloat(
+                                playing.data,
+                                remaining,
+                                false,
+                            ) catch |err| {
+                                log.debug("error parsing opus data: {t}", .{err});
+                                @memset(remaining, 0);
+                                return;
+                            };
+                            assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+                            caller.packets.nextPacketCommit(playing);
+                        } else {
+                            const written = caller.decoder.decodeMissing(remaining, false);
+                            assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+                        }
+                        remaining = remaining[awebo.opus.PACKET_SAMPLE_COUNT..];
+                        continue;
+                    } else {
+                        assert(voice_read.data.len >= awebo.opus.PACKET_SAMPLE_COUNT);
+                        if (maybe_playing) |playing| {
+                            const written = caller.decoder.decodeFloat(
+                                playing.data,
+                                voice_read.data,
+                                false,
+                            ) catch |err| {
+                                log.debug("error parsing opus data: {t}", .{err});
+                                @memset(remaining, 0);
+                                return;
+                            };
 
-        const playback_count = caller.voice.channels[0].len();
-        const s = samples[0..@min(frame_count, playback_count)];
+                            caller.packets.nextPacketCommit(playing);
+                            assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+                            assert(written > remaining.len);
+                        } else {
+                            const written = caller.decoder.decodeMissing(voice_read.data, false);
+                            assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+                            assert(written > remaining.len);
+                        }
 
-        caller.voice.channels[0].readFirstAssumeCount(s, s.len);
+                        @memcpy(remaining, voice_read.data.ptr);
+                        voice_read.write_index = awebo.opus.PACKET_SAMPLE_COUNT;
+                        voice_read.read_index = remaining.len;
 
-        if (frame_count > playback_count) {
-            @memset(samples[playback_count..frame_count], 0);
+                        return;
+                    }
+                },
+            }
+            comptime unreachable;
         }
     }
 };
@@ -174,6 +235,21 @@ pub fn captureStop(audio: *Audio) void {
     audio.os.captureStop();
 }
 
+/// 'power' will be written to atomically by the audio thread
+/// to report the power computation of the audio being captured
+pub fn captureTestStart(audio: *Audio, power: *std.atomic.Value(f32)) void {
+    log.debug("captureTestStart", .{});
+
+    const capture = if (audio.capture_selected) |idx| &audio.devices.values()[idx] else null;
+    const playback = if (audio.playback_selected) |idx| &audio.devices.values()[idx] else null;
+    _ = audio.os.captureTestStart(power, capture, playback);
+}
+
+pub fn captureTestStop(audio: *Audio) void {
+    log.debug("captureTestStop", .{});
+    audio.os.captureTestStop();
+}
+
 /// Called by OS APIs to fill the playback buffer from our audio data.
 fn playbackFill(audio: *Audio, left: [*]f32, right: [*]f32, frame_count: u32) callconv(.c) void {
     // const capture_count = audio.capture_stream.channels[0].len();
@@ -181,24 +257,29 @@ fn playbackFill(audio: *Audio, left: [*]f32, right: [*]f32, frame_count: u32) ca
     // audio.capture_stream.channels[0].readFirst(l, l.len) catch unreachable;
     // @memcpy(right, l);
 
-    const core: *Core = @alignCast(@fieldParentPtr("audio", audio));
-    audio.playback_stream.mutex.lockUncancelable(core.io);
-    defer {
-        // cb.condition.signal(io);
-        audio.playback_stream.mutex.unlock(core.io);
-    }
+    _ = audio;
+    _ = left;
+    _ = right;
+    _ = frame_count;
 
-    const playback_count = audio.playback_stream.channels[0].len();
-    const l = left[0..@min(frame_count, playback_count)];
-    const r = right[0..@min(frame_count, playback_count)];
+    // const core: *Core = @alignCast(@fieldParentPtr("audio", audio));
+    // audio.playback_stream.mutex.lockUncancelable(core.io);
+    // defer {
+    //     // cb.condition.signal(io);
+    //     audio.playback_stream.mutex.unlock(core.io);
+    // }
 
-    audio.playback_stream.channels[0].readFirstAssumeCount(l, l.len);
-    audio.playback_stream.channels[1].readFirstAssumeCount(r, r.len);
+    // const playback_count = audio.playback_stream.channels[0].len();
+    // const l = left[0..@min(frame_count, playback_count)];
+    // const r = right[0..@min(frame_count, playback_count)];
 
-    if (frame_count > playback_count) {
-        @memset(left[playback_count..frame_count], 0);
-        @memset(right[playback_count..frame_count], 0);
-    }
+    // audio.playback_stream.channels[0].readFirstAssumeCount(l, l.len);
+    // audio.playback_stream.channels[1].readFirstAssumeCount(r, r.len);
+
+    // if (frame_count > playback_count) {
+    //     @memset(left[playback_count..frame_count], 0);
+    //     @memset(right[playback_count..frame_count], 0);
+    // }
 }
 
 fn playbackSourceStereoFill(audio: *Audio, source_id: u32, left: [*]f32, right: [*]f32, frame_count: u32) callconv(.c) void {
@@ -211,14 +292,28 @@ fn playbackSourceStereoFill(audio: *Audio, source_id: u32, left: [*]f32, right: 
 
 /// Called by OS APIs to let us take audio data from the capture buffer.
 fn capturePush(audio: *Audio, frames: [*]f32, frame_count: u32) callconv(.c) void {
-    const core: *Core = @alignCast(@fieldParentPtr("audio", audio));
-    audio.capture_stream.mutex.lockUncancelable(core.io);
-    defer {
-        audio.capture_stream.condition.signal(core.io);
-        audio.capture_stream.mutex.unlock(core.io);
-    }
+    const capture = &audio.capture_stream.channels[0];
+    capture.writeSliceAssumeCapacity(frames[0..frame_count]);
+    if (capture.len() < awebo.opus.PACKET_SAMPLE_COUNT) return;
 
-    audio.capture_stream.channels[0].writeSliceAssumeCapacity(frames[0..frame_count]);
+    var pcm: [awebo.opus.PACKET_SAMPLE_COUNT]f32 = undefined;
+    capture.readFirstAssumeCount(
+        &pcm,
+        awebo.opus.PACKET_SAMPLE_COUNT,
+    );
+
+    const write = audio.capture_packets.beginWrite() orelse {
+        log.err("capture buffer is full, network thread is lagging behind!", .{});
+        return;
+    };
+    write.data.power = computePower(&pcm);
+    write.data.len = audio.capture_encoder.encodeFloat(&pcm, write.data.writeSlice()) catch |err| {
+        log.err("opus encoder error: {t}", .{err});
+        capture.read_index = 0;
+        capture.write_index = 0;
+    };
+
+    audio.capture_packets.commitWrite(write);
 }
 
 /// Called by the OS interface whenever a device is added, removed, or its
@@ -355,6 +450,16 @@ const MacOsInterface = struct {
 
     pub fn captureStop(mi: *MacOsInterface) void {
         mi.engine.captureStop();
+    }
+
+    pub fn captureTestStart(mi: *MacOsInterface, power: *std.atomic.Value(f32), capture: ?*Device, playback: ?*Device) bool {
+        const capture_id = if (capture) |d| d.os.device_id else 0;
+        const playback_id = if (playback) |d| d.os.device_id else 0;
+        return mi.engine.captureTestStart(power, capture_id, playback_id);
+    }
+
+    pub fn captureTestStop(mi: *MacOsInterface) void {
+        mi.engine.captureTestStop();
     }
 
     fn discoverDevices(ac: *Audio) void {
@@ -561,6 +666,16 @@ const MacOsInterface = struct {
         pub fn captureStop(ae: *AudioEngineManager) void {
             audioCaptureStop(ae);
         }
+
+        extern fn audioCaptureTestStart(*AudioEngineManager, *anyopaque, ca.AudioDeviceID, ca.AudioDeviceID) bool;
+        pub fn captureTestStart(ae: *AudioEngineManager, power: *std.atomic.Value(f32), capture: ca.AudioDeviceID, playback: ca.AudioDeviceID) bool {
+            return audioCaptureTestStart(ae, power, capture, playback);
+        }
+
+        extern fn audioCaptureTestStop(*AudioEngineManager) void;
+        pub fn captureTestStop(ae: *AudioEngineManager) void {
+            audioCaptureTestStop(ae);
+        }
     };
 };
 
@@ -608,6 +723,8 @@ const DummyInterface = struct {
 
     pub fn captureStart(_: *DummyInterface, _: *Audio, _: ?*Device) void {}
     pub fn captureStop(_: *DummyInterface) void {}
+    pub fn captureTestStart(_: *DummyInterface, _: *std.atomic.Value(f32), _: ?*Device, _: ?*Device) void {}
+    pub fn captureTestStop(_: *DummyInterface) void {}
 
     pub const DummyDevice = struct {
         pub fn format(_: DummyDevice, w: *Io.Writer) !void {
@@ -658,4 +775,25 @@ fn Stream(SampleType: type, channels: u32) type {
             return;
         }
     };
+}
+
+test {
+    _ = JitterBuffer;
+    _ = CapturePacketRing;
+}
+
+/// Called by OS code to perform the power computation on samples
+export fn aweboComputePower(power: *std.atomic.Value(f32), sample_buf: [*]const f32, sample_count: u32) void {
+    const samples = sample_buf[0..sample_count];
+    power.store(computePower(samples), .release);
+}
+
+fn computePower(samples: []const f32) f32 {
+    var rms: f32 = 0;
+    for (samples) |s| rms += s * s;
+    rms /= @floatFromInt(samples.len);
+    rms = std.math.sqrt(rms);
+    const value = rms * 20;
+    if (value > 1.0) return 1.0;
+    return value;
 }

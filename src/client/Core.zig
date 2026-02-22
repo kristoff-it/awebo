@@ -567,6 +567,8 @@ pub const ActiveCall = struct {
     manager_future: ?Io.Future(void) = null,
     callers: std.AutoArrayHashMapUnmanaged(awebo.Caller.Id, *Audio.Caller),
 
+    muted: bool = false,
+
     pub const Status = ui.AtomicEnum(true, .intent, &.{
         .connecting,
         .connected,
@@ -772,6 +774,11 @@ pub fn callBeginWebcamShare(core: *Core) !void {
     _ = core.webcam_capture.startCapture();
 }
 
+pub fn callMuteToggle(core: *Core) void {
+    const ac = &(core.active_call orelse return);
+    ac.muted = !ac.muted;
+}
+
 pub fn callLeave(core: *Core) !void {
     const io = core.io;
     const gpa = core.gpa;
@@ -798,4 +805,5 @@ fn oom() noreturn {
 
 test {
     _ = awebo;
+    _ = Audio;
 }

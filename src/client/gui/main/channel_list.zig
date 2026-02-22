@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -7,11 +8,9 @@ const Channel = awebo.Channel;
 const App = @import("../../../main_client_gui.zig").App;
 const Core = @import("../../Core.zig");
 
-const debug = struct {
+const debug = if (builtin.mode != .Debug) void else struct {
     var window = false;
     var playback = false;
-    var capture = false;
-    var capture_pump: Io.Future(void) = undefined;
     var screen = false;
     var webcam = false;
 };
@@ -47,35 +46,37 @@ pub fn hostName(app: *App, h: *awebo.Host) void {
         });
         defer m.deinit();
 
-        if (dvui.menuItemLabel(
-            @src(),
-            "Settings",
-            .{ .submenu = true },
-            .{ .expand = .none },
-        )) |r| {
-            var fw = dvui.floatingMenu(@src(), .{
-                .from = dvui.Rect.Natural.fromPoint(dvui.Point.Natural{
-                    .x = r.x,
-                    .y = r.y + r.h,
-                }),
-            }, .{});
-            defer fw.deinit();
+        if (debug != void) {
+            if (dvui.menuItemLabel(
+                @src(),
+                "Debug",
+                .{ .submenu = true },
+                .{ .expand = .none },
+            )) |r| {
+                var fw = dvui.floatingMenu(@src(), .{
+                    .from = dvui.Rect.Natural.fromPoint(dvui.Point.Natural{
+                        .x = r.x,
+                        .y = r.y + r.h,
+                    }),
+                }, .{});
+                defer fw.deinit();
 
-            if (dvui.menuItemLabel(@src(), "New Chat", .{}, .{}) != null) {
-                app.show_new_chat = true;
-                m.close();
+                if (dvui.menuItemLabel(@src(), "New Chat", .{}, .{}) != null) {
+                    app.show_new_chat = true;
+                    m.close();
+                }
+                if (dvui.menuItemLabel(@src(), "Awebo A/V Debug Window", .{}, .{}) != null) {
+                    debug.window = !debug.window;
+                    m.close();
+                }
+                if (dvui.menuItemLabel(@src(), "DVUI Debug Window", .{}, .{}) != null) {
+                    dvui.toggleDebugWindow();
+                    m.close();
+                }
             }
-            if (dvui.menuItemLabel(@src(), "Awebo A/V Debug Window", .{}, .{}) != null) {
-                debug.window = !debug.window;
-                m.close();
-            }
-            if (dvui.menuItemLabel(@src(), "DVUI Debug Window", .{}, .{}) != null) {
-                dvui.toggleDebugWindow();
-                m.close();
-            }
+
+            if (debug.window) renderAVDebugWindow(&app.core);
         }
-
-        if (debug.window) renderAVDebugWindow(&app.core);
 
         dvui.labelNoFmt(@src(), h.name, .{}, .{
             .gravity_x = 0.5,
@@ -421,10 +422,10 @@ fn renderVoiceChannel(h: *awebo.Host, core: *Core, v: *const Channel, idx: usize
         }
 
         if (dvui.timerDoneOrNone(box.data().id)) {
-            const millis_per_frame = std.time.ms_per_s / 60;
+            const millis_per_frame = 300;
             const millis = @divFloor(dvui.frameTimeNS(), 1_000_000);
             const left = @as(i32, @intCast(@rem(millis, millis_per_frame)));
-            const wait = 260 * (millis_per_frame - left);
+            const wait = 1000 * (millis_per_frame - left);
             dvui.timer(box.data().id, wait);
         }
 
@@ -465,6 +466,11 @@ fn joinedVoice(core: *Core) !void {
             dvui.label(@src(), "{s} / {s}", .{ v.name, h.name }, .{
                 .font = dvui.Font.theme(.body).larger(-2),
             });
+        }
+
+        const mute_label = if (call.muted) "Unmute" else "Mute";
+        if (dvui.button(@src(), mute_label, .{}, .{ .expand = .vertical })) {
+            core.callMuteToggle();
         }
 
         if (dvui.button(@src(), "Leave", .{}, .{ .expand = .vertical })) {
@@ -522,25 +528,12 @@ fn userbox(app: *App, h: *awebo.Host) !void {
 }
 
 fn renderAVDebugWindow(core: *Core) void {
-    const fw = dvui.floatingWindow(@src(), .{ .modal = true }, .{
+    const fw = dvui.floatingWindow(@src(), .{ .modal = false }, .{
         .padding = dvui.Rect.all(10),
     });
     defer fw.deinit();
 
     fw.dragAreaSet(dvui.windowHeader("Awebo A/V Debug", "", &debug.window));
-
-    const capture_label = if (debug.capture) "Microphone OFF" else "Microphone ON";
-    if (dvui.button(@src(), capture_label, .{}, .{})) {
-        if (debug.capture) {
-            debug.capture = false;
-            debug.capture_pump.cancel(core.io);
-            core.audio.captureStop();
-        } else {
-            debug.capture = true;
-            debug.capture_pump = core.io.concurrent(opusDance, .{core}) catch unreachable;
-            core.audio.captureStart();
-        }
-    }
 
     const webcam_label = if (debug.webcam) "Camera OFF" else "Camera ON";
     if (dvui.button(@src(), webcam_label, .{}, .{})) {
@@ -564,51 +557,19 @@ fn renderAVDebugWindow(core: *Core) void {
         }
     }
 
+    if (dvui.button(@src(), "Drop next incoming media packet", .{}, .{})) {
+        @import("../../Core/network.zig").debug.drop_next_media_packets.store(1, .release);
+    }
+
+    if (dvui.button(@src(), "Drop next incoming 5 media packets", .{}, .{})) {
+        @import("../../Core/network.zig").debug.drop_next_media_packets.store(5, .release);
+    }
+
+    if (dvui.button(@src(), "Send bad capture packet", .{}, .{})) {
+        @import("../../Core/network.zig").debug.send_bad_capture_packet.store(true, .release);
+    }
+
     const screenshare_box = @import("screenshare_box.zig");
     if (debug.webcam) screenshare_box.drawSource(core, .webcam) catch unreachable;
     if (debug.screen) screenshare_box.drawSource(core, .screen) catch unreachable;
-}
-
-fn opusDance(core: *Core) void {
-    std.log.debug("dancing!", .{});
-
-    const io = core.io;
-    const audio = &core.audio;
-
-    while (true) {
-        core.audio.capture_stream.mutex.lockUncancelable(io);
-        defer core.audio.capture_stream.mutex.unlock(io);
-        core.audio.capture_stream.condition.wait(io, &core.audio.capture_stream.mutex) catch return;
-
-        var data_buf: [1280]u8 = undefined;
-
-        if (audio.capture_stream.channels[0].len() < awebo.opus.PACKET_SIZE) {
-            continue;
-        }
-
-        var sample_buf: [awebo.opus.PACKET_SIZE]f32 = undefined;
-        audio.capture_stream.channels[0].readFirstAssumeCount(
-            &sample_buf,
-            awebo.opus.PACKET_SIZE,
-        );
-
-        core.audio.playback_stream.writeBoth(io, &sample_buf) catch return;
-        if (true) continue;
-
-        const len = audio.capture_encoder.encodeFloat(&sample_buf, &data_buf) catch |err| {
-            std.log.debug("opus encoder error: {t}", .{err});
-            return error.EncodingFailure;
-        };
-
-        const encoded_data = data_buf[0..len];
-
-        var pcm: [awebo.opus.PACKET_SIZE]f32 = undefined;
-        const written = core.audio.playback_decoder.decodeFloat(
-            encoded_data,
-            &pcm,
-            false,
-        ) catch unreachable;
-
-        core.audio.playback_stream.writeBoth(io, pcm[0..written]);
-    }
 }

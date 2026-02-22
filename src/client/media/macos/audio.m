@@ -14,9 +14,9 @@ __attribute__((weak)) void aweboAudioPlaybackFill(void *userdata, float *left,
 
 void aweboAudioPlaybackSourceMonoFill(void *userdata, float *samples,
                                       uint32_t frame_count);
-__attribute__((weak)) void aweboAudioPlaybackMonoFill(void *userdata,
-                                                      float *samples,
-                                                      uint32_t frame_count) {
+__attribute__((weak)) void
+aweboAudioPlaybackSourceMonoFill(void *userdata, float *samples,
+                                 uint32_t frame_count) {
   __builtin_unreachable();
 }
 void aweboAudioPlaybackSourceStereoFill(void *userdata, float *left,
@@ -24,6 +24,13 @@ void aweboAudioPlaybackSourceStereoFill(void *userdata, float *left,
 __attribute__((weak)) void
 aweboAudioPlaybackSourceStereoFill(void *userdata, float *left, float *right,
                                    uint32_t frame_count) {
+  __builtin_unreachable();
+}
+
+void aweboComputePower(void *userdata, const float *samples,
+                       uint32_t sample_count);
+__attribute__((weak)) void
+aweboComputePower(void *userdata, const float *samples, uint32_t sample_count) {
   __builtin_unreachable();
 }
 
@@ -49,6 +56,7 @@ static const double kSampleRate = 48000.0;
 @property(strong) AVAudioEngine *captureEngine;
 @property(strong) AVAudioSinkNode *captureSinkNode;
 @property(strong) AVAudioMixerNode *captureMixerNode;
+@property(strong) AVAudioEngine *testEngine;
 @end
 
 @implementation AudioEngineManager
@@ -62,6 +70,7 @@ void *audioEngineManagerInit() {
   AudioEngineManager *manager = [[AudioEngineManager alloc] init];
   manager.playbackEngine = [[AVAudioEngine alloc] init];
   manager.captureEngine = [[AVAudioEngine alloc] init];
+  manager.testEngine = [[AVAudioEngine alloc] init];
   manager.stereoFormat =
       [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
                                        sampleRate:kSampleRate
@@ -203,11 +212,12 @@ bool audioPlaybackStart(void *ptr, void *userdata, AudioDeviceID deviceID) {
 
   manager.playbackMainSourceNode = source;
 
+  AVAudioFormat *hwFormat = [engine.outputNode outputFormatForBus:0];
+  NSLog(@"output hardware format: %@", hwFormat);
+
   [engine attachNode:source];
   [engine connect:source to:engine.mainMixerNode format:manager.stereoFormat];
-  [engine connect:engine.mainMixerNode
-               to:engine.outputNode
-           format:[engine.outputNode outputFormatForBus:0]];
+  [engine connect:engine.mainMixerNode to:engine.outputNode format:hwFormat];
 
   NSError *error = nil;
   if (![engine startAndReturnError:&error]) {
@@ -265,6 +275,60 @@ void audioPlaybackStop(void *ptr) {
     manager.playbackMainSourceNode = nil;
   }
   NSLog(@"audio playback stopped");
+}
+
+void audioCaptureTestStart(void *ptr, void *userdata,
+                           AudioDeviceID captureDeviceID,
+                           AudioDeviceID playbackDeviceID) {
+  AudioEngineManager *manager = (__bridge AudioEngineManager *)ptr;
+  AVAudioEngine *engine = manager.testEngine;
+
+  NSLog(@"starting audio test %p", manager.testEngine);
+
+  if (captureDeviceID != 0) {
+    if (!setEngineDevice(engine, captureDeviceID, true)) {
+      NSLog(@"failed to set capture device in test capture");
+      return;
+    }
+  }
+
+  [engine connect:engine.inputNode
+               to:engine.mainMixerNode
+           format:[engine.inputNode inputFormatForBus:0]];
+
+  if (playbackDeviceID != 0) {
+    if (!setEngineDevice(engine, playbackDeviceID, false)) {
+      NSLog(@"failed to set playback device in test capture");
+      return;
+    }
+  }
+
+  [engine connect:engine.mainMixerNode
+               to:engine.outputNode
+           format:[engine.outputNode inputFormatForBus:0]];
+
+  [engine.mainMixerNode
+      installTapOnBus:0
+           bufferSize:512
+               format:[engine.mainMixerNode outputFormatForBus:0]
+                block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
+                  const float *samples = *[buffer floatChannelData];
+                  aweboComputePower(userdata, samples,
+                                    buffer.frameLength * buffer.stride);
+                }];
+
+  NSError *error = nil;
+  if (![engine startAndReturnError:&error]) {
+    NSLog(@"capture test failed: %@", error);
+  }
+}
+
+void audioCaptureTestStop(void *ptr) {
+  AudioEngineManager *manager = (__bridge AudioEngineManager *)ptr;
+
+  NSLog(@"Stopping audio test %p", manager.testEngine);
+  [manager.testEngine stop];
+  [manager.testEngine.mainMixerNode removeTapOnBus:0];
 }
 
 // bool audioCaptureStart(void *ptr, void *userdata, AudioDeviceID deviceID) {

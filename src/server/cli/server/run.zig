@@ -407,11 +407,19 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
             },
 
             .media => {
+                server_log.debug("received {}", .{header.sequence});
                 const sender = state.clients.udp_index.get(packet.from) orelse {
                     server_log.debug("received media udp packet from unknown source: {f}", .{packet.from});
                     continue;
                 };
 
+                if ((header.sequence >> 31) > 0) {
+                    server_log.debug("client sent a sequence id > maxint/2,", .{});
+                    sender.deinit(io, gpa, state);
+                    continue;
+                }
+
+                // Make sure the client doen't spoof the sender id
                 sender.udp.?.last_msg_ms = state.id.new();
                 header.id.client_id = sender.udp.?.id;
 

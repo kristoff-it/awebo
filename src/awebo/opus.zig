@@ -13,14 +13,19 @@ const assert = std.debug.assert;
 pub const SAMPLE_SIZE = @sizeOf(f32);
 pub const CHANNELS = 1;
 pub const FREQ = 48000;
-pub const FRAME_COUNT = 960; // 20ms
-pub const PACKET_SIZE = FRAME_COUNT * CHANNELS;
+pub const PACKET_FRAME_COUNT = 960; // 20ms
+pub const PACKET_SAMPLE_COUNT = PACKET_FRAME_COUNT * CHANNELS;
 
 pub const Encoder = opaque {
     pub fn create() !*Encoder {
         var err: c_int = undefined;
         const h = opus_h.opus_encoder_create(FREQ, CHANNELS, opus_h.OPUS_APPLICATION_AUDIO, &err);
         try checkErr(err);
+
+        // err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_SIGNAL_REQUEST, opus_h.OPUS_SIGNAL_VOICE);
+        // err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_DTX_REQUEST, true);
+        // try checkErr(err);
+
         return @ptrCast(h.?);
     }
 
@@ -29,11 +34,11 @@ pub const Encoder = opaque {
     }
 
     /// Returns the number of bytes written to `out`.
-    pub fn encodeFloat(e: *Encoder, pcm: *const [PACKET_SIZE]f32, out: []u8) !usize {
+    pub fn encodeFloat(e: *Encoder, pcm: *const [PACKET_SAMPLE_COUNT]f32, out: []u8) !usize {
         const res = opus_h.opus_encode_float(
             @ptrCast(e),
             pcm,
-            FRAME_COUNT,
+            PACKET_FRAME_COUNT,
             out.ptr,
             @intCast(out.len),
         );
@@ -55,13 +60,12 @@ pub const Decoder = opaque {
 
     /// Returns the number of SAMPLES written to `out`.
     pub fn decodeFloat(d: *Decoder, in: []const u8, pcm: []f32, fec: bool) !usize {
-        assert(@divExact(pcm.len, CHANNELS) == FRAME_COUNT);
         const res = opus_h.opus_decode_float(
             @ptrCast(d),
             in.ptr,
             @intCast(in.len),
             pcm.ptr,
-            FRAME_COUNT,
+            PACKET_FRAME_COUNT,
             if (fec) 1 else 0,
         );
 
@@ -73,13 +77,13 @@ pub const Decoder = opaque {
     }
 
     /// pcm.len defines how much silence to produce
-    pub fn decodeMissing(d: *Decoder, pcm: []f32, fec: bool) !usize {
+    pub fn decodeMissing(d: *Decoder, pcm: []f32, fec: bool) usize {
         const res = opus_h.opus_decode_float(
             @ptrCast(d),
             null,
             0,
             pcm.ptr,
-            @intCast(@divExact(pcm.len, CHANNELS)),
+            PACKET_FRAME_COUNT,
             if (fec) 1 else 0,
         );
         return @intCast(res);
