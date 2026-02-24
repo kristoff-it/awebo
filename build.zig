@@ -199,9 +199,13 @@ pub fn setupGui(
 
     switch (target.result.os.tag) {
         .macos => {
-            gui.root_module.linkFramework("ScreenCaptureKit", .{});
+            const xcode_frameworks = b.dependency("xcode_frameworks", .{});
+            gui.root_module.addFrameworkPath(xcode_frameworks.path("Frameworks"));
+            gui.root_module.addSystemIncludePath(xcode_frameworks.path("include"));
             gui.root_module.linkFramework("AVFoundation", .{});
             gui.root_module.linkFramework("CoreAudio", .{});
+            gui.root_module.linkFramework("ScreenCaptureKit", .{});
+            gui.root_module.linkFramework("Security", .{});
             gui.root_module.addCSourceFiles(.{
                 .files = &.{
                     "src/client/media/macos/audio.m",
@@ -294,13 +298,17 @@ pub fn setupTui(
     addSqlite(tui, zqlite, .client);
     switch (target.result.os.tag) {
         .macos => {
+            const xcode_frameworks = b.dependency("xcode_frameworks", .{});
+            tui.root_module.addFrameworkPath(xcode_frameworks.path("Frameworks"));
+            tui.root_module.addSystemIncludePath(xcode_frameworks.path("include"));
+            tui.root_module.linkFramework("AVFoundation", .{});
+            tui.root_module.linkFramework("AudioToolbox", .{});
+            tui.root_module.linkFramework("CoreAudio", .{});
+            tui.root_module.linkFramework("CoreMedia", .{});
+            tui.root_module.linkFramework("CoreVideo", .{});
             tui.root_module.linkFramework("Foundation", .{});
             tui.root_module.linkFramework("ScreenCaptureKit", .{});
-            tui.root_module.linkFramework("AVFoundation", .{});
-            tui.root_module.linkFramework("CoreAudio", .{});
-            tui.root_module.linkFramework("CoreVideo", .{});
-            tui.root_module.linkFramework("CoreMedia", .{});
-            tui.root_module.linkFramework("AudioToolbox", .{});
+            tui.root_module.linkFramework("Security", .{});
             tui.root_module.addCSourceFiles(.{
                 .files = &.{
                     "src/client/media/macos/audio.m",
@@ -335,7 +343,8 @@ pub fn setupTui(
 
 pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.OptimizeMode) void {
     const targets: []const std.Target.Query = &.{
-        // .{ .cpu_arch = .aarch64, .os_tag = .macos },
+        .{ .cpu_arch = .aarch64, .os_tag = .macos },
+        .{ .cpu_arch = .x86_64, .os_tag = .macos },
         .{ .cpu_arch = .aarch64, .os_tag = .linux },
         .{ .cpu_arch = .x86_64, .os_tag = .linux },
         .{ .cpu_arch = .x86_64, .os_tag = .windows },
