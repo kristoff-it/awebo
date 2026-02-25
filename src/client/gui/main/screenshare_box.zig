@@ -32,7 +32,7 @@ pub fn drawSource(core: *Core, source: enum { webcam, screen }) !void {
             };
 
             var backend = dvui.currentWindow().backend;
-            textures[extra] = try backend.textureCreate(pixels, @intCast(img.width), @intCast(img.height), .nearest);
+            textures[extra] = try backend.textureCreate(pixels, @intCast(img.width), @intCast(img.height), .nearest, .bgra_32);
         }
         const millis = @divFloor(dvui.frameTimeNS(), 1_000_000);
         const left = @as(i32, @intCast(@rem(millis, millis_per_frame)));
