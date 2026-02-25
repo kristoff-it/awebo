@@ -82,7 +82,69 @@ pub const Date = enum(u32) {
     const zeit = @import("zeit");
 };
 
+/// Set of utilities shared between client and server that mostly deal with
+/// networking / realtine OS fiddling.
 pub const network_utils = struct {
+    pub fn setCurrentThreadRealtime() void {
+        const period_ms = 20; // time equivalent to an opus packet
+        switch (builtin.os.tag) {
+            else => @compileError("TODO: add support for new OS"),
+            .linux => {
+                std.log.err("TODO: implement thread realtime scheduling for linux", .{});
+            },
+            .windows => {
+                std.log.err("TODO: implement thread realtime scheduling for windows", .{});
+            },
+            .macos => {
+                const c = @cImport({
+                    @cInclude("mach/mach.h");
+                    @cInclude("mach/thread_policy.h");
+                    @cInclude("mach/mach_time.h");
+                    @cInclude("pthread.h");
+                });
+
+                const thread = c.pthread_self();
+
+                var timebase: c.mach_timebase_info_data_t = undefined;
+                if (c.mach_timebase_info(&timebase) != c.KERN_SUCCESS) {
+                    std.log.err("unable to read mach timebase", .{});
+                    return;
+                }
+
+                const ns_to_abs = struct {
+                    fn convert(ns: u64, denom: u32, numer: u32) u32 {
+                        return @intCast(ns * denom / numer);
+                    }
+                }.convert;
+
+                const period_ns: u64 = @as(u64, period_ms) * 1_000_000;
+                const computation_ns = period_ns * 2 / 10; // estimate: 20% of period needed
+                const constraint_ns = period_ns * 3 / 10; // must finish within 30% of period
+
+                var policy = c.thread_time_constraint_policy_data_t{
+                    .period = ns_to_abs(period_ns, timebase.denom, timebase.numer),
+                    .computation = ns_to_abs(computation_ns, timebase.denom, timebase.numer),
+                    .constraint = ns_to_abs(constraint_ns, timebase.denom, timebase.numer),
+                    .preemptible = c.TRUE,
+                };
+
+                const mach_thread = c.pthread_mach_thread_np(thread);
+
+                const kr = c.thread_policy_set(
+                    mach_thread,
+                    c.THREAD_TIME_CONSTRAINT_POLICY,
+                    @ptrCast(&policy),
+                    c.THREAD_TIME_CONSTRAINT_POLICY_COUNT,
+                );
+
+                if (kr != c.KERN_SUCCESS) {
+                    std.log.err("unable to set realtime policy for the network thread", .{});
+                    return;
+                }
+            },
+        }
+    }
+
     pub fn setTcpNoDelay(socket: Io.net.Socket) void {
         const yes: c_int = 1;
         setsockopt(

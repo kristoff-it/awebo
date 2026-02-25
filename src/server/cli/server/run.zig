@@ -334,6 +334,8 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
     server_log.debug("{s} started", .{@src().fn_name});
     defer server_log.debug("{s} exiting", .{@src().fn_name});
 
+    awebo.network_utils.setCurrentThreadRealtime();
+
     var dbuf: [1280]u8 = undefined;
 
     while (true) {

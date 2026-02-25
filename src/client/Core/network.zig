@@ -501,6 +501,8 @@ pub fn runHostMediaSender(
     log.debug("{s} started", .{@src().fn_name});
     defer log.debug("{s} exited", .{@src().fn_name});
 
+    awebo.network_utils.setCurrentThreadRealtime();
+
     var seq: u32 = 0;
     while (true) {
         const read = core.audio.capture_packets.beginRead() orelse {
