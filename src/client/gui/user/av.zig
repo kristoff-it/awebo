@@ -1,10 +1,14 @@
 const std = @import("std");
+const Io = std.Io;
 const dvui = @import("dvui");
 const Core = @import("../../Core.zig");
 const App = @import("../../../main_client_gui.zig").App;
 
 pub const menu_name = "Audio / Video";
 pub const tab_name = "Audio / Video";
+
+var capture = false;
+var power: std.atomic.Value(f32) = .init(0);
 
 pub fn draw(app: *App) !void {
     const core = &app.core;
@@ -46,6 +50,7 @@ pub fn draw(app: *App) !void {
                 .expand = .horizontal,
             })) {}
 
+            dvui.labelNoFmt(@src(), "Input Volume", .{}, .{});
             const in_volume = &core.audio.capture_volume;
             _ = dvui.slider(@src(), .{
                 .dir = .horizontal,
@@ -53,8 +58,51 @@ pub fn draw(app: *App) !void {
             }, .{
                 .expand = .horizontal,
             });
-        }
 
+            dvui.labelNoFmt(@src(), "Activation Threshold", .{}, .{});
+            const in_treshold = &core.audio.capture_threshold;
+            _ = dvui.slider(@src(), .{
+                .dir = .horizontal,
+                .fraction = in_treshold,
+            }, .{
+                .expand = .horizontal,
+            });
+
+            const preview = dvui.box(@src(), .{ .dir = .horizontal }, .{
+                .expand = .horizontal,
+                .border = .all(1),
+                .margin = .{ .x = 10, .w = 10 },
+                .min_size_content = .{ .h = 3 },
+            });
+
+            const br = preview.data().contentRect();
+
+            const meter = dvui.box(@src(), .{ .dir = .horizontal }, .{
+                .min_size_content = .{ .h = 3, .w = (br.w - 20) * power.load(.acquire) },
+                .background = true,
+                .color_fill = .yellow,
+                .padding = .all(0),
+                .margin = .all(0),
+            });
+
+            meter.deinit();
+
+            preview.deinit();
+
+            const test_label = if (capture) "Stop" else "Start Capture Test";
+            if (dvui.button(@src(), test_label, .{}, .{ .gravity_x = 0.5 })) {
+                if (capture) {
+                    capture = false;
+                    power.store(0, .release);
+                    core.audio.captureTestStop();
+                } else {
+                    capture = true;
+                    core.audio.captureTestStart(&power);
+                }
+            }
+
+            if (capture) dvui.refresh(null, @src(), null);
+        }
         {
             var box = dvui.box(@src(), .{ .dir = .vertical }, .{
                 .expand = .horizontal,

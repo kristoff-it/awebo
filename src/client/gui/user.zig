@@ -11,14 +11,15 @@ pub var state: struct {
 } = .{};
 
 pub fn draw(app: *App) void {
-    sidebar();
+    sidebar(app);
     settings_page(app);
     if (dvui.button(@src(), "Exit", .{}, .{})) {
+        app.core.audio.captureTestStop();
         app.active_screen = .main;
     }
 }
 
-pub fn sidebar() void {
+pub fn sidebar(app: *App) void {
     var vbox = dvui.box(@src(), .{ .dir = .vertical }, .{
         .expand = .vertical,
     });
@@ -57,7 +58,10 @@ pub fn sidebar() void {
         const pp: std.meta.DeclEnum(Pages) = @enumFromInt(idx);
 
         if (item.activated) {
-            state.active_page = pp;
+            if (state.active_page != pp) {
+                state.active_page = pp;
+                app.core.audio.captureTestStop();
+            }
         }
 
         if (state.active_page == pp) {

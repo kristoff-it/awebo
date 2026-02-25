@@ -9,9 +9,10 @@
 //! therefore should not be assumed to be suitable for use cases involving
 //! separate reader and writer threads.
 
-const Allocator = @import("std").mem.Allocator;
-const assert = @import("std").debug.assert;
-const copyForwards = @import("std").mem.copyForwards;
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
+const copyForwards = std.mem.copyForwards;
 
 pub fn RingBuffer(SampleType: type) type {
     return struct {
@@ -23,7 +24,7 @@ pub fn RingBuffer(SampleType: type) type {
         pub const Error = error{ Full, ReadLengthInvalid };
 
         pub fn init(bytes: []SampleType) Self {
-            assert(@popCount(bytes.len) < 2); // buffer is not a power of 2
+            assert(std.math.isPowerOfTwo(bytes.len));
             return Self{
                 .data = bytes,
                 .write_index = 0,
