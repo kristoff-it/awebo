@@ -158,20 +158,62 @@ pub const network_utils = struct {
     }
     pub fn setUdpDscp(socket: Io.net.Socket) void {
         const lvl: c_int = 46 << 2;
-        setsockopt(
-            socket.handle,
-            switch (socket.address) {
-                .ip4 => std.os.linux.IPPROTO.IP,
-                .ip6 => std.os.linux.IPPROTO.IPV6,
+        switch (builtin.target.os.tag) {
+            else => @compileError("TODO: implement support for this OS"),
+            .linux => {
+                setsockopt(
+                    socket.handle,
+                    switch (socket.address) {
+                        .ip4 => std.os.linux.IPPROTO.IP,
+                        .ip6 => std.os.linux.IPPROTO.IPV6,
+                    },
+                    switch (socket.address) {
+                        .ip4 => std.os.linux.IP.TOS,
+                        .ip6 => std.os.linux.IPV6.TCLASS,
+                    },
+                    &std.mem.toBytes(lvl),
+                ) catch |err| {
+                    std.log.err("unable to set UDP DSCP: {t}", .{err});
+                };
             },
-            switch (socket.address) {
-                .ip4 => std.os.linux.IP.TOS,
-                .ip6 => std.os.linux.IPV6.TCLASS,
+            .macos => {
+                setsockopt(
+                    socket.handle,
+                    switch (socket.address) {
+                        .ip4 => std.c.IPPROTO.IP,
+                        .ip6 => std.c.IPPROTO.IPV6,
+                    },
+                    switch (socket.address) {
+                        .ip4 => 3, //std.c.darwin.IP.TOS,
+                        .ip6 => 36, //std.c.darwin.IPV6.TCLASS,
+                    },
+                    &std.mem.toBytes(lvl),
+                ) catch |err| {
+                    std.log.err("unable to set UDP DSCP: {t}", .{err});
+                };
             },
-            &std.mem.toBytes(lvl),
-        ) catch |err| {
-            std.log.err("unable to set UDP DSCP: {t}", .{err});
-        };
+            .windows => {
+                const IPPROTO_IP: c_int = 0;
+                const IPPROTO_IPV6: c_int = 41;
+                const IP_TOS: c_int = 3;
+                const IPV6_TCLASS: c_int = 39;
+
+                setsockopt(
+                    socket.handle,
+                    switch (socket.address) {
+                        .ip4 => IPPROTO_IP,
+                        .ip6 => IPPROTO_IPV6,
+                    },
+                    switch (socket.address) {
+                        .ip4 => IP_TOS,
+                        .ip6 => IPV6_TCLASS,
+                    },
+                    &std.mem.toBytes(lvl),
+                ) catch |err| {
+                    std.log.err("unable to set UDP DSCP: {t}", .{err});
+                };
+            },
+        }
     }
 
     pub const SetSockOptError = error{

@@ -16,7 +16,7 @@ pub const Header = extern struct {
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     // |                    Packet Sequence Number                     | 4
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    // |                          Timestamp                            | 4
+    // |                          RestartID                            | 4
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     // |                                                               |
     // |                                                               |
@@ -28,7 +28,7 @@ pub const Header = extern struct {
     unused: u16 = 0,
     id: Id,
     sequence: u32,
-    timestamp: u32,
+    restart: u32,
 
     comptime {
         std.debug.assert(@sizeOf(Header) == 12);
@@ -97,7 +97,7 @@ pub const OpenStream = extern struct {
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     // |                    Packet Sequence Number                     | 4
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    // |                          Timestamp                            | 4
+    // |                          RestartID                            | 4
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     // |                                                               |
     // |                        TCP Client ID                          | 8
@@ -119,7 +119,7 @@ pub const OpenStream = extern struct {
                 .source = .mic,
             },
             .sequence = 0,
-            .timestamp = 0,
+            .restart = 0,
         };
 
         return std.fmt.allocPrint(gpa, "{s}{s}", .{

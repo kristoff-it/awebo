@@ -28,15 +28,20 @@ state: enum {
 /// Expected next sequence number, 0 essentially means unset,
 /// write() will set it to the seqence number of the first
 /// packet you write.
+current_restart: u32 = 0,
 expected_next_seq: u32 = 0,
 packets: PlaybackPacketRing = .empty,
 
 pub const init: JitterBuffer = .{};
 
 /// This function is meant to be called by the network thread.
-pub fn writePacket(jb: *JitterBuffer, seq: u32, data: []const u8) void {
-    if (jb.expected_next_seq == 0) jb.expected_next_seq = seq;
-    jb.packets.write(seq, data) catch {
+pub fn writePacket(jb: *JitterBuffer, restart: u32, seq: u32, data: []const u8) void {
+    if (jb.expected_next_seq == 0) {
+        jb.current_restart = restart;
+        jb.expected_next_seq = seq;
+    }
+
+    jb.packets.write(restart, seq, data) catch {
         log.warn("dropping audio packet, audio thread is too slow!", .{});
     };
 }
@@ -80,15 +85,20 @@ pub fn nextPacketBegin(jb: *JitterBuffer) NextPacket {
     for (packet_slices.array()) |slice| for (slice) |n| {
         idx += 1;
 
-        const next_seq = jb.packets.sequence_ids[n];
-        if (next_seq == 1 and jb.expected_next_seq != 1) {
+        const next_meta = jb.packets.meta[n];
+        if (next_meta.restart < jb.current_restart) {
+            continue;
+        }
+
+        if (next_meta.restart > jb.current_restart) {
             jb.state = .starting;
             jb.expected_next_seq = 1;
+            jb.current_restart = next_meta.restart;
             return .starting;
         }
 
-        if (next_seq < jb.expected_next_seq) {
-            log.debug("expected {} found {}", .{ jb.expected_next_seq, next_seq });
+        if (next_meta.seq < jb.expected_next_seq) {
+            log.debug("expected {} found {}", .{ jb.expected_next_seq, next_meta });
             continue;
         }
 
@@ -97,7 +107,7 @@ pub fn nextPacketBegin(jb: *JitterBuffer) NextPacket {
             jb.packets.commitRead(packet_slices.read_index + idx - 1);
         }
 
-        if (next_seq == jb.expected_next_seq) {
+        if (next_meta.seq == jb.expected_next_seq) {
             jb.expected_next_seq += 1;
             return .{
                 .playing = .{
@@ -129,7 +139,7 @@ const PlaybackPacketRing = struct {
     indexes: [buffer_len]RingIndex = undefined,
 
     /// SoA-style Packet representation
-    sequence_ids: [buffer_len]u32 = undefined,
+    meta: [buffer_len]struct { seq: u32, restart: u32 } = undefined,
     data: [buffer_len]Data = undefined,
 
     /// This data structure operates similarly to a ring buffer.
@@ -147,12 +157,12 @@ const PlaybackPacketRing = struct {
     pub const empty: PlaybackPacketRing = .{};
     pub const RingIndex = std.math.IntFittingRange(0, buffer_len);
 
-    pub fn write(pb: *PlaybackPacketRing, seq: u32, data: []const u8) !void {
+    pub fn write(pb: *PlaybackPacketRing, restart: u32, seq: u32, data: []const u8) !void {
         const w = pb.write_index.load(.acquire);
         const r = pb.read_index.load(.acquire);
         if (mask2(w + buffer_len) == r) return error.Full;
 
-        pb.sequence_ids[mask(w)] = seq;
+        pb.meta[mask(w)] = .{ .restart = restart, .seq = seq };
         pb.data[mask(w)].len = data.len;
         const buf: [*]u8 = &pb.data[mask(w)].buf;
         assert(data.len <= pb.data[mask(w)].buf.len);
@@ -218,8 +228,13 @@ const PlaybackPacketRing = struct {
         return adjusted_write_index - r;
     }
 
-    pub fn lessThan(pb: *const PlaybackPacketRing, lhs: RingIndex, rhs: RingIndex) bool {
-        return pb.sequence_ids[lhs] < pb.sequence_ids[rhs];
+    pub fn lessThan(pb: *const PlaybackPacketRing, lhs_idx: RingIndex, rhs_idx: RingIndex) bool {
+        const lhs = pb.meta[lhs_idx];
+        const rhs = pb.meta[rhs_idx];
+        return if (lhs.restart == rhs.restart)
+            lhs.seq < rhs.seq
+        else
+            lhs.restart < rhs.restart;
     }
 };
 
@@ -244,7 +259,7 @@ test "jitter buffer basics" {
             try t.expectEqual(0, slices.read_index);
             for (slices.first, 0..) |slot, x| {
                 try t.expectEqual(x, slot);
-                try t.expectEqual(x + 1, jb.packets.sequence_ids[slot]);
+                try t.expectEqual(x + 1, jb.packets.meta[slot]);
             }
         }
 

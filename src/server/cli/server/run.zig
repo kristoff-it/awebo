@@ -111,7 +111,7 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     }
 
     server_log.info("starting udp interface at {f}", .{cmd.udp});
-    const udp = cmd.udp.bind(io, .{ .mode = .dgram }) catch |err| {
+    const udp = cmd.udp.bind(io, .{ .mode = .dgram, .protocol = .udp }) catch |err| {
         cli.fatal("unable to bind '{f}': {t}", .{ cmd.tcp, err });
     };
     defer udp.close(io);

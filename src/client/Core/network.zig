@@ -360,7 +360,7 @@ pub fn runHostMediaManager(
     defer sock.close(io);
 
     // set dscp to bump up priority of our packets.
-    // awebo.network_utils.setUdpDscp(sock);
+    awebo.network_utils.setUdpDscp(sock);
 
     var receiver_future = io.concurrent(runHostMediaReceiver, .{ core, sock, &server, host_id }) catch return;
     defer receiver_future.cancel(io) catch {};
@@ -424,7 +424,7 @@ pub fn runHostMediaReceiver(
             }
         }
 
-        caller.packets.writePacket(message_header.sequence, data);
+        caller.packets.writePacket(message_header.restart, message_header.sequence, data);
 
         try core.putEvent(.{ .network = .{
             .host_id = host_id,
@@ -503,7 +503,8 @@ pub fn runHostMediaSender(
 
     awebo.network_utils.setCurrentThreadRealtime();
 
-    var seq: u32 = 0;
+    var sequence: u32 = 0;
+    var restart: u32 = 0;
     while (true) {
         const read = core.audio.capture_packets.beginRead() orelse {
             try io.sleep(.fromMilliseconds(2), .awake);
@@ -515,18 +516,18 @@ pub fn runHostMediaSender(
             if (debug.send_bad_capture_packet.swap(false, .acq_rel)) {
                 const new_seq: u32 = 1 << 31;
                 log.debug("<<SETTING CAPTURE PACKET SEQ TO {}>>", .{new_seq});
-                seq = new_seq;
+                sequence = new_seq;
             }
         }
 
-        seq += 1;
+        sequence += 1;
         const header: awebo.protocol.media.Header = .{
             .id = .{
                 .client_id = 0,
                 .source = .mic,
             },
-            .sequence = seq,
-            .timestamp = 0,
+            .sequence = sequence,
+            .restart = restart,
         };
         const header_size = @sizeOf(awebo.protocol.media.Header);
 
@@ -547,7 +548,8 @@ pub fn runHostMediaSender(
 
         const soft_mute = silence_len > 10;
         if (soft_mute or active_call.muted) {
-            seq = 0;
+            sequence = 0;
+            restart += 1;
         } else {
             try sock.send(io, server, buf[0 .. read.data.len + header_size]);
             try core.putEvent(.{ .network = .{
