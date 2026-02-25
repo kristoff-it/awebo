@@ -32,7 +32,7 @@ pub fn run(io: Io, gpa: Allocator, environ: *std.process.Environ.Map, it: *std.p
     const username = username_arg orelse cli.fatal("missing --username", .{});
     const password = password_arg orelse cli.fatal("missing --password", .{});
 
-    var core: Core = try .init(gpa, io, environ, noopRefresh, &.{}, &.{}, .{ &.{}, &.{} });
+    var core: Core = try .init(gpa, io, environ, noopRefresh, &.{});
     defer core.deinit();
 
     persistence.load(&core) catch |e| {

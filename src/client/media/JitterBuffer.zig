@@ -248,7 +248,7 @@ test "jitter buffer basics" {
 
     {
         for (1..start_count + 1) |idx| {
-            jb.writePacket(@intCast(idx), &.{@intCast(idx)});
+            jb.writePacket(0, @intCast(idx), &.{@intCast(idx)});
 
             const w = jb.packets.write_index.raw;
             const r = jb.packets.read_index.raw;
@@ -259,7 +259,7 @@ test "jitter buffer basics" {
             try t.expectEqual(0, slices.read_index);
             for (slices.first, 0..) |slot, x| {
                 try t.expectEqual(x, slot);
-                try t.expectEqual(x + 1, jb.packets.meta[slot]);
+                try t.expectEqual(x + 1, jb.packets.meta[slot].seq);
             }
         }
 

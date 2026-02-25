@@ -13,6 +13,12 @@ const CapturePacketRing = @import("CapturePacketRing.zig");
 const log = std.log.scoped(.audio);
 
 const SourceKind = enum(u32) { mono = 1, stereo = 2 };
+pub const CapturePermission = enum(u32) {
+    unknown = 0,
+    denied = 1,
+    granted = 2,
+    requesting = 3,
+};
 
 const playback_rate: f64 = 48000.0;
 const playback_channels: u32 = 2;
@@ -23,6 +29,7 @@ const capture_channels: u32 = 1;
 /// Keyed by the device unique ID.
 devices: std.StringArrayHashMapUnmanaged(Device),
 
+capture_permission: CapturePermission,
 /// Index of the selected input device in awebo.
 /// Null means system default, the device might not be connected.
 capture_selected: ?usize = null,
@@ -42,6 +49,7 @@ playback_default: ?usize = null,
 playback_volume: f32 = 1.0,
 playback_stream: Stream(f32, 2),
 playback_decoder: *awebo.opus.Decoder,
+playback_voice_processing: bool = false,
 
 /// Os interface
 os: switch (builtin.target.os.tag) {
@@ -98,8 +106,9 @@ pub const Caller = struct {
                     awebo.opus.PACKET_SAMPLE_COUNT,
                 ),
             )}),
-            .os = .init(caller, &core.audio),
+            .os = undefined,
         };
+        caller.os = .init(caller, &core.audio);
         return caller;
     }
 
@@ -180,20 +189,24 @@ pub const Caller = struct {
     }
 };
 
-/// Must call discoverDevicesAndListen() next to subscribe to device update notifications.
-/// AudioCapture must be kept stored in Core as it uses fieldParentPtr to access it.
-pub fn init(capture_buf: []f32, playback_bufs: [2][]f32) !Audio {
+/// Audio is initialized by the Core logic thread after the rest of core
+/// has been initialized.
+pub fn init(audio: *Audio, capture_buf: []f32, playback_bufs: [2][]f32) void {
     assert(playback_bufs[0].len == playback_bufs[1].len);
-    const capture_encoder = try awebo.opus.Encoder.create();
-    const playback_decoder = try awebo.opus.Decoder.create();
-    return .{
+    const capture_encoder = awebo.opus.Encoder.create() catch unreachable;
+    const playback_decoder = awebo.opus.Decoder.create() catch unreachable;
+    audio.* = .{
+        .capture_permission = .unknown,
         .capture_encoder = capture_encoder,
         .capture_stream = .init(.{capture_buf}),
         .playback_stream = .init(playback_bufs),
         .playback_decoder = playback_decoder,
         .devices = .empty,
-        .os = .init(),
+        .os = undefined,
     };
+    audio.os = .init(audio);
+    audio.capture_permission = audio.os.discoverCapturePermissionState();
+    audio.os.discoverDevicesAndListen(audio);
 }
 
 pub fn deinit(audio: *Audio) void {
@@ -210,84 +223,75 @@ pub fn deinit(audio: *Audio) void {
     audio.devices.deinit(core.gpa);
 }
 
-pub fn discoverDevicesAndListen(audio: *Audio) void {
-    audio.os.discoverDevicesAndListen(audio);
+/// Should be called before committing to join a call.
+/// If the return value is:
+/// - unknown: the user is being shown an OS window to grant permission,
+///            undo the action, the user is expected to retry once done.
+/// - denied:  we can't start a call because we can't access the mic,
+///            show the user a popup that tells them to grant permission.
+/// - granted: proceed.
+/// - requesting: the user has not yet dismissed the OS window that
+///               requests to grant permission, show an appropriate
+///               popup.
+pub fn ensureCapturePermission(audio: *Audio) CapturePermission {
+    switch (audio.capture_permission) {
+        .unknown => {
+            audio.capture_permission = .requesting;
+            audio.os.requestCapturePermission(audio);
+            return .unknown;
+        },
+        .denied => {
+            // Let's query the OS again in case that the user has granted access manually.
+            const new = audio.os.discoverCapturePermissionState();
+            if (new == .granted) {
+                audio.capture_permission = .granted;
+            }
+        },
+        else => {},
+    }
+
+    return audio.capture_permission;
 }
 
-pub fn playbackStart(audio: *Audio) void {
-    const device = if (audio.playback_selected) |idx| &audio.devices.values()[idx] else null;
-    _ = audio.os.playbackStart(audio, device);
+pub fn setDevices(audio: *Audio) void {
+    const input = if (audio.capture_selected) |idx|
+        &audio.devices.values()[idx]
+    else
+        null;
+
+    const output = if (audio.playback_selected) |idx|
+        &audio.devices.values()[idx]
+    else
+        null;
+    audio.os.setDevices(input, output, audio.playback_voice_processing);
 }
 
-pub fn playbackStop(audio: *Audio) void {
-    audio.os.playbackStop();
+pub fn restart(audio: *Audio) void {
+    audio.os.restart();
 }
 
-pub fn captureStart(audio: *Audio) void {
-    log.debug("captureStart", .{});
-
-    const device = if (audio.capture_selected) |idx| &audio.devices.values()[idx] else null;
-    _ = audio.os.captureStart(audio, device);
+pub fn callBegin(audio: *Audio) void {
+    assert(audio.capture_permission == .granted); // see ensureCapturePermission()
+    log.debug("callBegin", .{});
+    _ = audio.os.callBegin(audio);
 }
 
-pub fn captureStop(audio: *Audio) void {
-    log.debug("captureStop", .{});
-    audio.os.captureStop();
+pub fn callEnd(audio: *Audio) void {
+    log.debug("callEnd", .{});
+    audio.os.callEnd();
 }
 
 /// 'power' will be written to atomically by the audio thread
 /// to report the power computation of the audio being captured
 pub fn captureTestStart(audio: *Audio, power: *std.atomic.Value(f32)) void {
+    assert(audio.capture_permission == .granted); // see ensureCapturePermission()
     log.debug("captureTestStart", .{});
-
-    const capture = if (audio.capture_selected) |idx| &audio.devices.values()[idx] else null;
-    const playback = if (audio.playback_selected) |idx| &audio.devices.values()[idx] else null;
-    _ = audio.os.captureTestStart(power, capture, playback);
+    _ = audio.os.captureTestStart(power);
 }
 
 pub fn captureTestStop(audio: *Audio) void {
     log.debug("captureTestStop", .{});
     audio.os.captureTestStop();
-}
-
-/// Called by OS APIs to fill the playback buffer from our audio data.
-fn playbackFill(audio: *Audio, left: [*]f32, right: [*]f32, frame_count: u32) callconv(.c) void {
-    // const capture_count = audio.capture_stream.channels[0].len();
-    // const l = left[0..@min(frame_count, capture_count)];
-    // audio.capture_stream.channels[0].readFirst(l, l.len) catch unreachable;
-    // @memcpy(right, l);
-
-    _ = audio;
-    _ = left;
-    _ = right;
-    _ = frame_count;
-
-    // const core: *Core = @alignCast(@fieldParentPtr("audio", audio));
-    // audio.playback_stream.mutex.lockUncancelable(core.io);
-    // defer {
-    //     // cb.condition.signal(io);
-    //     audio.playback_stream.mutex.unlock(core.io);
-    // }
-
-    // const playback_count = audio.playback_stream.channels[0].len();
-    // const l = left[0..@min(frame_count, playback_count)];
-    // const r = right[0..@min(frame_count, playback_count)];
-
-    // audio.playback_stream.channels[0].readFirstAssumeCount(l, l.len);
-    // audio.playback_stream.channels[1].readFirstAssumeCount(r, r.len);
-
-    // if (frame_count > playback_count) {
-    //     @memset(left[playback_count..frame_count], 0);
-    //     @memset(right[playback_count..frame_count], 0);
-    // }
-}
-
-fn playbackSourceStereoFill(audio: *Audio, source_id: u32, left: [*]f32, right: [*]f32, frame_count: u32) callconv(.c) void {
-    _ = audio;
-    _ = source_id;
-    _ = left;
-    _ = right;
-    _ = frame_count;
 }
 
 /// Called by OS APIs to let us take audio data from the capture buffer.
@@ -325,7 +329,7 @@ fn upsertDevice(audio: *Audio, device: *const Device) void {
 
     const gop = audio.devices.getOrPut(core.gpa, device.id) catch oom();
 
-    log.debug("upserting {f}", .{device});
+    // log.debug("upserting {f}", .{device});
 
     if (!gop.found_existing) {
         const key = core.gpa.dupeSentinel(u8, device.id, 0) catch oom();
@@ -361,11 +365,6 @@ fn upsertDevice(audio: *Audio, device: *const Device) void {
 const MacOsInterface = struct {
     comptime {
         @export(&capturePush, .{ .linkage = .strong, .name = "aweboAudioCapturePush" });
-        @export(&playbackFill, .{ .linkage = .strong, .name = "aweboAudioPlaybackFill" });
-        @export(&playbackSourceStereoFill, .{
-            .linkage = .strong,
-            .name = "aweboAudioPlaybackSourceStereoFill",
-        });
     }
 
     /// A reference to an AVAudioSourceNode, used by objc code to know
@@ -398,22 +397,42 @@ const MacOsInterface = struct {
 
         pub fn init(caller: *Caller, audio: *Audio) MacOsCaller {
             return .{
-                .source_node = audio.os.playbackSourceAdd(caller, .mono),
+                .source_node = audio.os.callSourceAdd(caller, .mono),
             };
         }
 
         pub fn deinit(mc: MacOsCaller, audio: *Audio) void {
-            audio.os.playbackSourceRemove(mc.source_node);
+            audio.os.callSourceRemove(mc.source_node);
         }
     };
 
-    pub fn init() MacOsInterface {
-        return .{ .engine = .init() };
+    pub fn init(ac: *Audio) MacOsInterface {
+        return .{ .engine = .init(ac) };
     }
 
     pub fn deinit(mi: *MacOsInterface, ac: *Audio) void {
         removeHardwareListener(ac);
         mi.engine.deinit();
+    }
+
+    extern fn audioDiscoverCapturePermissionState() CapturePermission;
+    pub fn discoverCapturePermissionState(mi: *MacOsInterface) CapturePermission {
+        _ = mi;
+        return audioDiscoverCapturePermissionState();
+    }
+    extern fn audioRequestCapturePermission(*Audio) void;
+    pub fn requestCapturePermission(mi: *MacOsInterface, ac: *Audio) void {
+        _ = mi;
+        audioRequestCapturePermission(ac);
+    }
+    export fn aweboUpdateCapturePermission(ac: *Audio, cp: CapturePermission) void {
+        ac.capture_permission = cp;
+    }
+
+    pub fn setDevices(mi: *MacOsInterface, input: ?*Device, output: ?*Device, voice: bool) void {
+        const input_idx = if (input) |i| i.os.device_id else 0;
+        const output_idx = if (output) |o| o.os.device_id else 0;
+        mi.engine.setDevices(input_idx, output_idx, voice);
     }
 
     pub fn discoverDevicesAndListen(mi: *MacOsInterface, ac: *Audio) void {
@@ -427,35 +446,41 @@ const MacOsInterface = struct {
     }
 
     pub fn playbackStart(mi: *MacOsInterface, audio: *Audio, device: ?*Device) bool {
-        const id = if (device) |d| d.os.device_id else 0;
-        return mi.engine.playbackStart(audio, id);
+        // const id = if (device) |d| d.os.device_id else 0;
+        // return mi.engine.playbackStart(audio, id);
+        _ = mi;
+        _ = audio;
+        _ = device;
+        return true;
     }
 
-    pub fn playbackSourceAdd(mi: *MacOsInterface, caller: *Caller, kind: SourceKind) *AVAudioSourceNode {
-        return mi.engine.playbackSourceAdd(caller, kind);
+    pub fn callSourceAdd(mi: *MacOsInterface, caller: *Caller, kind: SourceKind) *AVAudioSourceNode {
+        return mi.engine.callSourceAdd(caller, kind);
     }
 
-    pub fn playbackSourceRemove(mi: *MacOsInterface, source_node: *AVAudioSourceNode) void {
-        mi.engine.playbackSourceRemove(source_node);
+    pub fn callSourceRemove(mi: *MacOsInterface, source_node: *AVAudioSourceNode) void {
+        mi.engine.callSourceRemove(source_node);
     }
 
     pub fn playbackStop(mi: *MacOsInterface) void {
-        mi.engine.playbackStop();
+        // mi.engine.playbackStop();
+        _ = mi;
     }
 
-    pub fn captureStart(mi: *MacOsInterface, audio: *Audio, device: ?*Device) bool {
-        const id = if (device) |d| d.os.device_id else 0;
-        return mi.engine.captureStart(audio, id);
+    pub fn restart(mi: *MacOsInterface) void {
+        mi.engine.restart();
     }
 
-    pub fn captureStop(mi: *MacOsInterface) void {
-        mi.engine.captureStop();
+    pub fn callBegin(mi: *MacOsInterface, audio: *Audio) bool {
+        return mi.engine.callStart(audio);
     }
 
-    pub fn captureTestStart(mi: *MacOsInterface, power: *std.atomic.Value(f32), capture: ?*Device, playback: ?*Device) bool {
-        const capture_id = if (capture) |d| d.os.device_id else 0;
-        const playback_id = if (playback) |d| d.os.device_id else 0;
-        return mi.engine.captureTestStart(power, capture_id, playback_id);
+    pub fn callEnd(mi: *MacOsInterface) void {
+        mi.engine.callStop();
+    }
+
+    pub fn captureTestStart(mi: *MacOsInterface, power: *std.atomic.Value(f32)) bool {
+        return mi.engine.captureTestStart(power);
     }
 
     pub fn captureTestStop(mi: *MacOsInterface) void {
@@ -570,7 +595,7 @@ const MacOsInterface = struct {
 
         const bl: *const ca.AudioBufferList = @ptrCast(&raw);
         var total: u32 = 0;
-        for (bl.mBuffers[0..bl.mNumberBuffers]) |b| total += b.mNumberChannels;
+        for ((&bl.mBuffers).ptr[0..bl.mNumberBuffers]) |b| total += b.mNumberChannels;
         return total;
     }
 
@@ -587,14 +612,12 @@ const MacOsInterface = struct {
                 .mScope = ca.kAudioObjectPropertyScopeGlobal,
                 .mElement = ca.kAudioObjectPropertyElementMain,
             };
-            _ = addr;
-            _ = ac;
-            // _ = ca.AudioObjectAddPropertyListener(
-            //     ca.kAudioObjectSystemObject,
-            //     &addr,
-            //     hardwareListenerProc,
-            //     ac,
-            // );
+            _ = ca.AudioObjectAddPropertyListener(
+                ca.kAudioObjectSystemObject,
+                &addr,
+                hardwareListenerProc,
+                ac,
+            );
         }
     }
 
@@ -623,58 +646,59 @@ const MacOsInterface = struct {
         const ac: *Audio = @ptrCast(@alignCast(client_data orelse return ca.noErr));
         // Re-enumerate all devices so connected/default flags stay consistent
         discoverDevices(ac);
+        ac.restart();
         return ca.noErr;
     }
 
     const AudioEngineManager = opaque {
-        extern fn audioEngineManagerInit() *AudioEngineManager;
-        pub fn init() *AudioEngineManager {
-            return audioEngineManagerInit();
+        extern fn audioManagerInit(*Audio) *AudioEngineManager;
+        pub fn init(ac: *Audio) *AudioEngineManager {
+            return audioManagerInit(ac);
         }
 
-        extern fn audioEngineManagerDeinit(*AudioEngineManager) void;
+        extern fn audioManagerDeinit(*AudioEngineManager) void;
         pub fn deinit(ae: *AudioEngineManager) void {
-            audioEngineManagerDeinit(ae);
+            audioManagerDeinit(ae);
         }
 
-        extern fn audioPlaybackStart(*AudioEngineManager, *Audio, ca.AudioDeviceID) bool;
-        pub fn playbackStart(ae: *AudioEngineManager, audio: *Audio, aid: ca.AudioDeviceID) bool {
-            return audioPlaybackStart(ae, audio, aid);
+        extern fn audioSetDevices(*AudioEngineManager, ca.AudioDeviceID, ca.AudioDeviceID, bool) void;
+        pub fn setDevices(ae: *AudioEngineManager, input: ca.AudioDeviceID, output: ca.AudioDeviceID, voice: bool) void {
+            audioSetDevices(ae, input, output, voice);
         }
 
-        extern fn audioPlaybackSourceAdd(*AudioEngineManager, *Caller, SourceKind) *AVAudioSourceNode;
-        pub fn playbackSourceAdd(ae: *AudioEngineManager, caller: *Caller, kind: SourceKind) *AVAudioSourceNode {
-            return audioPlaybackSourceAdd(ae, caller, kind);
+        extern fn audioCallSourceAdd(*AudioEngineManager, *Caller, SourceKind) *AVAudioSourceNode;
+        pub fn callSourceAdd(ae: *AudioEngineManager, caller: *Caller, kind: SourceKind) *AVAudioSourceNode {
+            return audioCallSourceAdd(ae, caller, kind);
         }
 
-        extern fn audioPlaybackSourceRemove(*AudioEngineManager, *AVAudioSourceNode) void;
-        pub fn playbackSourceRemove(ae: *AudioEngineManager, source_node: *AVAudioSourceNode) void {
-            audioPlaybackSourceRemove(ae, source_node);
+        extern fn audioCallSourceRemove(*AudioEngineManager, *AVAudioSourceNode) void;
+        pub fn callSourceRemove(ae: *AudioEngineManager, source_node: *AVAudioSourceNode) void {
+            audioCallSourceRemove(ae, source_node);
         }
 
-        extern fn audioPlaybackStop(*AudioEngineManager) void;
-        pub fn playbackStop(ae: *AudioEngineManager) void {
-            audioPlaybackStop(ae);
+        extern fn audioRestart(*AudioEngineManager) void;
+        pub fn restart(ae: *AudioEngineManager) void {
+            audioRestart(ae);
         }
 
-        extern fn audioCaptureStart(*AudioEngineManager, *Audio, ca.AudioDeviceID) bool;
-        pub fn captureStart(ae: *AudioEngineManager, audio: *Audio, aid: ca.AudioDeviceID) bool {
-            return audioCaptureStart(ae, audio, aid);
+        extern fn audioCallBegin(*AudioEngineManager, *Audio) bool;
+        pub fn callStart(ae: *AudioEngineManager, audio: *Audio) bool {
+            return audioCallBegin(ae, audio);
         }
 
-        extern fn audioCaptureStop(*AudioEngineManager) void;
-        pub fn captureStop(ae: *AudioEngineManager) void {
-            audioCaptureStop(ae);
+        extern fn audioCallEnd(*AudioEngineManager) void;
+        pub fn callStop(ae: *AudioEngineManager) void {
+            audioCallEnd(ae);
         }
 
-        extern fn audioCaptureTestStart(*AudioEngineManager, *anyopaque, ca.AudioDeviceID, ca.AudioDeviceID) bool;
-        pub fn captureTestStart(ae: *AudioEngineManager, power: *std.atomic.Value(f32), capture: ca.AudioDeviceID, playback: ca.AudioDeviceID) bool {
-            return audioCaptureTestStart(ae, power, capture, playback);
+        extern fn audioTestBegin(*AudioEngineManager, *anyopaque) bool;
+        pub fn captureTestStart(ae: *AudioEngineManager, power: *std.atomic.Value(f32)) bool {
+            return audioTestBegin(ae, power);
         }
 
-        extern fn audioCaptureTestStop(*AudioEngineManager) void;
+        extern fn audioTestEnd(*AudioEngineManager) void;
         pub fn captureTestStop(ae: *AudioEngineManager) void {
-            audioCaptureTestStop(ae);
+            audioTestEnd(ae);
         }
     };
 };
@@ -693,7 +717,7 @@ const DummyInterface = struct {
         }
     };
 
-    pub fn init() DummyInterface {
+    pub fn init(_: *Audio) DummyInterface {
         return .{};
     }
 
@@ -716,14 +740,17 @@ const DummyInterface = struct {
         }
     }
 
-    pub fn playbackStart(_: *DummyInterface, _: *Audio, _: ?*Device) void {}
+    pub fn discoverCapturePermissionState(_: *DummyInterface) CapturePermission {
+        return .granted;
+    }
+    pub fn requestCapturePermission(_: *DummyInterface, _: *Audio) void {}
+    pub fn setDevices(_: *DummyInterface, _: ?*Device, _: ?*Device, _: bool) void {}
+    pub fn callBegin(_: *DummyInterface, _: *Audio) void {}
     pub fn playbackSourceAdd(_: *DummyInterface) void {}
     pub fn playbackSourceRemove(_: *DummyInterface, _: *anyopaque) void {}
-    pub fn playbackStop(_: *DummyInterface) void {}
-
-    pub fn captureStart(_: *DummyInterface, _: *Audio, _: ?*Device) void {}
-    pub fn captureStop(_: *DummyInterface) void {}
-    pub fn captureTestStart(_: *DummyInterface, _: *std.atomic.Value(f32), _: ?*Device, _: ?*Device) void {}
+    pub fn callEnd(_: *DummyInterface) void {}
+    pub fn restart(_: *DummyInterface) void {}
+    pub fn captureTestStart(_: *DummyInterface, _: *std.atomic.Value(f32)) void {}
     pub fn captureTestStop(_: *DummyInterface) void {}
 
     pub const DummyDevice = struct {
