@@ -75,17 +75,9 @@ pub fn draw(app: *App) !void {
                 .min_size_content = .{ .h = 3 },
             });
 
-            const br = preview.data().contentRect();
-
-            const meter = dvui.box(@src(), .{ .dir = .horizontal }, .{
-                .min_size_content = .{ .h = 3, .w = (br.w - 20) * power.load(.acquire) },
-                .background = true,
-                .color_fill = .yellow,
-                .padding = .all(0),
-                .margin = .all(0),
-            });
-
-            meter.deinit();
+            var br = preview.data().contentRectScale().r;
+            br.w *= power.load(.acquire);
+            br.fill(.all(0), .{ .color = .yellow });
 
             preview.deinit();
 
