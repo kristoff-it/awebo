@@ -360,7 +360,7 @@ pub fn runHostMediaManager(
     defer sock.close(io);
 
     // set dscp to bump up priority of our packets.
-    awebo.network_utils.setUdpDscp(sock);
+    // awebo.network_utils.setUdpDscp(sock);
 
     var receiver_future = io.concurrent(runHostMediaReceiver, .{ core, sock, &server, host_id }) catch return;
     defer receiver_future.cancel(io) catch {};

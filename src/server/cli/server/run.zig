@@ -102,7 +102,6 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
         cli.fatal("unable to listen to '{f}': {t}", .{ cmd.tcp, err });
     };
     defer tcp.deinit(io);
-
     awebo.network_utils.setTcpNoDelay(tcp.socket);
 
     var tcp_future = io.concurrent(runTcpAccept, .{ io, gpa, tcp }) catch |err| fatalIo(err);
@@ -1256,7 +1255,7 @@ var ___state: struct {
     /// Returns whether the user was in a call or not
     fn removeFromCall(state: *State, io: Io, gpa: Allocator, client: *Client) bool {
         const vid = if (client.voice) |v| v.id else return false;
-        assert(state.removeUdp(io, gpa, client));
+        _ = state.removeUdp(io, gpa, client);
         client.voice = null;
 
         const room = state.clients.voice_index.getPtr(vid).?;
