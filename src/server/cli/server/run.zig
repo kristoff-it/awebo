@@ -103,6 +103,8 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     };
     defer tcp.deinit(io);
 
+    awebo.network_utils.setTcpNoDelay(tcp.socket);
+
     var tcp_future = io.concurrent(runTcpAccept, .{ io, gpa, tcp }) catch |err| fatalIo(err);
     defer {
         server_log.info("shutting down tcp interface", .{});
@@ -114,6 +116,9 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
         cli.fatal("unable to bind '{f}': {t}", .{ cmd.tcp, err });
     };
     defer udp.close(io);
+
+    // set dscp to bump up priority of our packets.
+    awebo.network_utils.setUdpDscp(udp);
 
     var udp_future = io.concurrent(runUdpSocket, .{ io, gpa, udp }) catch |err| fatalIo(err);
     defer {

@@ -81,15 +81,7 @@ pub fn runHostManager(
             else => continue,
         };
 
-        const yes: c_int = 1;
-        std.posix.setsockopt(
-            hc.tcp.stream.socket.handle,
-            std.c.IPPROTO.TCP,
-            std.c.TCP.NODELAY,
-            &std.mem.toBytes(yes),
-        ) catch |err| {
-            log.debug("failed to enable TCP_NODELAY: {t}", .{err});
-        };
+        awebo.network_utils.setTcpNoDelay(hc.tcp.stream.socket);
 
         if (retry_count > 0) {
             log.debug("reconnected", .{});
@@ -366,6 +358,9 @@ pub fn runHostMediaManager(
         std.process.fatal("unable to bing socket: {t}", .{err});
     };
     defer sock.close(io);
+
+    // set dscp to bump up priority of our packets.
+    awebo.network_utils.setUdpDscp(sock);
 
     var receiver_future = io.concurrent(runHostMediaReceiver, .{ core, sock, &server, host_id }) catch return;
     defer receiver_future.cancel(io) catch {};
