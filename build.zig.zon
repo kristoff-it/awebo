@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.16.0-dev.2510+bcb5218a2",
     .dependencies = .{
         .dvui = .{
-            .url = "git+https://github.com/andrewrk/dvui?ref=zig16-dev#d5a043cf769ece1688a369572e3cc95779f2772e",
-            .hash = "dvui-0.4.0-dev-AQFJmT032AAaMnx83V3nYApqYDTZ4iY1At54sqdD03G2",
+            .url = "git+https://github.com/david-vanderson/dvui.git?ref=zig16-dev#7ebed2c19cd0a4bec65dd2506d8b35051530ad19",
+            .hash = "dvui-0.4.0-dev-AQFJmbVq2ABzd-QKJZAXL6DE4kYT_M1DpXjPgS4rlySu",
         },
         .pulseaudio = .{
             .url = "https://github.com/andrewrk/pulseaudio/archive/909a2ceebcc4efe74418107c279ac239f28e0f61.tar.gz",
@@ -41,6 +41,10 @@
         .zeit = .{
             .url = "git+https://github.com/andrewrk/zeit?ref=0.16#ec2953277276acd1d938490a8000782482142d12",
             .hash = "zeit-0.6.0-5I6bk2i6AgDYOczMsuuKcM7NYuOoTtxWEsZDsg8kSTiv",
+        },
+        .xcode_frameworks = .{
+            .url = "git+https://codeberg.org/brodo/xcode-frameworks.git#0354d5b3a3098932f49d0a2f7dff027648d82e04",
+            .hash = "xcode_frameworks-0.0.0-VCh8gsJoXgcwWlY3xQurC1iFtCi92uDPoaBSLjO85JuP",
         },
     },
     .paths = .{
