@@ -242,19 +242,16 @@ fn runHostManagerFallible(
         },
     };
 
-    var select: Io.Select(union(enum) {
-        receive: @typeInfo(@TypeOf(runHostReceive)).@"fn".return_type.?,
-        send: @typeInfo(@TypeOf(runHostSend)).@"fn".return_type.?,
-    }) = .init(io, &.{});
-    defer select.cancel();
+    var receive_future = try io.concurrent(runHostReceive, .{ core, hc, host_id });
+    defer receive_future.cancel(io) catch {};
 
-    try select.concurrent(.receive, runHostReceive, .{ core, hc, host_id });
-    try select.concurrent(.send, runHostSend, .{ core, hc });
+    var send_future = try io.concurrent(runHostSend, .{ core, hc });
+    defer send_future.cancel(io) catch {};
 
     log.debug("notifying core we connected successfully", .{});
     try core.putEvent(.{ .network = .{ .host_id = host_id, .cmd = .{ .host_connection_update = .{ .connected = hc } } } });
 
-    _ = try select.await();
+    _ = io.select(.{ &receive_future, &send_future }) catch return error.Canceled;
 
     //hc.tcp.manager_future =
 
@@ -365,14 +362,11 @@ pub fn runHostMediaManager(
     // set dscp to bump up priority of our packets.
     awebo.network_utils.setUdpDscp(sock);
 
-    var select: Io.Select(union(enum) {
-        receive: @typeInfo(@TypeOf(runHostMediaReceiver)).@"fn".return_type.?,
-        send: @typeInfo(@TypeOf(runHostMediaSender)).@"fn".return_type.?,
-    }) = .init(io, &.{});
-    defer select.cancel();
+    var receiver_future = io.concurrent(runHostMediaReceiver, .{ core, sock, &server, host_id }) catch return;
+    defer receiver_future.cancel(io) catch {};
 
-    select.concurrent(.receive, runHostMediaReceiver, .{ core, sock, &server, host_id }) catch return;
-    select.concurrent(.send, runHostMediaSender, .{ core, sock, &server, host_id }) catch return;
+    var sender_future = io.concurrent(runHostMediaSender, .{ core, sock, &server, host_id }) catch return;
+    defer sender_future.cancel(io) catch {};
 
     const open: awebo.protocol.media.OpenStream = .{
         .tcp_client = tcp_client,
@@ -384,7 +378,7 @@ pub fn runHostMediaManager(
 
     sock.send(io, &server, bytes) catch return;
 
-    _ = select.await() catch return;
+    _ = io.select(.{ &receiver_future, &sender_future }) catch return;
 }
 
 pub fn runHostMediaReceiver(

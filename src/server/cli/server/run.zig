@@ -160,7 +160,7 @@ fn runTcpAccept(io: Io, gpa: Allocator, tcp: Io.net.Server) !void {
 /// Spawns runClientReceive and runClientSend for a TCP connection.
 /// Failure in either child coroutine will trigger cancelation of all,
 /// ending with the TCP connection getting closed.
-fn runClientManager(io: Io, gpa: Allocator, stream: Io.net.Stream) Io.Cancelable!void {
+fn runClientManager(io: Io, gpa: Allocator, stream: Io.net.Stream) void {
     server_log.debug("{s} starting", .{@src().fn_name});
     defer {
         server_log.debug("{s} exiting", .{@src().fn_name});
@@ -207,22 +207,19 @@ fn runClientManager(io: Io, gpa: Allocator, stream: Io.net.Stream) Io.Cancelable
         };
     }
 
-    var select: Io.Select(union(enum) {
-        receive: @typeInfo(@TypeOf(runClientTcpRead)).@"fn".return_type.?,
-        send: @typeInfo(@TypeOf(runClientTcpWrite)).@"fn".return_type.?,
-    }) = .init(io, &.{});
-    defer select.cancel();
-
-    select.concurrent(.receive, runClientTcpRead, .{ io, gpa, &client }) catch {
-        log.err("TODO fix this error handling code", .{});
+    var receive_future = io.concurrent(runClientTcpRead, .{ io, gpa, &client }) catch {
+        log.debug("failed to start coroutine", .{});
         return;
     };
-    select.concurrent(.send, runClientTcpWrite, .{ io, gpa, &client }) catch {
-        log.err("TODO fix this error handling code", .{});
+    defer receive_future.cancel(io) catch {};
+
+    var send_future = io.concurrent(runClientTcpWrite, .{ io, gpa, &client }) catch {
+        log.debug("failed to start coroutine", .{});
         return;
     };
+    defer send_future.cancel(io) catch {};
 
-    _ = try select.await();
+    _ = io.select(.{ &receive_future, &send_future }) catch return;
 }
 
 /// Runs in a per-connection coroutine after successful authentication.
