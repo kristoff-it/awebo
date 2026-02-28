@@ -207,10 +207,13 @@ fn runClientManager(io: Io, gpa: Allocator, stream: Io.net.Stream) Io.Cancelable
         };
     }
 
-    var select: Io.Select(union(enum) {
+    const Select = Io.Select(union(enum) {
         receive: @typeInfo(@TypeOf(runClientTcpRead)).@"fn".return_type.?,
         send: @typeInfo(@TypeOf(runClientTcpWrite)).@"fn".return_type.?,
-    }) = .init(io, &.{});
+    });
+
+    var buf: [2]Select.Union = undefined;
+    var select: Select = .init(io, &buf);
     defer select.cancel();
 
     select.concurrent(.receive, runClientTcpRead, .{ io, gpa, &client }) catch {

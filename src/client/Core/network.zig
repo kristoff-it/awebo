@@ -242,10 +242,12 @@ fn runHostManagerFallible(
         },
     };
 
-    var select: Io.Select(union(enum) {
+    const Select = Io.Select(union(enum) {
         receive: @typeInfo(@TypeOf(runHostReceive)).@"fn".return_type.?,
         send: @typeInfo(@TypeOf(runHostSend)).@"fn".return_type.?,
-    }) = .init(io, &.{});
+    });
+    var buf: [2]Select.Union = undefined;
+    var select: Select = .init(io, &buf);
     defer select.cancel();
 
     try select.concurrent(.receive, runHostReceive, .{ core, hc, host_id });
@@ -365,10 +367,12 @@ pub fn runHostMediaManager(
     // set dscp to bump up priority of our packets.
     awebo.network_utils.setUdpDscp(sock);
 
-    var select: Io.Select(union(enum) {
+    const Select = Io.Select(union(enum) {
         receive: @typeInfo(@TypeOf(runHostMediaReceiver)).@"fn".return_type.?,
         send: @typeInfo(@TypeOf(runHostMediaSender)).@"fn".return_type.?,
-    }) = .init(io, &.{});
+    });
+    var buf: [2]Select.Union = undefined;
+    var select: Select = .init(io, &buf);
     defer select.cancel();
 
     select.concurrent(.receive, runHostMediaReceiver, .{ core, sock, &server, host_id }) catch return;
