@@ -109,8 +109,6 @@ pub fn init(
     environ: *std.process.Environ.Map,
     refreshFn: *const RefreshFn,
     command_queue_buffer: []Event,
-    capture_buf: []f32,
-    playback_bufs: [2][]f32,
 ) !Core {
     return .{
         .gpa = gpa,
@@ -120,7 +118,7 @@ pub fn init(
         .refresh = refreshFn,
         .command_queue = .init(command_queue_buffer),
         .webcam_capture = .init(),
-        .audio = try .init(capture_buf, playback_bufs),
+        .audio = undefined,
     };
 }
 
@@ -142,12 +140,11 @@ pub fn run(core: *Core) void {
     defer log.debug("goodbye", .{});
 
     log.debug("starting audio support", .{});
-    core.audio.discoverDevicesAndListen();
-    core.audio.playbackStart();
-    defer {
-        core.audio.playbackStop();
-        core.audio.deinit();
-    }
+    const capture_buf = core.gpa.alloc(f32, 4096) catch oom();
+    const playback_buf_left = core.gpa.alloc(f32, 4096) catch oom();
+    const playback_buf_right = core.gpa.alloc(f32, 4096) catch oom();
+    core.audio.init(capture_buf, .{ playback_buf_left, playback_buf_right });
+    defer core.audio.deinit();
 
     log.debug("starting screen capture support", .{});
     core.screen_capture.init();
@@ -188,7 +185,7 @@ pub fn run(core: *Core) void {
         const event = core.command_queue.getOne(io) catch return;
         switch (event) {
             .network => |msg| {
-                log.debug("from host {} got {any}", .{ msg.host_id, msg.cmd });
+                // log.debug("from host {} got {any}", .{ msg.host_id, msg.cmd });
                 switch (msg.cmd) {
                     .host_connection_update => |hcu| hostConnectionUpdate(core, msg.host_id, hcu),
                     .caller_speaking => |cs| {
@@ -465,7 +462,11 @@ fn callersUpdate(core: *Core, host_id: HostId, cu: awebo.protocol.server.Callers
         switch (cu.action) {
             .join => {
                 const entry = ac.callers.getOrPut(core.gpa, cu.caller.id) catch oom();
-                log.debug("ACTIVE CALL JOIN cid = {}", .{cu.caller.id});
+                log.debug("ACTIVE CALL JOIN cid = {} user = {} you = {}", .{
+                    cu.caller.id,
+                    cu.caller.user,
+                    cu.caller.user == h.client.user_id,
+                });
                 assert(!entry.found_existing);
                 entry.value_ptr.* = Audio.Caller.create(core.gpa, core) catch oom();
             },
@@ -497,17 +498,26 @@ fn mediaConnectionDetails(
     if (core.active_call) |*ac| {
         if (ac.host_id == host_id and ac.voice_id == mcd.voice) {
             if (ac.status.updateCompare(core, @src(), .intent, .connecting) == .intent) {
-                errdefer {
-                    ac.deinit();
-                    core.active_call = null;
-                }
 
                 // Activates audio streams
-                core.audio.captureStart();
+                core.audio.callBegin();
+
+                const host = core.hosts.get(host_id).?;
+                if (host.client.callers.getVoiceRoom(ac.voice_id)) |callers| {
+                    for (callers) |c| {
+                        log.debug("Adding pre-existing caller cid {} user {}", .{
+                            c,
+                            host.client.callers.get(c).?.user,
+                        });
+                        const gop = ac.callers.getOrPut(core.gpa, c) catch oom();
+                        if (!gop.found_existing) {
+                            gop.value_ptr.* = Audio.Caller.create(core.gpa, core) catch oom();
+                        }
+                    }
+                }
 
                 // Asks to the network layer to start the UDP data transfer
                 // for this call.
-                const host = core.hosts.get(host_id).?;
                 ac.manager_future = io.concurrent(network.runHostMediaManager, .{
                     core,
                     host_id,
@@ -583,7 +593,7 @@ pub const ActiveCall = struct {
         _ = ac;
         const io = core.io;
         const call = &(core.active_call orelse return);
-        core.audio.captureStop();
+        core.audio.callEnd();
         log.debug("stopped capturing, cleaning up futures", .{});
         if (call.push_future) |*push_future| push_future.cancel(io) catch {};
         log.debug("push future done", .{});
@@ -721,9 +731,13 @@ pub fn callJoin(
     core: *Core,
     host_id: HostId,
     voice_id: Channel.Id,
-) !void {
+) !Core.Audio.CapturePermission {
     const gpa = core.gpa;
     const io = core.io;
+
+    const permission = core.audio.ensureCapturePermission();
+    if (permission != .granted) return permission;
+
     const host = core.hosts.get(host_id).?;
     switch (host.client.connection_status) {
         .connecting, .connected, .disconnected, .reconnecting, .deleting => unreachable, // UI should have prevented this attempt
@@ -740,15 +754,7 @@ pub fn callJoin(
     var call: ActiveCall = .{
         .host_id = host_id,
         .voice_id = voice_id,
-        .callers = blk: {
-            var map: std.AutoArrayHashMapUnmanaged(awebo.Caller.Id, *Audio.Caller) = .empty;
-            if (host.client.callers.getVoiceRoom(voice_id)) |callers| {
-                for (callers) |c| {
-                    try map.put(gpa, c, try Audio.Caller.create(gpa, core));
-                }
-            }
-            break :blk map;
-        },
+        .callers = .empty,
     };
 
     // Attempt to push immediately, in case of contention spawn a coroutine for doing it.
@@ -762,6 +768,8 @@ pub fn callJoin(
 
     if (core.active_call) |*ac| ac.disconnect(core);
     core.active_call = call;
+
+    return .granted;
 }
 
 pub fn callBeginScreenShare(core: *Core) !void {

@@ -407,25 +407,28 @@ pub fn runHostMediaReceiver(
         );
 
         const cid = message_header.id.client_id;
+        {
+            // var locked = Core.lockState(core);
+            // defer locked.unlock();
 
-        const active_call = &(core.active_call orelse return);
-        const caller = active_call.callers.get(cid) orelse return;
-        if (debug != void) {
-            const update = debug.drop_next_media_packets.swap(0, .acq_rel);
+            const active_call = &(core.active_call orelse return);
+            const caller = active_call.callers.get(cid) orelse return;
+            if (debug != void) {
+                const update = debug.drop_next_media_packets.swap(0, .acq_rel);
 
-            if (update > 0) {
-                debug.remaining_packets_to_drop = update;
+                if (update > 0) {
+                    debug.remaining_packets_to_drop = update;
+                }
+
+                if (debug.remaining_packets_to_drop > 0) {
+                    debug.remaining_packets_to_drop -= 1;
+                    log.debug("<<DROPPING MEDIA PACKET {}>>", .{debug.remaining_packets_to_drop});
+                    return;
+                }
             }
 
-            if (debug.remaining_packets_to_drop > 0) {
-                debug.remaining_packets_to_drop -= 1;
-                log.debug("<<DROPPING MEDIA PACKET {}>>", .{debug.remaining_packets_to_drop});
-                return;
-            }
+            caller.packets.writePacket(message_header.restart, message_header.sequence, data);
         }
-
-        caller.packets.writePacket(message_header.restart, message_header.sequence, data);
-
         try core.putEvent(.{ .network = .{
             .host_id = host_id,
             .cmd = .{

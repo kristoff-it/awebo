@@ -1,16 +1,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <AudioToolbox/AudioToolbox.h>
-
-// Called by Zig to provide interleaved f32 stereo frames for playback
-// Should fill `frames` with `frame_count` stereo frames (2 * frame_count
-// floats)
-void aweboAudioPlaybackFill(void *userdata, float *left, float *right,
-                            uint32_t frame_count);
-__attribute__((weak)) void aweboAudioPlaybackFill(void *userdata, float *left,
-                                                  float *right,
-                                                  uint32_t frame_count) {
-  __builtin_unreachable();
-}
+#import <AudioUnit/AudioUnit.h>
+#import <Foundation/Foundation.h>
 
 void aweboAudioPlaybackSourceMonoFill(void *userdata, float *samples,
                                       uint32_t frame_count);
@@ -27,6 +18,18 @@ aweboAudioPlaybackSourceStereoFill(void *userdata, float *left, float *right,
   __builtin_unreachable();
 }
 
+void aweboUpdateCapturePermission(void *userdata, UInt32 permission);
+__attribute__((weak)) void aweboUpdateCapturePermission(void *userdata,
+                                                        UInt32 permission) {
+  __builtin_unreachable();
+}
+
+// When the settings page "audio capture test" is enabled,
+// the microphone's mixer gets connected to the main mixer
+// and a tap is installed to look at the power level of a
+// given buffer worth of samples. In other situations,
+// power is computed within the audio callback on the Zig
+// side (aweboAudioCapturePush).
 void aweboComputePower(void *userdata, const float *samples,
                        uint32_t sample_count);
 __attribute__((weak)) void
@@ -34,8 +37,7 @@ aweboComputePower(void *userdata, const float *samples, uint32_t sample_count) {
   __builtin_unreachable();
 }
 
-// Called by Zig to consume interleaved f32 mono capture frames
-// `frames` contains `frame_count` mono frames (frame_count floats)
+// Called by Zig to consume interleaved f32 mono capture frames.
 void aweboAudioCapturePush(void *userdata, const float *frames,
                            uint32_t frame_count);
 __attribute__((weak)) void aweboAudioCapturePush(void *userdata,
@@ -45,32 +47,53 @@ __attribute__((weak)) void aweboAudioCapturePush(void *userdata,
 }
 
 // ---------------------------------------------------------------------------
+// Return values synced with Audio.CapturePermission
+UInt32 audioDiscoverCapturePermissionState() {
+  AVAudioApplication *av = [AVAudioApplication sharedInstance];
+  if (av.recordPermission == AVAudioApplicationRecordPermissionUndetermined) {
+    return 0;
+  }
+  if (av.recordPermission == AVAudioApplicationRecordPermissionDenied) {
+    return 1;
+  } else { // if (av.recordPermission ==
+           // AVAudioApplicationRecordPermissionGranted) {
+    return 2;
+  }
+}
+
+void audioRequestCapturePermission(void *userdata) {
+  [AVAudioApplication
+      requestRecordPermissionWithCompletionHandler:^(BOOL granted) {
+        if (granted) {
+          aweboUpdateCapturePermission(userdata, 2);
+        } else {
+          aweboUpdateCapturePermission(userdata, 1);
+        }
+      }];
+}
+// ---------------------------------------------------------------------------
 
 static const double kSampleRate = 48000.0;
 
 @interface AudioEngineManager : NSObject
-@property(strong) AVAudioFormat *stereoFormat;
-@property(strong) AVAudioEngine *playbackEngine;
-@property(strong) AVAudioSourceNode *playbackMainSourceNode;
 @property(strong) AVAudioFormat *monoFormat;
-@property(strong) AVAudioEngine *captureEngine;
-@property(strong) AVAudioSinkNode *captureSinkNode;
+@property(strong) AVAudioFormat *stereoFormat;
+@property AudioDeviceID inputID;
+@property AudioDeviceID outputID;
+@property bool voiceProcessing;
+@property bool inCall;
+@property bool inTest;
+@property void *testUserdata;
+@property(strong) AVAudioEngine *engine;
 @property(strong) AVAudioMixerNode *captureMixerNode;
-@property(strong) AVAudioEngine *testEngine;
+@property(strong) AVAudioMixerNode *captureTestMixerNode;
+@property(strong) AVAudioSinkNode *captureSinkNode;
 @end
 
 @implementation AudioEngineManager
-@end
 
-// MARK: - Lifecycle
-
-void *audioEngineManagerInit() {
-  NSLog(@"creating audio manager");
-
+void *audioManagerInit(void *userdata) {
   AudioEngineManager *manager = [[AudioEngineManager alloc] init];
-  manager.playbackEngine = [[AVAudioEngine alloc] init];
-  manager.captureEngine = [[AVAudioEngine alloc] init];
-  manager.testEngine = [[AVAudioEngine alloc] init];
   manager.stereoFormat =
       [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
                                        sampleRate:kSampleRate
@@ -82,156 +105,125 @@ void *audioEngineManagerInit() {
                                          channels:1
                                       interleaved:NO];
 
-  return (__bridge_retained void *)manager;
-}
-
-void audioEngineManagerDeinit(void *ptr) {
-  AudioEngineManager *manager = (__bridge_transfer AudioEngineManager *)ptr;
-  [manager.playbackEngine stop];
-  [manager.captureEngine stop];
-}
-
-// MARK: - Device Routing
-//
-// AVAudioEngine sits on top of AUGraph/CoreAudio. The simplest way to
-// redirect it to a specific device is to set the underlying AudioUnit's
-// kAudioOutputUnitProperty_CurrentDevice before starting the engine.
-
-static bool setEngineDevice(AVAudioEngine *engine, AudioDeviceID deviceID,
-                            bool isInput) {
-  AudioUnit au =
-      isInput ? engine.inputNode.audioUnit : engine.outputNode.audioUnit;
-  if (!au) {
-    NSLog(@"setEngineDevice: no AudioUnit on node");
-    return false;
-  }
-
-  NSLog(@"set engine node isInput = %d deviceID = %d", isInput, deviceID);
-
-  OSStatus status = AudioUnitSetProperty(
-      au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
-      &deviceID, sizeof(deviceID));
-  if (status != noErr) {
-    NSLog(@"setEngineDevice failed: %d", (int)status);
-    return false;
-  }
-
-  return true;
-}
-
-// MARK: - Capture
-
-bool audioCaptureStart(void *ptr, void *userdata, AudioDeviceID deviceID) {
-  AudioEngineManager *manager = (__bridge AudioEngineManager *)ptr;
-  AVAudioEngine *engine = manager.captureEngine;
-
-  NSLog(@"capture start id = %d", deviceID);
-  if (deviceID != 0) {
-    if (!setEngineDevice(engine, deviceID, true)) {
-      return false;
-    }
-  }
-
-  AVAudioFormat *hwFormat = [engine.inputNode inputFormatForBus:0];
-  NSLog(@"capture HW format: %@", hwFormat);
-  // UInt32 bufferFrames = 0;
-  // UInt32 dataSize = sizeof(bufferFrames);
-  //                      kAudioUnitProperty_MaximumFramesPerSlice,
-  //                      kAudioUnitScope_Global, 0, &bufferFrames,
-  //                      &dataSize);
-
-  // NSLog(@"input device bufferFrames %d", bufferFrames);
-
-  // The mixer will receive the hardware format and output our desired mono
-  AVAudioMixerNode *mixer = [[AVAudioMixerNode alloc] init];
-  manager.captureMixerNode = mixer;
-  [engine attachNode:mixer];
-  [engine connect:engine.inputNode to:mixer format:hwFormat];
-
-  AVAudioSinkNode *sink = [[AVAudioSinkNode alloc]
+  manager.engine = [[AVAudioEngine alloc] init];
+  manager.captureMixerNode = [[AVAudioMixerNode alloc] init];
+  manager.captureTestMixerNode = [[AVAudioMixerNode alloc] init];
+  manager.captureSinkNode = [[AVAudioSinkNode alloc]
       initWithReceiverBlock:^OSStatus(const AudioTimeStamp *timestamp,
                                       AVAudioFrameCount frameCount,
                                       const AudioBufferList *inputData) {
         const float *samples = (const float *)inputData->mBuffers[0].mData;
-        aweboAudioCapturePush(userdata, samples, frameCount);
+        if (userdata)
+          aweboAudioCapturePush(userdata, samples, frameCount);
         return noErr;
       }];
 
-  manager.captureSinkNode = sink;
-  [engine attachNode:sink];
-  [engine connect:mixer to:sink format:manager.monoFormat];
+  [manager.engine attachNode:manager.captureMixerNode];
+  [manager.engine attachNode:manager.captureTestMixerNode];
+  [manager.engine attachNode:manager.captureSinkNode];
 
-  NSError *error = nil;
-  if (![engine startAndReturnError:&error]) {
-    NSLog(@"audioCaptureStart failed: %@", error);
-    return false;
+  [manager.engine connect:manager.captureTestMixerNode
+                       to:manager.engine.mainMixerNode
+                   format:manager.monoFormat];
+  [manager.engine connect:manager.captureMixerNode
+                       to:manager.captureSinkNode
+                   format:manager.monoFormat];
+
+  manager.captureTestMixerNode.volume = 0;
+
+  // Notifications
+  [[NSNotificationCenter defaultCenter]
+      addObserver:manager
+         selector:@selector(handleEngineConfigChange:)
+             name:AVAudioEngineConfigurationChangeNotification
+           object:manager.engine];
+
+  return (__bridge_retained void *)manager;
+}
+void audioManagerDeinit(void *ptr) {}
+
+void audioCallBegin(void *ptr, void *userdata) {
+  AudioEngineManager *manager = (__bridge AudioEngineManager *)ptr;
+  NSLog(@"begin call");
+
+  if (manager.inCall) {
+    NSLog(@"already in a call!");
+    __builtin_unreachable();
   }
 
-  NSLog(@"audio capture started (device %u)", deviceID);
-  return true;
+  manager.inCall = true;
+  // manager.callUserdata = userdata;
+  [manager captureEngineStart];
+}
+void audioCallEnd(void *ptr) {
+  AudioEngineManager *manager = (__bridge AudioEngineManager *)ptr;
+  NSLog(@"end call");
+
+  if (!manager.inCall) {
+    NSLog(@"already NOT in a call!");
+    __builtin_unreachable();
+  }
+
+  manager.inCall = false;
+  [manager captureEngineStop];
 }
 
-void audioCaptureStop(void *ptr) {
+void audioTestBegin(void *ptr, void *userdata) {
   AudioEngineManager *manager = (__bridge AudioEngineManager *)ptr;
-  [manager.captureEngine stop];
+  NSLog(@"begin capture test");
 
-  if (manager.captureSinkNode) {
-    [manager.captureEngine detachNode:manager.captureSinkNode];
-    manager.captureSinkNode = nil;
+  if (manager.inTest) {
+    NSLog(@"already in a capture test!");
+    __builtin_unreachable();
   }
-  if (manager.captureMixerNode) {
-    [manager.captureEngine detachNode:manager.captureMixerNode];
-    manager.captureMixerNode = nil;
+  manager.testUserdata = userdata;
+  manager.inTest = true;
+  [manager refreshTest];
+  [manager.captureTestMixerNode
+      installTapOnBus:0
+           bufferSize:512
+               format:nil
+                block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
+                  const float *samples = *[buffer floatChannelData];
+                  aweboComputePower(userdata, samples,
+                                    buffer.frameLength * buffer.stride);
+                }];
+  if (!manager.inCall) {
+    [manager captureEngineStart];
   }
-
-  NSLog(@"audio capture stopped");
 }
 
-// MARK: - Playback
-
-bool audioPlaybackStart(void *ptr, void *userdata, AudioDeviceID deviceID) {
-  AudioEngineManager *manager = (__bridge AudioEngineManager *)ptr;
-  AVAudioEngine *engine = manager.playbackEngine;
-
-  if (deviceID != 0) {
-    if (!setEngineDevice(engine, deviceID, false)) {
-      return false;
-    }
+- (void)refreshTest {
+  if (self.inTest) {
+    self.captureMixerNode.volume = 0;
+    self.captureTestMixerNode.volume = 1;
+  } else {
+    self.captureMixerNode.volume = 1;
+    self.captureTestMixerNode.volume = 0;
   }
-
-  AVAudioSourceNode *source = [[AVAudioSourceNode alloc]
-      initWithFormat:manager.stereoFormat
-         renderBlock:^OSStatus(BOOL *isSilence, const AudioTimeStamp *timestamp,
-                               AVAudioFrameCount frameCount,
-                               AudioBufferList *outputData) {
-           float *left = (float *)outputData->mBuffers[0].mData;
-           float *right = (float *)outputData->mBuffers[1].mData;
-           aweboAudioPlaybackFill(userdata, left, right, frameCount);
-           return noErr;
-         }];
-
-  manager.playbackMainSourceNode = source;
-
-  AVAudioFormat *hwFormat = [engine.outputNode outputFormatForBus:0];
-  NSLog(@"output hardware format: %@", hwFormat);
-
-  [engine attachNode:source];
-  [engine connect:source to:engine.mainMixerNode format:manager.stereoFormat];
-  [engine connect:engine.mainMixerNode to:engine.outputNode format:hwFormat];
-
-  NSError *error = nil;
-  if (![engine startAndReturnError:&error]) {
-    NSLog(@"audioStartPlayback failed: %@", error);
-    return false;
-  }
-
-  NSLog(@"audio playback started (device %u)", deviceID);
-  return true;
 }
 
-void *audioPlaybackSourceAdd(void *ptr, void *userdata, UInt32 kind) {
+void audioTestEnd(void *ptr) {
   AudioEngineManager *manager = (__bridge AudioEngineManager *)ptr;
-  AVAudioEngine *engine = manager.playbackEngine;
+  NSLog(@"end capture test");
+
+  if (!manager.inTest) {
+    NSLog(@"already NOT in a capture test!");
+    // __builtin_unreachable();
+    return;
+  }
+
+  manager.inTest = false;
+  [manager.captureTestMixerNode removeTapOnBus:0];
+  [manager refreshTest];
+  if (!manager.inCall) {
+    [manager captureEngineStop];
+  }
+}
+
+void *audioCallSourceAdd(void *ptr, void *userdata, UInt32 kind) {
+  AudioEngineManager *manager = (__bridge AudioEngineManager *)ptr;
+  AVAudioEngine *engine = manager.engine;
 
   NSLog(@"add caller %p", userdata);
 
@@ -246,6 +238,7 @@ void *audioPlaybackSourceAdd(void *ptr, void *userdata, UInt32 kind) {
              float *samples = (float *)outputData->mBuffers[0].mData;
              aweboAudioPlaybackSourceMonoFill(userdata, samples, frameCount);
            } else {
+             __builtin_unreachable();
              float *left = (float *)outputData->mBuffers[0].mData;
              float *right = (float *)outputData->mBuffers[1].mData;
              aweboAudioPlaybackSourceStereoFill(userdata, left, right,
@@ -255,196 +248,259 @@ void *audioPlaybackSourceAdd(void *ptr, void *userdata, UInt32 kind) {
          }];
 
   [engine attachNode:source];
-  [engine connect:source to:engine.mainMixerNode format:manager.monoFormat];
+  [engine connect:source to:engine.mainMixerNode format:format];
 
   return (__bridge_retained void *)source;
 }
 
-void audioPlaybackSourceRemove(void *mngr, void *src) {
+void audioCallSourceRemove(void *mngr, void *src) {
   AudioEngineManager *manager = (__bridge AudioEngineManager *)mngr;
   AVAudioSourceNode *source = (__bridge_transfer AVAudioSourceNode *)src;
-  AVAudioEngine *engine = manager.playbackEngine;
-  [engine detachNode:source];
+  [manager.engine detachNode:source];
 }
 
-void audioPlaybackStop(void *ptr) {
+void audioSetDevices(void *ptr, AudioDeviceID input, AudioDeviceID output,
+                     bool voiceProcessing) {
   AudioEngineManager *manager = (__bridge AudioEngineManager *)ptr;
-  [manager.playbackEngine stop];
-  if (manager.playbackMainSourceNode) {
-    [manager.playbackEngine detachNode:manager.playbackMainSourceNode];
-    manager.playbackMainSourceNode = nil;
+  NSLog(@"updating devices Input(%d) Output(%d) Voice(%d)", input, output,
+        voiceProcessing);
+
+  manager.inputID = input;
+  manager.outputID = output;
+  manager.voiceProcessing = voiceProcessing;
+
+  if (manager.inputID) {
+    const AudioDeviceID deviceID = manager.inputID;
+    AudioObjectPropertyAddress propAddress = {
+        kAudioHardwarePropertyDefaultInputDevice,
+        kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
+
+    OSStatus status =
+        AudioObjectSetPropertyData(kAudioObjectSystemObject, &propAddress, 0,
+                                   NULL, sizeof(AudioDeviceID), &deviceID);
+
+    if (status != noErr) {
+      NSLog(@"unable to set INPUT device: %d", (int)status);
+      return;
+    }
   }
-  NSLog(@"audio playback stopped");
-}
+  if (manager.outputID) {
+    const AudioDeviceID deviceID = manager.outputID;
+    AudioObjectPropertyAddress propAddress = {
+        kAudioHardwarePropertyDefaultOutputDevice,
+        kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
 
-void audioCaptureTestStart(void *ptr, void *userdata,
-                           AudioDeviceID captureDeviceID,
-                           AudioDeviceID playbackDeviceID) {
-  AudioEngineManager *manager = (__bridge AudioEngineManager *)ptr;
-  AVAudioEngine *engine = manager.testEngine;
-
-  NSLog(@"starting audio test %p", manager.testEngine);
-
-  if (captureDeviceID != 0) {
-    if (!setEngineDevice(engine, captureDeviceID, true)) {
-      NSLog(@"failed to set capture device in test capture");
+    OSStatus status =
+        AudioObjectSetPropertyData(kAudioObjectSystemObject, &propAddress, 0,
+                                   NULL, sizeof(AudioDeviceID), &deviceID);
+    if (status != noErr) {
+      NSLog(@"unable to set OUTPUT device: %d", (int)status);
       return;
     }
   }
 
-  [engine connect:engine.inputNode
-               to:engine.mainMixerNode
-           format:[engine.inputNode inputFormatForBus:0]];
+  [manager captureEngineRestart];
+}
 
-  if (playbackDeviceID != 0) {
-    if (!setEngineDevice(engine, playbackDeviceID, false)) {
-      NSLog(@"failed to set playback device in test capture");
-      return;
+- (void)captureEngineStart {
+
+  [self.engine disconnectNodeOutput:self.engine.inputNode bus:0];
+  [self.engine disconnectNodeInput:self.engine.outputNode bus:0];
+  // [self.engine reset];
+
+  AudioStreamBasicDescription inputAsbd = [self currentInputDeviceFormat];
+  AudioStreamBasicDescription outputAsbd = [self currentOutputDeviceFormat];
+
+  // AVAudioFormat *rawInputFormat = [self audioFormatFromASBD:inputAsbd];
+  // AVAudioFormat *rawOutputFormat = [self audioFormatFromASBD:outputAsbd];
+  AVAudioFormat *rawInputFormat = [self.engine.inputNode inputFormatForBus:1];
+  AVAudioFormat *rawOutputFormat =
+      [self.engine.outputNode outputFormatForBus:0];
+
+  NSLog(@"hw input format %@", rawInputFormat);
+  NSLog(@"hw output format %@", rawOutputFormat);
+  NSLog(@"ae input format %@", [self.engine.inputNode outputFormatForBus:0]);
+  NSLog(@"ae output format %@", [self.engine.outputNode inputFormatForBus:0]);
+
+  if (self.voiceProcessing) {
+    NSLog(@"ENABLING VOICE PROCESSING");
+
+    NSError *error = nil;
+    if (![self.engine.inputNode setVoiceProcessingEnabled:true error:&error]) {
+      NSLog(@"failed to enable voice processing: %@", error);
     }
+
+    AVAudioVoiceProcessingOtherAudioDuckingConfiguration cfg;
+    cfg.enableAdvancedDucking = true;
+    cfg.duckingLevel = AVAudioVoiceProcessingOtherAudioDuckingLevelMin;
+    self.engine.inputNode.voiceProcessingOtherAudioDuckingConfiguration = cfg;
+    self.engine.inputNode.voiceProcessingInputMuted = false;
+    self.engine.inputNode.voiceProcessingBypassed = false;
+    self.engine.inputNode.voiceProcessingAGCEnabled = true;
+
+    // To enable voice processing both input and output must share the same
+    // format config.
+    AVAudioFormat *inputOutputFormat = [[AVAudioFormat alloc]
+        initStandardFormatWithSampleRate:rawInputFormat.sampleRate
+                                channels:MIN(rawInputFormat.channelCount,
+                                             rawOutputFormat.channelCount)];
+
+    NSLog(@"voice processing input/output format: %@", inputOutputFormat);
+    [self.engine connect:self.engine.inputNode
+                      to:self.captureMixerNode
+                  format:inputOutputFormat];
+    [self.engine connect:self.engine.inputNode
+                      to:self.captureTestMixerNode
+                  format:inputOutputFormat];
+    [self.engine connect:self.engine.mainMixerNode
+                      to:self.engine.outputNode
+                  format:inputOutputFormat];
+  } else {
+
+    NSError *error = nil;
+    if (![self.engine.inputNode setVoiceProcessingEnabled:false error:&error]) {
+      NSLog(@"failed to disable voice processing: %@", error);
+    }
+
+    [self.engine connect:self.engine.inputNode
+                      to:self.captureMixerNode
+                  format:[self.engine.inputNode outputFormatForBus:0]];
+    [self.engine connect:self.engine.inputNode
+                      to:self.captureTestMixerNode
+                  format:rawInputFormat];
+    [self.engine connect:self.engine.mainMixerNode
+                      to:self.engine.outputNode
+                  format:rawOutputFormat];
   }
 
-  [engine connect:engine.mainMixerNode
-               to:engine.outputNode
-           format:[engine.outputNode inputFormatForBus:0]];
-
-  [engine.mainMixerNode
-      installTapOnBus:0
-           bufferSize:512
-               format:[engine.mainMixerNode outputFormatForBus:0]
-                block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
-                  const float *samples = *[buffer floatChannelData];
-                  aweboComputePower(userdata, samples,
-                                    buffer.frameLength * buffer.stride);
-                }];
+  [self refreshTest];
 
   NSError *error = nil;
-  if (![engine startAndReturnError:&error]) {
-    NSLog(@"capture test failed: %@", error);
+  if (![self.engine startAndReturnError:&error]) {
+    NSLog(@"engine start failed: %@", error);
+  } else {
+    NSLog(@"engine start success!");
   }
 }
 
-void audioCaptureTestStop(void *ptr) {
-  AudioEngineManager *manager = (__bridge AudioEngineManager *)ptr;
+- (void)captureEngineStop {
+  NSLog(@"stopping the engine");
+  if (!self.engine.running) {
+    NSLog(@"engine already not running!");
+    __builtin_unreachable();
+  }
 
-  NSLog(@"Stopping audio test %p", manager.testEngine);
-  [manager.testEngine stop];
-  [manager.testEngine.mainMixerNode removeTapOnBus:0];
+  [self.engine stop];
+}
+void audioRestart(void *ptr) {
+  AudioEngineManager *manager = (__bridge AudioEngineManager *)ptr;
+  [manager captureEngineRestart];
 }
 
-// bool audioCaptureStart(void *ptr, void *userdata, AudioDeviceID deviceID) {
-//   AudioEngineManager *manager = (__bridge AudioEngineManager *)ptr;
+- (void)captureEngineRestart {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    NSLog(@"restarting engine...");
+    if (!self.inCall && !self.inTest) {
+      NSLog(@"engine should not run, return");
+      return;
+    }
+    if (self.engine.running) {
+      [self captureEngineStop];
+    }
+    [self captureEngineStart];
+  });
+}
 
-//   AVAudioEngine *engine = manager.captureEngine;
+- (void)handleEngineConfigChange:(NSNotification *)note {
+  NSLog(@"engine broke");
+  [self captureEngineStart];
+}
 
-//   // Must set device BEFORE accessing inputNode.inputFormat,
-//   // otherwise you get the default hardware format
-//   NSLog(@"capture start id = %d", deviceID);
-//   if (deviceID != 0) {
-//     if (!setEngineDevice(engine, deviceID, true)) {
-//       return false;
-//     }
-//   }
+#import <CoreAudio/CoreAudio.h>
+- (AudioStreamBasicDescription)currentInputDeviceFormat {
+  // 1. Get default input device ID
+  AudioDeviceID deviceID = kAudioDeviceUnknown;
+  UInt32 size = sizeof(AudioDeviceID);
+  AudioObjectPropertyAddress addr = {kAudioHardwarePropertyDefaultInputDevice,
+                                     kAudioObjectPropertyScopeGlobal,
+                                     kAudioObjectPropertyElementMain};
 
-//   AVAudioFormat *hwFormat = [engine.inputNode inputFormatForBus:0];
-//   NSLog(@"capture HW format: %@", hwFormat);
+  OSStatus status = AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr,
+                                               0, NULL, &size, &deviceID);
 
-//   UInt32 bufferFrames = 0;
-//   UInt32 dataSize = sizeof(bufferFrames);
-//   AudioUnitGetProperty(engine.inputNode.audioUnit,
-//                        kAudioUnitProperty_MaximumFramesPerSlice,
-//                        kAudioUnitScope_Global, 0, &bufferFrames,
-//                        &dataSize);
+  if (status != noErr || deviceID == kAudioDeviceUnknown) {
+    NSLog(@"Failed to get default input device: %d", status);
+    return (AudioStreamBasicDescription){};
+  }
 
-//   NSLog(@"input device bufferFrames %d", bufferFrames);
+  // 2. Get the stream format for that device
+  AudioStreamBasicDescription asbd = {};
+  size = sizeof(AudioStreamBasicDescription);
+  addr = (AudioObjectPropertyAddress){kAudioDevicePropertyStreamFormat,
+                                      kAudioDevicePropertyScopeInput,
+                                      kAudioObjectPropertyElementMain};
 
-//   // The mixer will receive the hardware format and output our desired mono
-//   AVAudioMixerNode *mixer = [[AVAudioMixerNode alloc] init];
-//   manager.mixerNode = mixer;
-//   [engine attachNode:mixer];
-//   [engine connect:engine.inputNode to:mixer format:hwFormat];
+  status = AudioObjectGetPropertyData(deviceID, &addr, 0, NULL, &size, &asbd);
 
-//   AVAudioFormat *downMixFormat =
-//       [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
-//                                        sampleRate:hwFormat.sampleRate
-//                                          channels:1
-//                                       interleaved:NO];
+  if (status != noErr) {
+    NSLog(@"Failed to get input stream format: %d", status);
+    return (AudioStreamBasicDescription){};
+  }
+  NSLog(@"input::");
+  NSLog(@"Sample rate:  %.0f Hz", asbd.mSampleRate);
+  NSLog(@"Channels:     %u", asbd.mChannelsPerFrame);
+  NSLog(@"Bits/channel: %u", asbd.mBitsPerChannel);
+  NSLog(@"Format flags: 0x%X", asbd.mFormatFlags);
 
-//   AVAudioFormat *outputFormat =
-//       [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
-//                                        sampleRate:hwFormat.sampleRate
-//                                          channels:1
-//                                       interleaved:NO];
+  return asbd;
+}
 
-//   AVAudioConverter *converter = nil;
-//   if (hwFormat.sampleRate != kSampleRate) {
-//     converter = [[AVAudioConverter alloc] initFromFormat:downMixFormat
-//                                                 toFormat:outputFormat];
-//   }
+- (AudioStreamBasicDescription)currentOutputDeviceFormat {
+  AudioDeviceID deviceID = kAudioDeviceUnknown;
+  UInt32 size = sizeof(AudioDeviceID);
+  AudioObjectPropertyAddress addr = {kAudioHardwarePropertyDefaultOutputDevice,
+                                     kAudioObjectPropertyScopeGlobal,
+                                     kAudioObjectPropertyElementMain};
 
-//   AVAudioSinkNode *sink = [[AVAudioSinkNode alloc]
-//       initWithReceiverBlock:^OSStatus(const AudioTimeStamp *timestamp,
-//                                       AVAudioFrameCount frameCount,
-//                                       const AudioBufferList *inputData) {
-//         if (converter) {
-//           // Compute how many output frames we expect after resampling
-//           AVAudioFrameCount outFrameCount = (AVAudioFrameCount)ceil(
-//               frameCount * kSampleRate / downMixFormat.sampleRate);
+  OSStatus status = AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr,
+                                               0, NULL, &size, &deviceID);
 
-//           AVAudioPCMBuffer *inputBuffer =
-//               [[AVAudioPCMBuffer alloc] initWithPCMFormat:downMixFormat
-//                                             frameCapacity:frameCount];
-//           inputBuffer.frameLength = frameCount;
-//           // Copy the AudioBufferList data into the AVAudioPCMBuffer
-//           memcpy(inputBuffer.audioBufferList->mBuffers[0].mData,
-//                  inputData->mBuffers[0].mData,
-//                  inputData->mBuffers[0].mDataByteSize);
+  if (status != noErr || deviceID == kAudioDeviceUnknown) {
+    NSLog(@"Failed to get default output device: %d", status);
+    return (AudioStreamBasicDescription){};
+  }
 
-//           AVAudioPCMBuffer *outputBuffer =
-//               [[AVAudioPCMBuffer alloc] initWithPCMFormat:outputFormat
-//                                             frameCapacity:outFrameCount];
+  AudioStreamBasicDescription asbd = {};
+  size = sizeof(AudioStreamBasicDescription);
+  addr = (AudioObjectPropertyAddress){kAudioDevicePropertyStreamFormat,
+                                      kAudioDevicePropertyScopeOutput,
+                                      kAudioObjectPropertyElementMain};
 
-//           NSError *convError = nil;
-//           __block BOOL inputConsumed = NO;
-//           AVAudioConverterOutputStatus status =
-//               [converter convertToBuffer:outputBuffer
-//                                    error:&convError
-//                       withInputFromBlock:^AVAudioBuffer *(
-//                           AVAudioPacketCount inNumPackets,
-//                           AVAudioConverterInputStatus *outStatus) {
-//                         if (inputConsumed) {
-//                           *outStatus =
-//                           AVAudioConverterInputStatus_NoDataNow; return
-//                           nil;
-//                         }
-//                         *outStatus = AVAudioConverterInputStatus_HaveData;
-//                         inputConsumed = YES;
-//                         return inputBuffer;
-//                       }];
+  status = AudioObjectGetPropertyData(deviceID, &addr, 0, NULL, &size, &asbd);
 
-//           if (status == AVAudioConverterOutputStatus_Error) {
-//             NSLog(@"AVAudioConverter error: %@", convError);
-//             return noErr;
-//           }
+  if (status != noErr) {
+    NSLog(@"Failed to get output stream format: %d", status);
+    return (AudioStreamBasicDescription){};
+  }
 
-//           aweboAudioCapturePush(userdata, outputBuffer.floatChannelData[0],
-//                                 outputBuffer.frameLength);
-//         } else {
-//           const float *samples = (const float
-//           *)inputData->mBuffers[0].mData; aweboAudioCapturePush(userdata,
-//           samples, frameCount);
-//         }
-//         return noErr;
-//       }];
+  NSLog(@"outptut::");
+  NSLog(@"Sample rate:  %.0f Hz", asbd.mSampleRate);
+  NSLog(@"Channels:     %u", asbd.mChannelsPerFrame);
+  NSLog(@"Bits/channel: %u", asbd.mBitsPerChannel);
+  NSLog(@"Format flags: 0x%X", asbd.mFormatFlags);
 
-//   manager.sinkNode = sink;
-//   [engine attachNode:sink];
-//   [engine connect:mixer to:sink format:downMixFormat];
+  return asbd;
+}
 
-//   NSError *error = nil;
-//   if (![engine startAndReturnError:&error]) {
-//     NSLog(@"audioCaptureStart failed: %@", error);
-//     return false;
-//   }
+- (AVAudioFormat *)audioFormatFromASBD:(AudioStreamBasicDescription)asbd {
+  // For non-interleaved PCM, AVAudioFormat has a dedicated initializer
+  // that also captures the channel layout cleanly.
+  if (asbd.mFormatID == kAudioFormatLinearPCM) {
+    AVAudioFormat *format =
+        [[AVAudioFormat alloc] initWithStreamDescription:&asbd];
+    return format; // may be nil if the ASBD is malformed
+  }
+  return nil;
+}
 
-//   NSLog(@"audio capture started (device %u)", deviceID);
-//   return true;
+@end

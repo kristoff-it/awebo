@@ -15,6 +15,9 @@ const debug = if (builtin.mode != .Debug) void else struct {
     var webcam = false;
 };
 
+var show_deny_popup = false;
+var show_requesting_popup = false;
+
 pub fn draw(app: *App) !void {
     const core = &app.core;
     const h = core.hosts.get(core.active_host).?;
@@ -31,6 +34,8 @@ pub fn draw(app: *App) !void {
     try channelList(h, core);
     try joinedVoice(core);
     try userbox(app, h);
+    if (show_deny_popup) denyPopup();
+    if (show_requesting_popup) requestingPopup();
 }
 
 pub fn hostName(app: *App, h: *awebo.Host) void {
@@ -316,7 +321,11 @@ fn renderVoiceChannel(h: *awebo.Host, core: *Core, v: *const Channel, idx: usize
                 .gravity_x = 1,
                 .margin = dvui.Rect.all(4),
             })) {
-                try core.callJoin(h.client.host_id, v.id);
+                switch (try core.callJoin(h.client.host_id, v.id)) {
+                    .granted, .unknown => {},
+                    .denied => show_deny_popup = true,
+                    .requesting => show_requesting_popup = true,
+                }
             }
         }
 
@@ -572,4 +581,32 @@ fn renderAVDebugWindow(core: *Core) void {
     const screenshare_box = @import("screenshare_box.zig");
     if (debug.webcam) screenshare_box.drawSource(core, .webcam) catch unreachable;
     if (debug.screen) screenshare_box.drawSource(core, .screen) catch unreachable;
+}
+
+fn denyPopup() void {
+    var fw = dvui.floatingWindow(@src(), .{ .modal = true }, .{});
+    defer fw.deinit();
+
+    dvui.labelNoFmt(@src(),
+        \\Awebo has no permission to access the microphone.
+        \\Go to your OS settings and grant permission to be able to join a call.
+    , .{}, .{});
+
+    if (dvui.button(@src(), "OK", .{}, .{ .gravity_x = 0.5 })) {
+        show_deny_popup = false;
+    }
+}
+
+fn requestingPopup() void {
+    var fw = dvui.floatingWindow(@src(), .{ .modal = true }, .{});
+    defer fw.deinit();
+
+    dvui.labelNoFmt(@src(),
+        \\There is an open OS window to grant Awebo access to your microphone.
+        \\Grant permission before attempting to join a call.
+    , .{}, .{});
+
+    if (dvui.button(@src(), "OK", .{}, .{ .gravity_x = 0.5 })) {
+        show_requesting_popup = false;
+    }
 }

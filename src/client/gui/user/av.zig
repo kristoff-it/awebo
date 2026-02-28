@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const Io = std.Io;
 const dvui = @import("dvui");
@@ -25,6 +26,17 @@ pub fn draw(app: *App) !void {
     _ = dvui.separator(@src(), .{ .expand = .horizontal });
 
     _ = dvui.spacer(@src(), .{});
+
+    if (builtin.target.os.tag == .macos) {
+        dvui.labelNoFmt(@src(),
+            \\Sorry audio is a bit janky on macOS.
+            \\Changing the audio input / output dropdown menus will
+            \\  change your OS-wide default device,
+            \\  and sometimes the audio engine will break during the transition.
+            \\If you don't hear anything after switching settings, restart Awebo.
+        , .{ .ellipsize = false }, .{});
+        _ = dvui.spacer(@src(), .{});
+    }
 
     {
         var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{
@@ -121,6 +133,15 @@ pub fn draw(app: *App) !void {
             }, .{
                 .expand = .horizontal,
             });
+
+            if (dvui.checkbox(
+                @src(),
+                &core.audio.playback_voice_processing,
+                "Enable Echo Removal",
+                .{},
+            )) {
+                core.audio.setDevices();
+            }
         }
     }
 
@@ -136,6 +157,7 @@ pub fn draw(app: *App) !void {
             .font = dvui.Font.theme(.title).larger(2),
             .expand = .horizontal,
         });
+
         if (try webcamDeviceDropdown(@src(), &core.webcam_capture, .{
             .gravity_x = 0.5,
             .font = dvui.Font.theme(.title),
@@ -203,6 +225,8 @@ pub fn audioDeviceDropdown(
         }
     }
     dd.deinit();
+    if (changed) audio.setDevices();
+
     return changed;
 }
 
