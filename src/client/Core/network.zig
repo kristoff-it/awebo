@@ -433,11 +433,11 @@ pub fn runHostMediaReceiver(
                 if (debug.remaining_packets_to_drop > 0) {
                     debug.remaining_packets_to_drop -= 1;
                     log.debug("<<DROPPING MEDIA PACKET {}>>", .{debug.remaining_packets_to_drop});
-                    return;
+                    continue;
                 }
             }
 
-            caller.packets.writePacket(message_header.restart, message_header.sequence, data);
+            caller.packets.writePacket(io, message_header.restart, message_header.sequence, data);
         }
         try core.putEvent(.{ .network = .{
             .host_id = host_id,
@@ -517,7 +517,7 @@ pub fn runHostMediaSender(
     awebo.network_utils.setCurrentThreadRealtime();
 
     var sequence: u32 = 0;
-    var restart: u32 = 0;
+    var restart: u32 = 1;
     while (true) {
         const read = core.audio.capture_packets.beginRead() orelse {
             try io.sleep(.fromMilliseconds(2), .awake);

@@ -15,6 +15,14 @@ comptime {
     assert(start_count < buffer_len);
 }
 
+/// Writer side
+stats: struct {
+    start_time: Io.Timestamp = undefined,
+    seq: u32 = 0,
+    restart: u32 = 0,
+} = .{},
+
+/// Reader side
 state: enum {
     /// Waiting for the buffer to fill up for the first time
     /// or after a silence reset.
@@ -30,15 +38,47 @@ state: enum {
 /// packet you write.
 current_restart: u32 = 0,
 expected_next_seq: u32 = 0,
+last_buffer_len: u32 = start_count,
+max_deficit: u32 = 0,
+
+/// Shared (atomic)
 packets: PlaybackPacketRing = .empty,
 
 pub const init: JitterBuffer = .{};
 
 /// This function is meant to be called by the network thread.
-pub fn writePacket(jb: *JitterBuffer, restart: u32, seq: u32, data: []const u8) void {
+pub fn writePacket(jb: *JitterBuffer, io: Io, restart: u32, seq: u32, data: []const u8) void {
     if (jb.expected_next_seq == 0) {
         jb.current_restart = restart;
         jb.expected_next_seq = seq;
+    }
+
+    if (restart != jb.stats.restart) {
+        jb.stats = .{
+            .start_time = Io.Clock.real.now(io),
+            .restart = restart,
+            .seq = seq,
+        };
+        log.debug("stats: restart", .{});
+    } else {
+        const delta = jb.stats.start_time.addDuration(
+            .fromMilliseconds(20 * (jb.stats.seq)),
+        ).durationTo(Io.Clock.real.now(io)).toMilliseconds();
+
+        if (delta < 0) {
+            jb.stats.start_time = jb.stats.start_time.addDuration(.fromMilliseconds(delta));
+        }
+
+        log.debug("stats: packet jitter = {}ms {s} ({})", .{
+            delta,
+            if (seq == jb.stats.seq + 1)
+                ""
+            else
+                "LATE",
+            seq,
+        });
+
+        jb.stats.seq += 1;
     }
 
     jb.packets.write(restart, seq, data) catch {
@@ -94,12 +134,34 @@ pub fn nextPacketBegin(jb: *JitterBuffer) NextPacket {
             jb.state = .starting;
             jb.expected_next_seq = 1;
             jb.current_restart = next_meta.restart;
+
+            log.debug("after restart max deficit was {}", .{jb.max_deficit});
+            jb.last_buffer_len = start_count;
+            jb.max_deficit = 0;
             return .starting;
         }
 
         if (next_meta.seq < jb.expected_next_seq) {
             log.debug("expected {} found {}", .{ jb.expected_next_seq, next_meta });
             continue;
+        }
+
+        {
+            const current_len: u32 = @intCast(packet_slices.len() - idx);
+            // log.debug("reader: current len {} ({}) ({})", .{
+            //     current_len,
+            //     packet_slices.len(),
+            //     idx,
+            // });
+            if (current_len > jb.last_buffer_len) {
+                jb.max_deficit = @max(jb.max_deficit, start_count -| jb.last_buffer_len);
+                // log.debug("new max_deficit = {}", .{jb.max_deficit});
+                jb.last_buffer_len = current_len;
+            } else if (current_len < jb.last_buffer_len) {
+                jb.last_buffer_len = current_len;
+            } else {
+                // if current_len == jb.last_buffer_len do nothing
+            }
         }
 
         if (idx > 1) {

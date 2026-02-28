@@ -113,8 +113,9 @@ void *audioManagerInit(void *userdata) {
                                       AVAudioFrameCount frameCount,
                                       const AudioBufferList *inputData) {
         const float *samples = (const float *)inputData->mBuffers[0].mData;
-        if (userdata)
+        if (userdata) {
           aweboAudioCapturePush(userdata, samples, frameCount);
+        }
         return noErr;
       }];
 
@@ -347,11 +348,20 @@ void audioSetDevices(void *ptr, AudioDeviceID input, AudioDeviceID output,
 
     NSLog(@"voice processing input/output format: %@", inputOutputFormat);
     [self.engine connect:self.engine.inputNode
-                      to:self.captureMixerNode
-                  format:inputOutputFormat];
-    [self.engine connect:self.engine.inputNode
-                      to:self.captureTestMixerNode
-                  format:inputOutputFormat];
+        toConnectionPoints:@[
+          [[AVAudioConnectionPoint alloc] initWithNode:self.captureTestMixerNode
+                                                   bus:0],
+          [[AVAudioConnectionPoint alloc] initWithNode:self.captureMixerNode
+                                                   bus:0]
+        ]
+                   fromBus:0
+                    format:inputOutputFormat];
+    // [self.engine connect:self.engine.inputNode
+    //                   to:self.captureMixerNode
+    //               format:inputOutputFormat];
+    // [self.engine connect:self.engine.inputNode
+    //                   to:self.captureTestMixerNode
+    //               format:inputOutputFormat];
     [self.engine connect:self.engine.mainMixerNode
                       to:self.engine.outputNode
                   format:inputOutputFormat];
@@ -363,11 +373,20 @@ void audioSetDevices(void *ptr, AudioDeviceID input, AudioDeviceID output,
     }
 
     [self.engine connect:self.engine.inputNode
-                      to:self.captureMixerNode
-                  format:[self.engine.inputNode outputFormatForBus:0]];
-    [self.engine connect:self.engine.inputNode
-                      to:self.captureTestMixerNode
-                  format:rawInputFormat];
+        toConnectionPoints:@[
+          [[AVAudioConnectionPoint alloc] initWithNode:self.captureTestMixerNode
+                                                   bus:0],
+          [[AVAudioConnectionPoint alloc] initWithNode:self.captureMixerNode
+                                                   bus:0]
+        ]
+                   fromBus:0
+                    format:rawInputFormat];
+    // [self.engine connect:self.engine.inputNode
+    //                   to:self.captureMixerNode
+    //               format:[self.engine.inputNode outputFormatForBus:0]];
+    // [self.engine connect:self.engine.inputNode
+    //                   to:self.captureTestMixerNode
+    //               format:rawInputFormat];
     [self.engine connect:self.engine.mainMixerNode
                       to:self.engine.outputNode
                   format:rawOutputFormat];
