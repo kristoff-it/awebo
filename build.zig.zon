@@ -14,8 +14,8 @@
             .lazy = true,
         },
         .opus = .{
-            .url = "git+https://github.com/allyourcodebase/opus#4fb42992aed6d8184873dec7ee38607cbc4e2601",
-            .hash = "opus-0.0.2-vuF-cMAkAADVsm707MYCtPmqmRs0gzg84Sz0qGbb5E3w",
+            .url = "git+https://github.com/allyourcodebase/opus#6629bb9fff5ec9e0f535adc63431270a97d83171",
+            .hash = "opus-0.0.2-vuF-cGgwAAAvbpICyQVfbORnrGuGBUYkXxHdw9VkAmoX",
         },
         .opus_tools = .{
             .url = "git+https://github.com/allyourcodebase/opus-tools#40dc7cc3632c5b76b53c79455f0aa1b9b795f749",

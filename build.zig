@@ -163,7 +163,12 @@ pub fn setupGui(
 
     const opus = b.dependency("opus", .{
         .target = target,
-        .optimize = dep_optimize,
+        .optimize = optimize,
+        .dred = true,
+        .assertions = optimize == .Debug,
+        .@"deep-plc" = true,
+        .osce = true,
+        .@"osce-training" = true,
     });
 
     const opus_tools = b.dependency("opus_tools", .{
@@ -263,6 +268,11 @@ pub fn setupTui(
     const opus = b.dependency("opus", .{
         .target = target,
         .optimize = dep_optimize,
+        .dred = true,
+        .assertions = optimize == .Debug,
+        .@"deep-plc" = true,
+        .osce = true,
+        .@"osce-training" = true,
     });
 
     const opus_tools = b.dependency("opus_tools", .{

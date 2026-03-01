@@ -15,16 +15,24 @@ pub const CHANNELS = 1;
 pub const FREQ = 48000;
 pub const PACKET_FRAME_COUNT = 960; // 20ms
 pub const PACKET_SAMPLE_COUNT = PACKET_FRAME_COUNT * CHANNELS;
+pub const DRED_DURATION: c_int = 100; // number of 10ms mini-packets
+pub const FEC = true;
 
 pub const Encoder = opaque {
     pub fn create() !*Encoder {
         var err: c_int = undefined;
-        const h = opus_h.opus_encoder_create(FREQ, CHANNELS, opus_h.OPUS_APPLICATION_AUDIO, &err);
+        const h = opus_h.opus_encoder_create(FREQ, CHANNELS, opus_h.OPUS_APPLICATION_VOIP, &err);
         try checkErr(err);
 
-        // err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_SIGNAL_REQUEST, opus_h.OPUS_SIGNAL_VOICE);
-        // err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_DTX_REQUEST, true);
-        // try checkErr(err);
+        if (FEC) {
+            err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_INBAND_FEC_REQUEST, true);
+            try checkErr(err);
+        }
+
+        err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_DRED_DURATION_REQUEST, DRED_DURATION);
+        try checkErr(err);
+        err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_PACKET_LOSS_PERC_REQUEST, @as(c_int, 50));
+        try checkErr(err);
 
         return @ptrCast(h.?);
     }
@@ -42,7 +50,68 @@ pub const Encoder = opaque {
             out.ptr,
             @intCast(out.len),
         );
+
         return @intCast(res);
+    }
+};
+
+pub const DredInfo = struct {
+    available: u32,
+    end: u32,
+};
+pub const DredDecoder = opaque {
+    pub fn create() !*DredDecoder {
+        var err: c_int = undefined;
+        const dd = opus_h.opus_dred_decoder_create(&err);
+        try checkErr(err);
+        return @ptrCast(dd.?);
+    }
+
+    pub fn destroy(dd: *DredDecoder) void {
+        opus_h.opus_dred_decoder_destroy(dd);
+    }
+
+    pub fn parse(
+        dd: *DredDecoder,
+        state: *DredState,
+        data: []const u8,
+        samples: u32,
+        processing: enum { eager, deferred },
+    ) !DredInfo {
+        var end: c_int = 0;
+        const available = opus_h.opus_dred_parse(
+            @ptrCast(dd),
+            @ptrCast(state),
+            data.ptr,
+            @intCast(data.len),
+            @intCast(samples),
+            FREQ,
+            &end,
+            switch (processing) {
+                .eager => 0,
+                .deferred => 1,
+            },
+        );
+        try checkErr(available);
+        return .{ .available = @intCast(available), .end = @intCast(end) };
+    }
+
+    pub fn process(dd: *DredDecoder, state_src: *const DredState, state_dst: *DredState) !void {
+        const err = opus_h.opus_dred_process(@ptrCast(dd), @ptrCast(state_src), @ptrCast(state_dst));
+        try checkErr(err);
+    }
+};
+
+pub const DredState = opaque {
+    pub fn create() !*DredState {
+        var err: c_int = 0;
+        const ds = opus_h.opus_dred_alloc(&err);
+        try checkErr(err);
+        return @ptrCast(ds.?);
+    }
+
+    pub fn destroy(dd: *DredState) void {
+        opus_h.opus_dred_decoder_destroy(dd);
     }
 };
 
@@ -88,39 +157,38 @@ pub const Decoder = opaque {
         );
         return @intCast(res);
     }
+
+    pub fn decodeDredFloat(d: *Decoder, dred_state: *DredState, dred_offset: u32, pcm: []f32) !u32 {
+        assert(pcm.len == 960);
+        const decoded = opus_h.opus_decoder_dred_decode_float(
+            @ptrCast(d),
+            @ptrCast(dred_state),
+            @intCast(dred_offset),
+            pcm.ptr,
+            @intCast(pcm.len),
+        );
+        try checkErr(decoded);
+        return @intCast(decoded);
+    }
 };
 
 fn checkErr(err: c_int) !void {
-    const e: OpusErrorEnum = @enumFromInt(err);
-    return switch (e) {
-        .OPUS_OK => {},
-        .OPUS_BAD_ARG => error.OpusBadArg,
-        .OPUS_BUFFER_TOO_SMALL => error.OpusBufferTooSmall,
-        .OPUS_INTERNAL_ERROR => error.OpusInternalError,
-        .OPUS_INVALID_PACKET => error.OpusInvalidPacket,
-        .OPUS_UNIMPLEMENTED => error.OpusUnimplemented,
-        .OPUS_INVALID_STATE => error.OpusInvalidState,
-        .OPUS_ALLOC_FAIL => error.OutOfMemory,
+    if (err > 0) return;
+    return switch (err) {
+        opus_h.OPUS_OK => {},
+        opus_h.OPUS_BAD_ARG => error.OpusBadArg,
+        opus_h.OPUS_BUFFER_TOO_SMALL => error.OpusBufferTooSmall,
+        opus_h.OPUS_INTERNAL_ERROR => error.OpusInternalError,
+        opus_h.OPUS_INVALID_PACKET => error.OpusInvalidPacket,
+        opus_h.OPUS_UNIMPLEMENTED => error.OpusUnimplemented,
+        opus_h.OPUS_INVALID_STATE => error.OpusInvalidState,
+        opus_h.OPUS_ALLOC_FAIL => error.OutOfMemory,
+        else => {
+            std.log.err("unexpected opus error code {}", .{err});
+            return error.Unexpected;
+        },
     };
 }
-
-const OpusErrorEnum = enum(c_int) {
-    OPUS_OK = 0,
-    // /** One or more invalid/out of range arguments @hideinitializer*/
-    OPUS_BAD_ARG = -1,
-    // /** Not enough bytes allocated in the buffer @hideinitializer*/
-    OPUS_BUFFER_TOO_SMALL = -2,
-    // /** An internal error was detected @hideinitializer*/
-    OPUS_INTERNAL_ERROR = -3,
-    // /** The compressed data passed is corrupted @hideinitializer*/
-    OPUS_INVALID_PACKET = -4,
-    // /** Invalid/unsupported request number @hideinitializer*/
-    OPUS_UNIMPLEMENTED = -5,
-    // /** An encoder or decoder structure is invalid or already freed @hideinitializer*/
-    OPUS_INVALID_STATE = -6,
-    // /** Memory allocation has failed @hideinitializer*/
-    OPUS_ALLOC_FAIL = -7,
-};
 
 pub const Resampler = opaque {
     // How much of the input buffer has been processed,

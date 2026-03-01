@@ -98,7 +98,7 @@ pub const Caller = struct {
         caller.* = .{
             .core = core,
             .decoder = try .create(),
-            .packets = .init,
+            .packets = .init(),
             .voice = .init(.{try gpa.alloc(
                 f32,
                 std.math.ceilPowerOfTwoAssert(
@@ -134,52 +134,82 @@ pub const Caller = struct {
                     @memset(remaining, 0);
                     return;
                 },
-                .playing => |maybe_playing| {
+                .playing => |playing| {
                     if (remaining.len >= awebo.opus.PACKET_SAMPLE_COUNT) {
-                        if (maybe_playing) |playing| {
-                            const written = caller.decoder.decodeFloat(
-                                playing.data,
-                                remaining,
-                                false,
-                            ) catch |err| {
-                                log.debug("error parsing opus data: {t}", .{err});
-                                @memset(remaining, 0);
-                                return;
-                            };
-                            assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+                        const written = caller.decoder.decodeFloat(
+                            playing.data,
+                            remaining,
+                            playing.fec,
+                        ) catch |err| {
+                            log.debug("error parsing opus data: {t}", .{err});
+                            @memset(remaining, 0);
                             caller.packets.nextPacketCommit(playing);
-                        } else {
-                            const written = caller.decoder.decodeMissing(remaining, false);
-                            assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
-                        }
+                            return;
+                        };
+                        assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+                        caller.packets.nextPacketCommit(playing);
                         remaining = remaining[awebo.opus.PACKET_SAMPLE_COUNT..];
                         continue;
                     } else {
                         assert(voice_read.data.len >= awebo.opus.PACKET_SAMPLE_COUNT);
-                        if (maybe_playing) |playing| {
-                            const written = caller.decoder.decodeFloat(
-                                playing.data,
-                                voice_read.data,
-                                false,
-                            ) catch |err| {
-                                log.debug("error parsing opus data: {t}", .{err});
-                                @memset(remaining, 0);
-                                return;
-                            };
-
+                        const written = caller.decoder.decodeFloat(
+                            playing.data,
+                            voice_read.data,
+                            playing.fec,
+                        ) catch |err| {
+                            log.debug("error parsing opus data: {t}", .{err});
+                            @memset(remaining, 0);
                             caller.packets.nextPacketCommit(playing);
-                            assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
-                            assert(written > remaining.len);
-                        } else {
-                            const written = caller.decoder.decodeMissing(voice_read.data, false);
-                            assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
-                            assert(written > remaining.len);
-                        }
+                            return;
+                        };
 
+                        caller.packets.nextPacketCommit(playing);
+                        assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+                        assert(written > remaining.len);
                         @memcpy(remaining, voice_read.data.ptr);
                         voice_read.write_index = awebo.opus.PACKET_SAMPLE_COUNT;
                         voice_read.read_index = remaining.len;
+                        return;
+                    }
+                },
+                .dred => |dred| {
+                    // TODO: implement this :^)
+                    // if (remaining.len >= awebo.opus.PACKET_SAMPLE_COUNT) {}
+                    // assert(dred.info.available >= dred.distance * awebo.opus.PACKET_SAMPLE_COUNT);
+                    // assert(dred.info.end < dred.distance * awebo.opus.PACKET_SAMPLE_COUNT);
 
+                    log.debug("distance = {}", .{dred.distance_samples});
+                    const written = caller.decoder.decodeDredFloat(
+                        caller.packets.dred_state,
+                        dred.distance_samples,
+                        voice_read.data[0..awebo.opus.PACKET_SAMPLE_COUNT],
+                    ) catch |err| blk: {
+                        log.err("error decoding dred samples: {t}", .{err});
+                        @memset(voice_read.data[0..awebo.opus.PACKET_SAMPLE_COUNT], 0);
+                        break :blk awebo.opus.PACKET_SAMPLE_COUNT;
+                    };
+
+                    assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+                    assert(written > remaining.len);
+                    @memcpy(remaining, voice_read.data.ptr);
+                    voice_read.write_index = awebo.opus.PACKET_SAMPLE_COUNT;
+                    voice_read.read_index = remaining.len;
+                    return;
+                },
+                .missing => {
+                    if (remaining.len >= awebo.opus.PACKET_SAMPLE_COUNT) {
+                        const written = caller.decoder.decodeMissing(remaining, false);
+                        assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+                        assert(written > remaining.len);
+                        remaining = remaining[awebo.opus.PACKET_SAMPLE_COUNT..];
+                        continue;
+                    } else {
+                        const written = caller.decoder.decodeMissing(voice_read.data, false);
+                        assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+                        assert(written > remaining.len);
+                        @memcpy(remaining, voice_read.data.ptr);
+                        voice_read.write_index = awebo.opus.PACKET_SAMPLE_COUNT;
+                        voice_read.read_index = remaining.len;
                         return;
                     }
                 },
@@ -187,6 +217,73 @@ pub const Caller = struct {
             comptime unreachable;
         }
     }
+    // fn playbackSourceMonoFill(caller: *Caller, samples: [*]f32, frame_count: u32) callconv(.c) void {
+    //     const voice_read = &caller.voice.channels[0];
+    //     const available_count = voice_read.len();
+    //     const s = samples[0..@min(frame_count, available_count)];
+    //     voice_read.readFirstAssumeCount(s, s.len);
+
+    //     var remaining = samples[s.len..frame_count];
+    //     while (remaining.len != 0) {
+    //         assert(voice_read.len() == 0); // invariant leveraged below
+    //         switch (caller.packets.nextPacketBegin()) {
+    //             .starting => {
+    //                 @memset(remaining, 0);
+    //                 return;
+    //             },
+    //             .playing => |maybe_playing| {
+    //                 if (remaining.len >= awebo.opus.PACKET_SAMPLE_COUNT) {
+    //                     if (maybe_playing) |playing| {
+    //                         const written = caller.decoder.decodeFloat(
+    //                             playing.data,
+    //                             remaining,
+    //                             false,
+    //                         ) catch |err| {
+    //                             log.debug("error parsing opus data: {t}", .{err});
+    //                             @memset(remaining, 0);
+    //                             return;
+    //                         };
+    //                         assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+    //                         caller.packets.nextPacketCommit(playing);
+    //                     } else {
+    //                         const written = caller.decoder.decodeMissing(remaining, false);
+    //                         assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+    //                     }
+    //                     remaining = remaining[awebo.opus.PACKET_SAMPLE_COUNT..];
+    //                     continue;
+    //                 } else {
+    //                     assert(voice_read.data.len >= awebo.opus.PACKET_SAMPLE_COUNT);
+    //                     if (maybe_playing) |playing| {
+    //                         const written = caller.decoder.decodeFloat(
+    //                             playing.data,
+    //                             voice_read.data,
+    //                             false,
+    //                         ) catch |err| {
+    //                             log.debug("error parsing opus data: {t}", .{err});
+    //                             @memset(remaining, 0);
+    //                             return;
+    //                         };
+
+    //                         caller.packets.nextPacketCommit(playing);
+    //                         assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+    //                         assert(written > remaining.len);
+    //                     } else {
+    //                         const written = caller.decoder.decodeMissing(voice_read.data, false);
+    //                         assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+    //                         assert(written > remaining.len);
+    //                     }
+
+    //                     @memcpy(remaining, voice_read.data.ptr);
+    //                     voice_read.write_index = awebo.opus.PACKET_SAMPLE_COUNT;
+    //                     voice_read.read_index = remaining.len;
+
+    //                     return;
+    //                 }
+    //             },
+    //         }
+    //         comptime unreachable;
+    //     }
+    // }
 };
 
 /// Audio is initialized by the Core logic thread after the rest of core
