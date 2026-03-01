@@ -17,6 +17,8 @@ pub const debug = if (builtin.mode != .Debug) void else struct {
     pub var send_bad_capture_packet: std.atomic.Value(bool) = .init(false);
     pub var drop_next_media_packets: std.atomic.Value(usize) = .init(0);
     var remaining_packets_to_drop: usize = 0;
+    var dred_decoder: *awebo.opus.DredDecoder = undefined;
+    var dred_state: *awebo.opus.DredState = undefined;
 };
 
 pub const HostConnectMode = union(enum) {
@@ -516,6 +518,11 @@ pub fn runHostMediaSender(
 
     awebo.network_utils.setCurrentThreadRealtime();
 
+    if (debug != void) {
+        debug.dred_decoder = try .create();
+        debug.dred_state = try .create();
+    }
+
     var sequence: u32 = 0;
     var restart: u32 = 1;
     while (true) {
@@ -531,6 +538,12 @@ pub fn runHostMediaSender(
                 log.debug("<<SETTING CAPTURE PACKET SEQ TO {}>>", .{new_seq});
                 sequence = new_seq;
             }
+
+            // if (debug.dred_decoder.parse(debug.dred_state, read.data, .deferred)) |info| {
+            //     log.debug("outbound dred = {any}", .{info});
+            // } else |err| {
+            //     log.debug("outbound dred err = {t}", .{err});
+            // }
         }
 
         sequence += 1;
@@ -546,6 +559,7 @@ pub fn runHostMediaSender(
 
         var buf: [1280]u8 = undefined;
         const buf_ptr: [*]u8 = &buf;
+        assert(read.data.len + @sizeOf(awebo.protocol.media.Header) <= buf.len);
         @memcpy(buf_ptr, std.mem.asBytes(&header));
         @memcpy(buf_ptr + header_size, read.data);
         core.audio.capture_packets.commitRead(read);

@@ -3,13 +3,15 @@ const JitterBuffer = @This();
 const std = @import("std");
 const Io = std.Io;
 const assert = std.debug.assert;
+const awebo = @import("../../awebo.zig");
+
 const log = std.log.scoped(.jitter);
 
 /// Space for buffered packets. Must be a power of 2.
 const buffer_len: usize = 16;
 /// Number of packets that must be present in the buffer
 /// before we start playing. Must be lower than `buffer_len`
-const start_count = 8; // 5 packets @ 20ms = 100ms jitter
+const start_count = 5; // 5 packets @ 20ms = 100ms jitter
 comptime {
     assert(std.math.isPowerOfTwo(buffer_len));
     assert(start_count < buffer_len);
@@ -40,11 +42,19 @@ current_restart: u32 = 0,
 expected_next_seq: u32 = 0,
 last_buffer_len: u32 = start_count,
 max_deficit: u32 = 0,
+dred_state: *awebo.opus.DredState,
+dred_decoder: *awebo.opus.DredDecoder,
 
 /// Shared (atomic)
-packets: PlaybackPacketRing = .empty,
+packets: PlaybackPacketRing,
 
-pub const init: JitterBuffer = .{};
+pub fn init() JitterBuffer {
+    return .{
+        .dred_state = awebo.opus.DredState.create() catch @panic("oom"),
+        .dred_decoder = awebo.opus.DredDecoder.create() catch @panic("oom"),
+        .packets = .init,
+    };
+}
 
 /// This function is meant to be called by the network thread.
 pub fn writePacket(jb: *JitterBuffer, io: Io, restart: u32, seq: u32, data: []const u8) void {
@@ -60,41 +70,62 @@ pub fn writePacket(jb: *JitterBuffer, io: Io, restart: u32, seq: u32, data: []co
             .seq = seq,
         };
         log.debug("stats: restart", .{});
+
+        // On restart just write the packet and never process DRED.
+        // We're starting from silence and there cannot be missing data.
+        jb.packets.write(restart, seq, data) catch {
+            log.warn("dropping audio packet, audio thread is too slow!", .{});
+        };
     } else {
         const delta = jb.stats.start_time.addDuration(
-            .fromMilliseconds(20 * (jb.stats.seq)),
+            .fromMilliseconds(20 * (seq)),
         ).durationTo(Io.Clock.real.now(io)).toMilliseconds();
 
         if (delta < 0) {
             jb.stats.start_time = jb.stats.start_time.addDuration(.fromMilliseconds(delta));
         }
 
-        log.debug("stats: packet jitter = {}ms {s} ({})", .{
+        log.debug("stats: packet jitter = {}ms ({})", .{
             delta,
-            if (seq == jb.stats.seq + 1)
-                ""
-            else
-                "LATE",
             seq,
         });
 
-        jb.stats.seq += 1;
+        jb.packets.write(restart, seq, data) catch {
+            log.warn("dropping audio packet, audio thread is too slow!", .{});
+        };
     }
-
-    jb.packets.write(restart, seq, data) catch {
-        log.warn("dropping audio packet, audio thread is too slow!", .{});
-    };
 }
 
 const NextPacket = union(enum) {
     /// When starting we should play silence.
     starting,
+
     /// Contains a compressed opus packet.
-    /// If payload is null it means that the packet was lost.
-    playing: ?Playing,
+    /// If packet loss happened, this is the subsequent packet
+    /// from the same restart and it contains FEC data.
+    /// Use the Opus decoder with a matching fec setting.
+    playing: Playing,
+
+    /// Packet loss happened, this is a future packet
+    /// from the same restart that you should get DRED
+    /// samples from.
+    dred: Dred,
+
+    /// Packet is missing and there is no future packet
+    /// available for DRED, play silence through Opus.
+    missing,
 
     const Playing = struct {
         r: usize,
+        data: []const u8,
+        fec: bool,
+    };
+
+    const Dred = struct {
+        // Distance in samples between the (missing) current packet
+        // and the future packet we're using for DRED.
+        // Guaranteed to be within the DRED window.
+        distance_samples: u32,
         data: []const u8,
     };
 };
@@ -114,7 +145,7 @@ pub fn nextPacketBegin(jb: *JitterBuffer) NextPacket {
         .starting => return .starting,
         .buffering => {
             jb.expected_next_seq += 1;
-            return .{ .playing = null };
+            return .missing;
         },
         .playing => {},
     }
@@ -129,6 +160,33 @@ pub fn nextPacketBegin(jb: *JitterBuffer) NextPacket {
         if (next_meta.restart < jb.current_restart) {
             continue;
         }
+
+        if (jb.packets.dred[n] == -1) {
+            if (jb.dred_decoder.parse(
+                jb.dred_state,
+                jb.packets.data[n].slice(),
+                48000,
+                .deferred,
+            )) |info| {
+                jb.packets.dred[n] = @intCast(info.available);
+            } else |err| {
+                log.err("error parsing dred: {t}", .{err});
+                // jb.expected_next_seq += 1;
+                // if (idx > 1) jb.packets.commitRead(packet_slices.read_index + idx - 1);
+                // return .missing;
+            }
+        }
+        // {
+        //     if (jb.dred_decoder.parse(
+        //         jb.dred_state,
+        //         48000,
+        //         .deferred,
+        //     )) |info| {
+        //         log.debug("dred info ({}) = {any}", .{ next_meta.seq, info });
+        //     } else |err| {
+        //         log.err("error parsing dred: {t}", .{err});
+        //     }
+        // }
 
         if (next_meta.restart > jb.current_restart) {
             jb.state = .starting;
@@ -175,13 +233,61 @@ pub fn nextPacketBegin(jb: *JitterBuffer) NextPacket {
                 .playing = .{
                     .data = jb.packets.data[n].slice(),
                     .r = packet_slices.read_index + idx,
+                    .fec = false,
                 },
             };
         }
 
+        // Packet loss but we have a future packet on hand.
+        // To perform FEC or DRED the packet must be in the current restart.
+        if (next_meta.restart != jb.current_restart) {
+            jb.expected_next_seq += 1;
+            if (idx > 1) jb.packets.commitRead(packet_slices.read_index + idx - 1);
+            return .missing;
+        }
+
+        assert(jb.expected_next_seq < next_meta.seq);
+
+        const data = jb.packets.data[n].slice();
+        const distance_packets = next_meta.seq - jb.expected_next_seq;
+        log.debug("distance packets = {}", .{distance_packets});
+        if (awebo.opus.FEC and distance_packets == 1) {
+            jb.expected_next_seq += 1;
+            if (idx > 1) jb.packets.commitRead(packet_slices.read_index + idx - 1);
+            return .{
+                .playing = .{
+                    .data = jb.packets.data[n].slice(),
+                    .r = undefined,
+                    .fec = true,
+                },
+            };
+        }
+        const distance_samples = distance_packets * awebo.opus.PACKET_SAMPLE_COUNT;
+
+        const available = jb.packets.dred[n];
+        log.debug("used dred needed = {} available= {}", .{ distance_samples, available });
+
+        const not_enough = available < distance_samples;
+        if (not_enough) {
+            log.debug(
+                "packet available for dred, but it has not enough data: needed = {} had = {}",
+                .{ distance_samples, available },
+            );
+            jb.expected_next_seq += 1;
+            if (idx > 1) jb.packets.commitRead(packet_slices.read_index + idx - 1);
+            return .missing;
+        }
+
+        const next: NextPacket = .{
+            .dred = .{
+                .distance_samples = distance_samples,
+                .data = data,
+            },
+        };
+
         jb.expected_next_seq += 1;
         if (idx > 1) jb.packets.commitRead(packet_slices.read_index + idx - 1);
-        return .{ .playing = null };
+        return next;
     };
 
     // We looked through the full buffer and only found old data
@@ -189,10 +295,11 @@ pub fn nextPacketBegin(jb: *JitterBuffer) NextPacket {
     jb.packets.commitRead(packet_slices.read_index + idx);
     jb.expected_next_seq += 1;
     jb.state = .buffering;
-    return .{ .playing = null };
+    return .missing;
 }
 
 pub fn nextPacketCommit(jb: *JitterBuffer, playing: NextPacket.Playing) void {
+    if (playing.fec) return;
     jb.packets.commitRead(playing.r);
 }
 
@@ -203,6 +310,7 @@ const PlaybackPacketRing = struct {
     /// SoA-style Packet representation
     meta: [buffer_len]struct { seq: u32, restart: u32 } = undefined,
     data: [buffer_len]Data = undefined,
+    dred: [buffer_len]i32 = @splat(-1),
 
     /// This data structure operates similarly to a ring buffer.
     read_index: std.atomic.Value(usize) = .init(0),
@@ -216,7 +324,12 @@ const PlaybackPacketRing = struct {
         }
     };
 
-    pub const empty: PlaybackPacketRing = .{};
+    // pub const DredPacket = struct {
+    //     state: *awebo.opus.DredState,
+    //     info: awebo.opus.DredInfo = undefined,
+    // };
+
+    pub const init: PlaybackPacketRing = .{};
     pub const RingIndex = std.math.IntFittingRange(0, buffer_len);
 
     pub fn write(pb: *PlaybackPacketRing, restart: u32, seq: u32, data: []const u8) !void {
@@ -226,6 +339,7 @@ const PlaybackPacketRing = struct {
 
         pb.meta[mask(w)] = .{ .restart = restart, .seq = seq };
         pb.data[mask(w)].len = data.len;
+        pb.dred[mask(w)] = -1;
         const buf: [*]u8 = &pb.data[mask(w)].buf;
         assert(data.len <= pb.data[mask(w)].buf.len);
         @memcpy(buf, data);
@@ -233,6 +347,43 @@ const PlaybackPacketRing = struct {
         pb.indexes[mask(w)] = @intCast(mask(w));
         pb.write_index.store(mask2(w + 1), .release);
     }
+
+    pub const DredWrite = struct {
+        state: *awebo.opus.DredState,
+        info: *awebo.opus.DredInfo,
+        w: usize,
+    };
+
+    // pub fn writeDredBegin(pb: *PlaybackPacketRing) !DredWrite {
+    //     const w = pb.write_index.load(.acquire);
+    //     const r = pb.read_index.load(.acquire);
+    //     if (mask2(w + buffer_len) == r) return error.Full;
+
+    //     const dred = &pb.dred[mask(w)];
+    //     return .{
+    //         .state = dred.state,
+    //         .info = &dred.info,
+    //         .w = w,
+    //     };
+    // }
+
+    // pub fn writeDredCommit(
+    //     pb: *PlaybackPacketRing,
+    //     restart: u32,
+    //     seq: u32,
+    //     data: []const u8,
+    //     dw: DredWrite,
+    // ) !void {
+    //     const w = dw.w;
+    //     pb.meta[mask(w)] = .{ .restart = restart, .seq = seq };
+    //     pb.data[mask(w)].len = data.len;
+    //     const buf: [*]u8 = &pb.data[mask(w)].buf;
+    //     assert(data.len <= pb.data[mask(w)].buf.len);
+    //     @memcpy(buf, data);
+
+    //     pb.indexes[mask(w)] = @intCast(mask(w));
+    //     pb.write_index.store(mask2(w + 1), .release);
+    // }
 
     pub const Slices = struct {
         read_index: usize,
