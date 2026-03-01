@@ -168,7 +168,6 @@ pub fn setupGui(
         .assertions = optimize == .Debug,
         .@"deep-plc" = true,
         .osce = true,
-        .@"osce-training" = true,
     });
 
     const opus_tools = b.dependency("opus_tools", .{
@@ -272,7 +271,6 @@ pub fn setupTui(
         .assertions = optimize == .Debug,
         .@"deep-plc" = true,
         .osce = true,
-        .@"osce-training" = true,
     });
 
     const opus_tools = b.dependency("opus_tools", .{
