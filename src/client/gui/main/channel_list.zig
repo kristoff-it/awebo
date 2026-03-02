@@ -440,7 +440,10 @@ fn renderVoiceChannel(h: *awebo.Host, core: *Core, v: *const Channel, idx: usize
 
         const bg_color: ?dvui.Color = if (speaking) .yellow else null;
 
-        dvui.labelNoFmt(@src(), m.display_name, .{}, .{
+        dvui.label(@src(), "{s}{s}", .{
+            m.display_name,
+            if (caller.state.muted) " [M]" else "",
+        }, .{
             .font = .theme(.title),
             .id_extra = caller.id,
             .color_text = text_color,

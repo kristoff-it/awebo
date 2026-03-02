@@ -267,6 +267,11 @@ fn runClientTcpRead(io: Io, gpa: Allocator, client: *Client) !void {
                     log.err("error processing CallJoin: {t}", .{err});
                 };
             },
+            .CallUpdate => {
+                client.callUpdateRequest(io, gpa, reader) catch |err| {
+                    log.err("error processing CallUpdate: {t}", .{err});
+                };
+            },
             .CallLeave => {
                 client.callLeaveRequest(io, gpa, reader) catch |err| {
                     log.err("error processing CallLeave: {t}", .{err});
@@ -407,6 +412,7 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
                             .id = @intCast(client.udp.?.id),
                             .voice = client.voice.?.id,
                             .user = client.authenticated.?,
+                            .state = .{},
                         },
                         .action = .join,
                     };
@@ -756,7 +762,10 @@ const Client = struct {
             );
             errdefer assert(state.clients.voice_index.remove(cmd.voice));
 
-            try gop.value_ptr.put(gpa, client, {});
+            try gop.value_ptr.put(gpa, client, .{
+                .muted = cmd.muted,
+                .deafened = cmd.deafened,
+            });
         }
 
         const mcd: awebo.protocol.server.MediaConnectionDetails = .{
@@ -772,6 +781,69 @@ const Client = struct {
         try client.tcp.queue.putOne(io, msg);
     }
 
+    fn callUpdateRequest(client: *Client, io: Io, gpa: Allocator, reader: *Io.Reader) !void {
+        const log = client.scopedLog();
+
+        const cmd = try awebo.protocol.client.CallUpdate.deserialize(reader);
+
+        {
+            const locked = lockState(io);
+            defer locked.unlock(io);
+            const state = locked.state;
+
+            {
+                const gop = try state.user_limits.getOrPut(gpa, client.authenticated.?);
+                if (!gop.found_existing) gop.value_ptr.* = .init(io, .user_action);
+
+                const limiter = gop.value_ptr;
+
+                limiter.takeToken(io, .user_action) catch {
+                    log.debug("user {} exceeded user action limit", .{client.authenticated.?});
+                    const fail: awebo.protocol.server.ClientRequestReply = .{
+                        .origin = 0,
+                        .reply_marker = awebo.protocol.client.CallUpdate.marker,
+                        .result = .rate_limit,
+                    };
+
+                    const bytes = try fail.serializeAlloc(gpa);
+
+                    const msg: *TcpMessage = .create(gpa, bytes, 1);
+                    try client.tcp.queue.putOne(io, msg);
+                };
+            }
+
+            const voice = client.voice orelse {
+                log.debug("client sent an update while not in a call", .{});
+                return;
+            };
+
+            const room = state.clients.voice_index.getPtr(voice.id) orelse {
+                log.debug("client sent an update while in a call but the room didn't exist!", .{});
+                return;
+            };
+            const caller_state = room.getPtr(client) orelse {
+                log.debug("client sent an update while in a call but there was no corresponding awebo.Caller!", .{});
+                return;
+            };
+
+            caller_state.muted = cmd.muted;
+            caller_state.deafened = cmd.deafened;
+            const udp = client.udp orelse return;
+
+            const cu: awebo.protocol.server.CallersUpdate = .{
+                .caller = .{
+                    .id = @intCast(udp.id),
+                    .voice = voice.id,
+                    .user = client.authenticated.?,
+                    .state = caller_state.*,
+                },
+                .action = .update,
+            };
+
+            const bytes = cu.serializeAlloc(gpa) catch @panic("oom");
+            state.tcpBroadcast(io, gpa, bytes);
+        }
+    }
     fn callLeaveRequest(client: *Client, io: Io, gpa: Allocator, reader: *Io.Reader) !void {
         const log = client.scopedLog();
 
@@ -1107,7 +1179,7 @@ var ___state: struct {
         /// Not all clients listed here have a UDP address yet.
         voice_index: std.AutoHashMapUnmanaged(
             awebo.Channel.Id,
-            std.AutoArrayHashMapUnmanaged(*Client, void),
+            std.AutoArrayHashMapUnmanaged(*Client, awebo.Caller.State),
         ) = .{},
 
         fn deinit(self: *@This(), gpa: Allocator) void {
@@ -1285,6 +1357,7 @@ var ___state: struct {
                 .id = @intCast(udp.id),
                 .voice = vid,
                 .user = client.authenticated.?,
+                .state = .{},
             },
             .action = .leave,
         };

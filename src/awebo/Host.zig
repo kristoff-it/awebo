@@ -120,6 +120,7 @@ pub fn computeDelta(
             .id = udp.id,
             .user = uid,
             .voice = voice.id,
+            .state = clients.voice_index.get(voice.id).?.get(c) orelse .{},
         });
     }
 

@@ -747,7 +747,12 @@ pub fn callJoin(
 
     log.debug("call join: '{}'", .{voice_id});
 
-    const cj: awebo.protocol.client.CallJoin = .{ .voice = voice_id, .origin = core.now() };
+    const cj: awebo.protocol.client.CallJoin = .{
+        .voice = voice_id,
+        .origin = core.now(),
+        .muted = core.audio.capture_mute_state == .muted,
+        .deafened = core.audio.playback_mute_state == .muted,
+    };
     const bytes = try cj.serializeAlloc(gpa);
     errdefer gpa.free(bytes);
 
@@ -789,7 +794,18 @@ pub fn callSetMute(core: *Core, new_state: Audio.DeviceMuteState) void {
         return;
     };
     ac.muted = new_state;
-    if (transition) core.refresh(core, @src(), 0);
+    if (transition) {
+        const host = core.hosts.get(ac.host_id).?;
+        const msg: awebo.protocol.client.CallUpdate = .{
+            .muted = new_state == .muted,
+            .deafened = false,
+        };
+        const bytes = msg.serializeAlloc(core.gpa) catch oom();
+        host.client.connection.?.tcp.queue.putOne(core.io, bytes) catch {
+            log.debug("unable to push message!", .{});
+        };
+        core.refresh(core, @src(), 0);
+    }
 }
 
 pub fn callLeave(core: *Core) !void {

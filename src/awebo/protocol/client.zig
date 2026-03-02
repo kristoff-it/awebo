@@ -5,6 +5,7 @@ const User = @import("../User.zig");
 const Host = @import("../Host.zig");
 const Message = @import("../Message.zig");
 const Channel = @import("../Channel.zig");
+const Caller = @import("../Caller.zig");
 
 pub const OriginId = u64;
 
@@ -128,11 +129,24 @@ pub const SignUp = struct {
 pub const CallJoin = struct {
     origin: OriginId,
     voice: Channel.Id,
+    muted: bool,
+    deafened: bool,
 
     pub const marker = 'J';
     pub const serialize = proto.MakeSerializeFn(CallJoin);
     pub const serializeAlloc = proto.MakeSerializeAllocFn(CallJoin);
     pub const deserialize = proto.MakeDeserializeFn(CallJoin);
+    pub const protocol = struct {};
+};
+
+pub const CallUpdate = struct {
+    muted: bool,
+    deafened: bool,
+
+    pub const marker = 'k';
+    pub const serialize = proto.MakeSerializeFn(@This());
+    pub const serializeAlloc = proto.MakeSerializeAllocFn(@This());
+    pub const deserialize = proto.MakeDeserializeFn(@This());
     pub const protocol = struct {};
 };
 

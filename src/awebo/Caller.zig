@@ -10,15 +10,22 @@ pub const Id = u16;
 id: Id,
 user: User.Id,
 voice: Channel.Id,
-screensharing: bool = false,
-status: Status = .none,
+state: State,
 
-pub const Status = enum(u8) {
-    none,
-    muted,
-    server_muted,
-    deafened,
-    server_deafened,
+pub const State = struct {
+    muted: bool = false,
+    muted_server: bool = false,
+    deafened: bool = false,
+
+    pub const protocol = struct {};
 };
+
+// pub const AudioState = enum(u8) {
+//     none,
+//     muted,
+//     server_muted,
+//     deafened,
+//     server_deafened,
+// };
 
 pub const protocol = struct {};
