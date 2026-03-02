@@ -25,7 +25,7 @@ pub const Encoder = opaque {
         try checkErr(err);
 
         if (FEC) {
-            err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_INBAND_FEC_REQUEST, true);
+            err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_INBAND_FEC_REQUEST, @as(c_int, 1));
             try checkErr(err);
         }
 
