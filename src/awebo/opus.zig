@@ -35,7 +35,7 @@ pub const Encoder = opaque {
             try checkErr(err);
         }
 
-        err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_DTX_REQUEST, true);
+        err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_DTX_REQUEST, @as(c_int, 1));
         try checkErr(err);
         err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_BITRATE_REQUEST, @as(c_int, 64000));
         try checkErr(err);
