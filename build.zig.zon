@@ -14,12 +14,8 @@
             .lazy = true,
         },
         .opus = .{
-            .url = "git+https://github.com/allyourcodebase/opus#7ff03217be5d180d87c80b92e09dd84ac0be843a",
-            .hash = "opus-0.0.2-vuF-cGkwAABxAJH9g0HAsrGYGvcn4Qx3uqXc1FMe6uVd",
-        },
-        .opus_tools = .{
-            .url = "git+https://github.com/allyourcodebase/opus-tools#40dc7cc3632c5b76b53c79455f0aa1b9b795f749",
-            .hash = "opus_tools-0.0.2-ERo7OrcyAABTrIDA_Er6oZ0S5OzxXN0N3bLw4mtftHnA",
+            .url = "git+https://github.com/allyourcodebase/opus#b6462e9a9948c6d94787b899374c23bc1b527c97",
+            .hash = "opus-0.0.2-vuF-cM1QAADDkw1UZlGEk37xGmPuqOofkgkY0caAPbz9",
         },
         .zqlite = .{
             .url = "git+https://github.com/andrewrk/zqlite.zig.git#205dcc49a212b27e5a78868cda09135d0945fc7a",

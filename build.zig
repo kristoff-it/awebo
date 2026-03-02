@@ -163,16 +163,13 @@ pub fn setupGui(
 
     const opus = b.dependency("opus", .{
         .target = target,
-        .optimize = optimize,
+        .optimize = dep_optimize,
         .dred = true,
         .assertions = optimize == .Debug,
         .@"deep-plc" = true,
         .osce = true,
-    });
-
-    const opus_tools = b.dependency("opus_tools", .{
-        .target = target,
-        .optimize = dep_optimize,
+        .@"osce-bwe" = true,
+        .@"float-approx" = true,
     });
 
     const folders = b.dependency("known_folders", .{
@@ -198,7 +195,6 @@ pub fn setupGui(
     gui.root_module.addImport("folders", folders.module("known-folders"));
     gui.root_module.addImport("zeit", zeit.module("zeit"));
     gui.root_module.linkLibrary(opus.artifact("opus"));
-    gui.root_module.linkLibrary(opus_tools.artifact("opus-tools"));
     addSqlite(gui, zqlite, .client);
 
     switch (target.result.os.tag) {
@@ -271,12 +267,10 @@ pub fn setupTui(
         .assertions = optimize == .Debug,
         .@"deep-plc" = true,
         .osce = true,
+        .@"osce-bwe" = true,
+        .@"float-approx" = true,
     });
 
-    const opus_tools = b.dependency("opus_tools", .{
-        .target = target,
-        .optimize = dep_optimize,
-    });
 
     const folders = b.dependency("known_folders", .{
         .target = target,
@@ -302,7 +296,6 @@ pub fn setupTui(
     tui.root_module.addImport("folders", folders.module("known-folders"));
     tui.root_module.addImport("zeit", zeit.module("zeit"));
     tui.root_module.linkLibrary(opus.artifact("opus"));
-    tui.root_module.linkLibrary(opus_tools.artifact("opus-tools"));
     addSqlite(tui, zqlite, .client);
     switch (target.result.os.tag) {
         .macos => {

@@ -41,8 +41,8 @@ pub const Encoder = opaque {
         try checkErr(err);
         err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_PACKET_LOSS_PERC_REQUEST, @as(c_int, 50));
         try checkErr(err);
-        // err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_DRED_DURATION_REQUEST, DRED_DURATION);
-        // try checkErr(err);
+        err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_DRED_DURATION_REQUEST, DRED_DURATION);
+        try checkErr(err);
 
         return @ptrCast(h.?);
     }
