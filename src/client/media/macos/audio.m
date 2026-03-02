@@ -71,6 +71,7 @@ void audioRequestCapturePermission(void *userdata) {
         }
       }];
 }
+
 // ---------------------------------------------------------------------------
 
 static const double kSampleRate = 48000.0;
@@ -142,6 +143,34 @@ void *audioManagerInit(void *userdata) {
   return (__bridge_retained void *)manager;
 }
 void audioManagerDeinit(void *ptr) {}
+
+// Returns true on success
+bool audioSetCaptureMuteState(void *ptr, UInt32 state) {
+  AudioEngineManager *manager = (__bridge AudioEngineManager *)ptr;
+  NSError *error = nil;
+
+  if (state == 0) {
+    NSLog(@"muting microphone");
+    manager.engine.inputNode.volume = 0;
+    if (noErr != [AVAudioApplication.sharedInstance setInputMuted:true
+                                                            error:&error]) {
+      NSLog(@"error muting microphone: %@", error);
+      return false;
+    }
+  } else if (state == 1) {
+    NSLog(@"unmuting microphone");
+    manager.engine.inputNode.volume = 1;
+    if (noErr != [AVAudioApplication.sharedInstance setInputMuted:false
+                                                            error:&error]) {
+      NSLog(@"error unmuting microphone: %@", error);
+      return false;
+    }
+  } else {
+    __builtin_unreachable();
+  }
+
+  return true;
+}
 
 void audioCallBegin(void *ptr, void *userdata) {
   AudioEngineManager *manager = (__bridge AudioEngineManager *)ptr;

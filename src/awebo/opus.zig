@@ -18,10 +18,16 @@ pub const PACKET_SAMPLE_COUNT = PACKET_FRAME_COUNT * CHANNELS;
 pub const DRED_DURATION: c_int = 100; // number of 10ms mini-packets
 pub const FEC = true;
 
+pub fn packetHasLbrr(data: []const u8) !bool {
+    const result = opus_h.opus_packet_has_lbrr(data.ptr, @intCast(data.len));
+    try checkErr(result);
+    return result == 1;
+}
+
 pub const Encoder = opaque {
     pub fn create() !*Encoder {
         var err: c_int = undefined;
-        const h = opus_h.opus_encoder_create(FREQ, CHANNELS, opus_h.OPUS_APPLICATION_VOIP, &err);
+        const h = opus_h.opus_encoder_create(FREQ, CHANNELS, opus_h.OPUS_APPLICATION_AUDIO, &err);
         try checkErr(err);
 
         if (FEC) {
@@ -29,10 +35,14 @@ pub const Encoder = opaque {
             try checkErr(err);
         }
 
-        err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_DRED_DURATION_REQUEST, DRED_DURATION);
+        err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_DTX_REQUEST, true);
+        try checkErr(err);
+        err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_BITRATE_REQUEST, @as(c_int, 64000));
         try checkErr(err);
         err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_PACKET_LOSS_PERC_REQUEST, @as(c_int, 50));
         try checkErr(err);
+        // err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_DRED_DURATION_REQUEST, DRED_DURATION);
+        // try checkErr(err);
 
         return @ptrCast(h.?);
     }

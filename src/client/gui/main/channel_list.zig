@@ -477,9 +477,13 @@ fn joinedVoice(core: *Core) !void {
             });
         }
 
-        const mute_label = if (call.muted) "Unmute" else "Mute";
+        const mute_label = switch (call.muted) {
+            .muted => "Unmute",
+            .unmuted => "Mute",
+        };
+
         if (dvui.button(@src(), mute_label, .{}, .{ .expand = .vertical })) {
-            core.callMuteToggle();
+            core.callSetMute(call.muted.not());
         }
 
         if (dvui.button(@src(), "Leave", .{}, .{ .expand = .vertical })) {
@@ -570,8 +574,8 @@ fn renderAVDebugWindow(core: *Core) void {
         @import("../../Core/network.zig").debug.drop_next_media_packets.store(1, .release);
     }
 
-    if (dvui.button(@src(), "Drop next incoming 5 media packets", .{}, .{})) {
-        @import("../../Core/network.zig").debug.drop_next_media_packets.store(5, .release);
+    if (dvui.button(@src(), "Drop next incoming 3 media packets", .{}, .{})) {
+        @import("../../Core/network.zig").debug.drop_next_media_packets.store(3, .release);
     }
 
     if (dvui.button(@src(), "Send bad capture packet", .{}, .{})) {

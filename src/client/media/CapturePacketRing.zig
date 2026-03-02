@@ -15,7 +15,7 @@ read_index: std.atomic.Value(usize) = .init(0),
 write_index: std.atomic.Value(usize) = .init(0),
 
 pub const Data = struct {
-    power: f32,
+    silence: bool,
     buf: [1280]u8,
     len: usize,
 
@@ -59,7 +59,7 @@ pub fn commitWrite(cpr: *CapturePacketRing, write: Write) void {
 pub const Read = struct {
     r: usize,
     data: []const u8,
-    power: f32,
+    silence: bool,
 };
 
 /// This function is meant to be called by the network thread.
@@ -75,7 +75,7 @@ pub fn beginRead(cpr: *CapturePacketRing) ?Read {
     return .{
         .r = r,
         .data = data.readSlice(),
-        .power = data.power,
+        .silence = data.silence,
     };
 }
 

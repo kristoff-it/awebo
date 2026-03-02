@@ -12,13 +12,24 @@ const RingBuffer = @import("../RingBuffer.zig").RingBuffer;
 const CapturePacketRing = @import("CapturePacketRing.zig");
 const log = std.log.scoped(.audio);
 
-const SourceKind = enum(u32) { mono = 1, stereo = 2 };
+pub const DeviceMuteState = enum(u32) {
+    muted = 0,
+    unmuted = 1,
+
+    pub fn not(dms: DeviceMuteState) DeviceMuteState {
+        return switch (dms) {
+            .muted => .unmuted,
+            .unmuted => .muted,
+        };
+    }
+};
 pub const CapturePermission = enum(u32) {
     unknown = 0,
     denied = 1,
     granted = 2,
     requesting = 3,
 };
+const SourceKind = enum(u32) { mono = 1, stereo = 2 };
 
 const playback_rate: f64 = 48000.0;
 const playback_channels: u32 = 2;
@@ -38,7 +49,9 @@ capture_selected: ?usize = null,
 capture_default: ?usize = null,
 /// Volume from awebo user settings
 capture_volume: f32 = 1.0,
-capture_threshold: f32 = 0.2,
+capture_mute_state: DeviceMuteState = .unmuted,
+capture_threshold: std.atomic.Value(f32) = .init(0.2),
+capture_silence_count: u32 = 10,
 capture_stream: Stream(f32, 1),
 capture_encoder: *awebo.opus.Encoder,
 capture_packets: CapturePacketRing = .empty,
@@ -47,6 +60,7 @@ capture_packets: CapturePacketRing = .empty,
 playback_selected: ?usize = null,
 playback_default: ?usize = null,
 playback_volume: f32 = 1.0,
+playback_mute_state: DeviceMuteState = .unmuted,
 playback_stream: Stream(f32, 2),
 playback_decoder: *awebo.opus.Decoder,
 playback_voice_processing: bool = false,
@@ -217,73 +231,6 @@ pub const Caller = struct {
             comptime unreachable;
         }
     }
-    // fn playbackSourceMonoFill(caller: *Caller, samples: [*]f32, frame_count: u32) callconv(.c) void {
-    //     const voice_read = &caller.voice.channels[0];
-    //     const available_count = voice_read.len();
-    //     const s = samples[0..@min(frame_count, available_count)];
-    //     voice_read.readFirstAssumeCount(s, s.len);
-
-    //     var remaining = samples[s.len..frame_count];
-    //     while (remaining.len != 0) {
-    //         assert(voice_read.len() == 0); // invariant leveraged below
-    //         switch (caller.packets.nextPacketBegin()) {
-    //             .starting => {
-    //                 @memset(remaining, 0);
-    //                 return;
-    //             },
-    //             .playing => |maybe_playing| {
-    //                 if (remaining.len >= awebo.opus.PACKET_SAMPLE_COUNT) {
-    //                     if (maybe_playing) |playing| {
-    //                         const written = caller.decoder.decodeFloat(
-    //                             playing.data,
-    //                             remaining,
-    //                             false,
-    //                         ) catch |err| {
-    //                             log.debug("error parsing opus data: {t}", .{err});
-    //                             @memset(remaining, 0);
-    //                             return;
-    //                         };
-    //                         assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
-    //                         caller.packets.nextPacketCommit(playing);
-    //                     } else {
-    //                         const written = caller.decoder.decodeMissing(remaining, false);
-    //                         assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
-    //                     }
-    //                     remaining = remaining[awebo.opus.PACKET_SAMPLE_COUNT..];
-    //                     continue;
-    //                 } else {
-    //                     assert(voice_read.data.len >= awebo.opus.PACKET_SAMPLE_COUNT);
-    //                     if (maybe_playing) |playing| {
-    //                         const written = caller.decoder.decodeFloat(
-    //                             playing.data,
-    //                             voice_read.data,
-    //                             false,
-    //                         ) catch |err| {
-    //                             log.debug("error parsing opus data: {t}", .{err});
-    //                             @memset(remaining, 0);
-    //                             return;
-    //                         };
-
-    //                         caller.packets.nextPacketCommit(playing);
-    //                         assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
-    //                         assert(written > remaining.len);
-    //                     } else {
-    //                         const written = caller.decoder.decodeMissing(voice_read.data, false);
-    //                         assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
-    //                         assert(written > remaining.len);
-    //                     }
-
-    //                     @memcpy(remaining, voice_read.data.ptr);
-    //                     voice_read.write_index = awebo.opus.PACKET_SAMPLE_COUNT;
-    //                     voice_read.read_index = remaining.len;
-
-    //                     return;
-    //                 }
-    //             },
-    //         }
-    //         comptime unreachable;
-    //     }
-    // }
 };
 
 /// Audio is initialized by the Core logic thread after the rest of core
@@ -350,6 +297,14 @@ pub fn ensureCapturePermission(audio: *Audio) CapturePermission {
     return audio.capture_permission;
 }
 
+/// Returns if there was a state transition.
+pub fn setCaptureMute(audio: *Audio, state: DeviceMuteState) error{Failed}!bool {
+    if (audio.capture_mute_state == state) return false;
+    try audio.os.setCaptureMute(state);
+    audio.capture_mute_state = state;
+    return true;
+}
+
 pub fn setDevices(audio: *Audio) void {
     const input = if (audio.capture_selected) |idx|
         &audio.devices.values()[idx]
@@ -403,11 +358,23 @@ fn capturePush(audio: *Audio, frames: [*]f32, frame_count: u32) callconv(.c) voi
         awebo.opus.PACKET_SAMPLE_COUNT,
     );
 
+    const power = computePower(&pcm);
+    if (power < audio.capture_threshold.load(.unordered)) {
+        audio.capture_silence_count += 1;
+    } else {
+        audio.capture_silence_count = 0;
+    }
+
+    const silence = audio.capture_silence_count > 10;
+    if (silence) {
+        @memset(&pcm, 0);
+    }
+
     const write = audio.capture_packets.beginWrite() orelse {
         log.err("capture buffer is full, network thread is lagging behind!", .{});
         return;
     };
-    write.data.power = computePower(&pcm);
+    write.data.silence = silence;
     write.data.len = audio.capture_encoder.encodeFloat(&pcm, write.data.writeSlice()) catch |err| {
         log.err("opus encoder error: {t}", .{err});
         capture.read_index = 0;
@@ -524,6 +491,10 @@ const MacOsInterface = struct {
     }
     export fn aweboUpdateCapturePermission(ac: *Audio, cp: CapturePermission) void {
         ac.capture_permission = cp;
+    }
+
+    pub fn setCaptureMute(mi: *MacOsInterface, state: DeviceMuteState) error{Failed}!void {
+        return mi.engine.setCaptureMute(state);
     }
 
     pub fn setDevices(mi: *MacOsInterface, input: ?*Device, output: ?*Device, voice: bool) void {
@@ -758,6 +729,13 @@ const MacOsInterface = struct {
             audioManagerDeinit(ae);
         }
 
+        extern fn audioSetCaptureMuteState(*AudioEngineManager, DeviceMuteState) bool;
+        pub fn setCaptureMute(ae: *AudioEngineManager, state: DeviceMuteState) !void {
+            if (!audioSetCaptureMuteState(ae, state)) {
+                return error.Failed;
+            }
+        }
+
         extern fn audioSetDevices(*AudioEngineManager, ca.AudioDeviceID, ca.AudioDeviceID, bool) void;
         pub fn setDevices(ae: *AudioEngineManager, input: ca.AudioDeviceID, output: ca.AudioDeviceID, voice: bool) void {
             audioSetDevices(ae, input, output, voice);
@@ -841,6 +819,7 @@ const DummyInterface = struct {
         return .granted;
     }
     pub fn requestCapturePermission(_: *DummyInterface, _: *Audio) void {}
+    pub fn setCaptureMute(_: *DummyInterface, _: DeviceMuteState) error{Failed}!void {}
     pub fn setDevices(_: *DummyInterface, _: ?*Device, _: ?*Device, _: bool) void {}
     pub fn callBegin(_: *DummyInterface, _: *Audio) void {}
     pub fn playbackSourceAdd(_: *DummyInterface) void {}

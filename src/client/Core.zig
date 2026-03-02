@@ -577,7 +577,7 @@ pub const ActiveCall = struct {
     manager_future: ?Io.Future(void) = null,
     callers: std.AutoArrayHashMapUnmanaged(awebo.Caller.Id, *Audio.Caller),
 
-    muted: bool = false,
+    muted: Audio.DeviceMuteState = .unmuted,
 
     pub const Status = ui.AtomicEnum(true, .intent, &.{
         .connecting,
@@ -782,9 +782,14 @@ pub fn callBeginWebcamShare(core: *Core) !void {
     _ = core.webcam_capture.startCapture();
 }
 
-pub fn callMuteToggle(core: *Core) void {
+pub fn callSetMute(core: *Core, new_state: Audio.DeviceMuteState) void {
     const ac = &(core.active_call orelse return);
-    ac.muted = !ac.muted;
+    const transition = core.audio.setCaptureMute(new_state) catch {
+        log.debug("unable to toggle capture mute state", .{});
+        return;
+    };
+    ac.muted = new_state;
+    if (transition) core.refresh(core, @src(), 0);
 }
 
 pub fn callLeave(core: *Core) !void {

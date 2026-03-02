@@ -35,17 +35,15 @@ state: enum {
     /// are now waiting for the buffer to fill up again
     buffering,
 } = .starting,
-/// Expected next sequence number, 0 essentially means unset,
-/// write() will set it to the seqence number of the first
-/// packet you write.
 current_restart: u32 = 0,
 expected_next_seq: u32 = 0,
 last_buffer_len: u32 = start_count,
 max_deficit: u32 = 0,
 dred_state: *awebo.opus.DredState,
 dred_decoder: *awebo.opus.DredDecoder,
+dred_last_seq: u32 = 0,
 
-/// Shared (atomic)
+/// Shared
 packets: PlaybackPacketRing,
 
 pub fn init() JitterBuffer {
@@ -85,10 +83,10 @@ pub fn writePacket(jb: *JitterBuffer, io: Io, restart: u32, seq: u32, data: []co
             jb.stats.start_time = jb.stats.start_time.addDuration(.fromMilliseconds(delta));
         }
 
-        log.debug("stats: packet jitter = {}ms ({})", .{
-            delta,
-            seq,
-        });
+        // log.debug("stats: packet jitter = {}ms ({})", .{
+        //     delta,
+        //     seq,
+        // });
 
         jb.packets.write(restart, seq, data) catch {
             log.warn("dropping audio packet, audio thread is too slow!", .{});
@@ -152,51 +150,38 @@ pub fn nextPacketBegin(jb: *JitterBuffer) NextPacket {
 
     assert(packet_slices.len() > 0); // invariant
 
+    // {
+    //     var idx: usize = 0;
+    //     for (packet_slices.array()) |slice| for (slice) |n| {
+    //         idx += 1;
+
+    //         const next_meta = jb.packets.meta[n];
+    //         log.debug("[{}] = {} -> (res {} seq {})", .{ idx, n, next_meta.restart, next_meta.seq });
+    //     };
+    // }
+
     var idx: usize = 0;
     for (packet_slices.array()) |slice| for (slice) |n| {
         idx += 1;
+
+        // log.debug("idx = {}", .{idx});
 
         const next_meta = jb.packets.meta[n];
         if (next_meta.restart < jb.current_restart) {
             continue;
         }
 
-        if (jb.packets.dred[n] == -1) {
-            if (jb.dred_decoder.parse(
-                jb.dred_state,
-                jb.packets.data[n].slice(),
-                48000,
-                .deferred,
-            )) |info| {
-                jb.packets.dred[n] = @intCast(info.available);
-            } else |err| {
-                log.err("error parsing dred: {t}", .{err});
-                // jb.expected_next_seq += 1;
-                // if (idx > 1) jb.packets.commitRead(packet_slices.read_index + idx - 1);
-                // return .missing;
-            }
-        }
-        // {
-        //     if (jb.dred_decoder.parse(
-        //         jb.dred_state,
-        //         48000,
-        //         .deferred,
-        //     )) |info| {
-        //         log.debug("dred info ({}) = {any}", .{ next_meta.seq, info });
-        //     } else |err| {
-        //         log.err("error parsing dred: {t}", .{err});
-        //     }
-        // }
-
         if (next_meta.restart > jb.current_restart) {
             jb.state = .starting;
             jb.expected_next_seq = 1;
             jb.current_restart = next_meta.restart;
+            jb.dred_last_seq = 0;
 
             log.debug("after restart max deficit was {}", .{jb.max_deficit});
             jb.last_buffer_len = start_count;
             jb.max_deficit = 0;
-            return .starting;
+            log.debug("restart & return .missing", .{});
+            return .missing;
         }
 
         if (next_meta.seq < jb.expected_next_seq) {
@@ -222,13 +207,10 @@ pub fn nextPacketBegin(jb: *JitterBuffer) NextPacket {
             }
         }
 
-        if (idx > 1) {
-            // If we skipped over some old data, commit those slots as read.
-            jb.packets.commitRead(packet_slices.read_index + idx - 1);
-        }
-
         if (next_meta.seq == jb.expected_next_seq) {
+            log.debug("playing {}", .{jb.expected_next_seq});
             jb.expected_next_seq += 1;
+            if (idx > 1) jb.packets.commitRead(packet_slices.read_index + idx - 1);
             return .{
                 .playing = .{
                     .data = jb.packets.data[n].slice(),
@@ -238,20 +220,13 @@ pub fn nextPacketBegin(jb: *JitterBuffer) NextPacket {
             };
         }
 
-        // Packet loss but we have a future packet on hand.
-        // To perform FEC or DRED the packet must be in the current restart.
-        if (next_meta.restart != jb.current_restart) {
-            jb.expected_next_seq += 1;
-            if (idx > 1) jb.packets.commitRead(packet_slices.read_index + idx - 1);
-            return .missing;
-        }
-
-        assert(jb.expected_next_seq < next_meta.seq);
-
         const data = jb.packets.data[n].slice();
         const distance_packets = next_meta.seq - jb.expected_next_seq;
+        const distance_samples = distance_packets * awebo.opus.PACKET_SAMPLE_COUNT;
         log.debug("distance packets = {}", .{distance_packets});
+
         if (awebo.opus.FEC and distance_packets == 1) {
+            log.debug("return fec!", .{});
             jb.expected_next_seq += 1;
             if (idx > 1) jb.packets.commitRead(packet_slices.read_index + idx - 1);
             return .{
@@ -262,11 +237,35 @@ pub fn nextPacketBegin(jb: *JitterBuffer) NextPacket {
                 },
             };
         }
-        const distance_samples = distance_packets * awebo.opus.PACKET_SAMPLE_COUNT;
+
+        // A late packet arrived but we already committed to a future DRED packet.
+        // Continue until we find it.
+        if (jb.dred_last_seq > next_meta.seq) {
+            continue;
+        }
+
+        // This is the first time we're looking for a DRED packet
+        // so we will need to analyze it fully.
+        if (jb.dred_last_seq < next_meta.seq) {
+            jb.dred_last_seq = next_meta.seq;
+            if (jb.dred_decoder.parse(
+                jb.dred_state,
+                jb.packets.data[n].slice(),
+                48000,
+                // distance_packets + awebo.opus.PACKET_SAMPLE_COUNT,
+                // distance_packets,
+                .eager,
+            )) |info| {
+                jb.packets.dred[n] = @intCast(info.available);
+            } else |err| {
+                log.err("error parsing dred: {t}", .{err});
+            }
+        }
+
+        assert(jb.expected_next_seq < next_meta.seq);
+        assert(jb.dred_last_seq == next_meta.seq);
 
         const available = jb.packets.dred[n];
-        log.debug("used dred needed = {} available= {}", .{ distance_samples, available });
-
         const not_enough = available < distance_samples;
         if (not_enough) {
             log.debug(
@@ -274,7 +273,8 @@ pub fn nextPacketBegin(jb: *JitterBuffer) NextPacket {
                 .{ distance_samples, available },
             );
             jb.expected_next_seq += 1;
-            if (idx > 1) jb.packets.commitRead(packet_slices.read_index + idx - 1);
+            jb.packets.commitRead(packet_slices.read_index + idx - 1);
+            log.debug("failed dred return .missing", .{});
             return .missing;
         }
 
@@ -286,12 +286,15 @@ pub fn nextPacketBegin(jb: *JitterBuffer) NextPacket {
         };
 
         jb.expected_next_seq += 1;
-        if (idx > 1) jb.packets.commitRead(packet_slices.read_index + idx - 1);
+        // Here we cannot commit any read because we're looking
+        // arbitarily far into the future.
+        log.debug("return dred needed = {} available = {}", .{ distance_samples, available });
         return next;
     };
 
     // We looked through the full buffer and only found old data
     // which means we're back to buffering mode.
+    log.debug("buffer underflow, return missing", .{});
     jb.packets.commitRead(packet_slices.read_index + idx);
     jb.expected_next_seq += 1;
     jb.state = .buffering;
@@ -308,7 +311,7 @@ const PlaybackPacketRing = struct {
     indexes: [buffer_len]RingIndex = undefined,
 
     /// SoA-style Packet representation
-    meta: [buffer_len]struct { seq: u32, restart: u32 } = undefined,
+    meta: [buffer_len]struct { restart: u32, seq: u32 } = undefined,
     data: [buffer_len]Data = undefined,
     dred: [buffer_len]i32 = @splat(-1),
 

@@ -72,13 +72,15 @@ pub fn draw(app: *App) !void {
             });
 
             dvui.labelNoFmt(@src(), "Activation Threshold", .{}, .{});
-            const in_treshold = &core.audio.capture_threshold;
+            var in_threshold = core.audio.capture_threshold.load(.unordered);
             _ = dvui.slider(@src(), .{
                 .dir = .horizontal,
-                .fraction = in_treshold,
+                .fraction = &in_threshold,
             }, .{
                 .expand = .horizontal,
             });
+
+            core.audio.capture_threshold.store(in_threshold, .unordered);
 
             const preview = dvui.box(@src(), .{ .dir = .horizontal }, .{
                 .expand = .horizontal,
