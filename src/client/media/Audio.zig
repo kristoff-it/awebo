@@ -12,6 +12,18 @@ const RingBuffer = @import("../RingBuffer.zig").RingBuffer;
 const CapturePacketRing = @import("CapturePacketRing.zig");
 const log = std.log.scoped(.audio);
 
+pub const NoiseGate = enum(u8) {
+    denoiser,
+    threshold,
+
+    pub fn format(ng: NoiseGate, w: *Io.Writer) !void {
+        switch (ng) {
+            .denoiser => try w.writeAll("Denoiser (default)"),
+            .threshold => try w.writeALl("Activation Threshold (advanced)"),
+        }
+    }
+};
+
 pub const DeviceMuteState = enum(u32) {
     muted = 0,
     unmuted = 1,
@@ -51,6 +63,8 @@ capture_default: ?usize = null,
 capture_volume: f32 = 1.0,
 capture_mute_state: DeviceMuteState = .unmuted,
 capture_threshold: std.atomic.Value(f32) = .init(0.2),
+capture_denoiser: *awebo.rnnoise.Denoiser,
+capture_noise_gate: std.atomic.Value(NoiseGate) = .init(.denoiser),
 capture_silence_count: u32 = 10,
 capture_stream: Stream(f32, 1),
 capture_encoder: *awebo.opus.Encoder,
@@ -238,10 +252,12 @@ pub const Caller = struct {
 pub fn init(audio: *Audio, capture_buf: []f32, playback_bufs: [2][]f32) void {
     assert(playback_bufs[0].len == playback_bufs[1].len);
     const capture_encoder = awebo.opus.Encoder.create() catch unreachable;
+    const capture_denoiser = awebo.rnnoise.Denoiser.create() catch unreachable;
     const playback_decoder = awebo.opus.Decoder.create() catch unreachable;
     audio.* = .{
         .capture_permission = .unknown,
         .capture_encoder = capture_encoder,
+        .capture_denoiser = capture_denoiser,
         .capture_stream = .init(.{capture_buf}),
         .playback_stream = .init(playback_bufs),
         .playback_decoder = playback_decoder,
@@ -358,28 +374,57 @@ fn capturePush(audio: *Audio, frames: [*]f32, frame_count: u32) callconv(.c) voi
         awebo.opus.PACKET_SAMPLE_COUNT,
     );
 
-    const power = computePower(&pcm);
-    if (power < audio.capture_threshold.load(.unordered)) {
-        audio.capture_silence_count += 1;
-    } else {
-        audio.capture_silence_count = 0;
-    }
+    const noise_gate = audio.capture_noise_gate.load(.unordered);
 
-    const silence = audio.capture_silence_count > 10;
-    if (silence) {
-        @memset(&pcm, 0);
-    }
+    const silence = switch (noise_gate) {
+        .denoiser => blk: {
+            for (&pcm) |*s| {
+                s.* *= 32768;
+            }
+            const voice1 = audio.capture_denoiser.processFrame(
+                pcm[0..awebo.rnnoise.FRAME_SIZE],
+                pcm[0..awebo.rnnoise.FRAME_SIZE],
+            );
+            const voice2 = audio.capture_denoiser.processFrame(
+                pcm[awebo.rnnoise.FRAME_SIZE..],
+                pcm[awebo.rnnoise.FRAME_SIZE..],
+            );
+
+            for (&pcm) |*s| {
+                s.* /= 32768;
+            }
+
+            break :blk voice1 < 0.7 and voice2 < 0.7;
+        },
+        .threshold => blk: {
+            const threshold = audio.capture_threshold.load(.unordered);
+            const power = computePower(&pcm);
+
+            if (power < threshold) {
+                audio.capture_silence_count += 1;
+            } else {
+                audio.capture_silence_count = 0;
+            }
+
+            const silence = audio.capture_silence_count > 10;
+            if (silence) {
+                @memset(&pcm, 0);
+            }
+
+            break :blk silence;
+        },
+    };
 
     const write = audio.capture_packets.beginWrite() orelse {
         log.err("capture buffer is full, network thread is lagging behind!", .{});
         return;
     };
-    write.data.silence = silence;
     write.data.len = audio.capture_encoder.encodeFloat(&pcm, write.data.writeSlice()) catch |err| {
         log.err("opus encoder error: {t}", .{err});
         capture.read_index = 0;
         capture.write_index = 0;
     };
+    write.data.silence = silence;
 
     audio.capture_packets.commitWrite(write);
 }

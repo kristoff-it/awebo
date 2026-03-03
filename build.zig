@@ -172,6 +172,13 @@ pub fn setupGui(
         .@"float-approx" = true,
     });
 
+    const rnnoise = b.dependency("rnnoise", .{
+        .target = target,
+        .optimize = dep_optimize,
+        .assertions = optimize == .Debug,
+        // .rtcd = true,
+    });
+
     const folders = b.dependency("known_folders", .{
         .target = target,
         .optimize = dep_optimize,
@@ -195,6 +202,7 @@ pub fn setupGui(
     gui.root_module.addImport("folders", folders.module("known-folders"));
     gui.root_module.addImport("zeit", zeit.module("zeit"));
     gui.root_module.linkLibrary(opus.artifact("opus"));
+    gui.root_module.addImport("rnnoise", rnnoise.module("rnnoise"));
     addSqlite(gui, zqlite, .client);
 
     switch (target.result.os.tag) {
@@ -271,6 +279,12 @@ pub fn setupTui(
         .@"float-approx" = true,
     });
 
+    const rnnoise = b.dependency("rnnoise", .{
+        .target = target,
+        .optimize = dep_optimize,
+        .assertions = optimize == .Debug,
+        // .rtcd = true,
+    });
 
     const folders = b.dependency("known_folders", .{
         .target = target,
@@ -296,6 +310,7 @@ pub fn setupTui(
     tui.root_module.addImport("folders", folders.module("known-folders"));
     tui.root_module.addImport("zeit", zeit.module("zeit"));
     tui.root_module.linkLibrary(opus.artifact("opus"));
+    tui.root_module.addImport("rnnoise", rnnoise.module("rnnoise"));
     addSqlite(tui, zqlite, .client);
     switch (target.result.os.tag) {
         .macos => {

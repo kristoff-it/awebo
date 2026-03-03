@@ -71,43 +71,72 @@ pub fn draw(app: *App) !void {
                 .expand = .horizontal,
             });
 
-            dvui.labelNoFmt(@src(), "Activation Threshold", .{}, .{});
-            var in_threshold = core.audio.capture_threshold.load(.unordered);
-            _ = dvui.slider(@src(), .{
-                .dir = .horizontal,
-                .fraction = &in_threshold,
+            var noise_gate_choice = core.audio.capture_noise_gate.load(.unordered);
+            dvui.labelNoFmt(@src(), "Noise Gate", .{}, .{});
+            if (dvui.dropdownEnum(@src(), Core.Audio.NoiseGate, .{
+                .choice = &noise_gate_choice,
             }, .{
-                .expand = .horizontal,
-            });
-
-            core.audio.capture_threshold.store(in_threshold, .unordered);
-
-            const preview = dvui.box(@src(), .{ .dir = .horizontal }, .{
-                .expand = .horizontal,
-                .border = .all(1),
-                .margin = .{ .x = 10, .w = 10 },
-                .min_size_content = .{ .h = 3 },
-            });
-
-            var br = preview.data().contentRectScale().r;
-            br.w *= power.load(.acquire);
-            br.fill(.all(0), .{ .color = .yellow });
-
-            preview.deinit();
-
-            const test_label = if (capture) "Stop" else "Start Capture Test";
-            if (dvui.button(@src(), test_label, .{}, .{ .gravity_x = 0.5 })) {
-                if (capture) {
-                    capture = false;
-                    power.store(0, .release);
-                    core.audio.captureTestStop();
-                } else {
-                    capture = true;
-                    core.audio.captureTestStart(&power);
-                }
+                .null_selectable = false,
+            }, .{})) {
+                // arst
             }
 
-            if (capture) dvui.refresh(null, @src(), null);
+            core.audio.capture_noise_gate.store(noise_gate_choice, .unordered);
+            switch (noise_gate_choice) {
+                .denoiser => {
+                    var text = dvui.textLayout(@src(), .{
+                        .cache_layout = true,
+                    }, .{});
+                    defer text.deinit();
+
+                    text.addText(
+                        \\Denoiser will use RNNoise to automatically remove
+                        \\background noise from your voice, silencing your
+                        \\microphone when you're not talking.
+                        \\
+                        \\This is the recommended default option.
+                    , .{});
+                },
+                .threshold => {
+                    dvui.labelNoFmt(@src(), "Activation Threshold", .{}, .{});
+                    var in_threshold = core.audio.capture_threshold.load(.unordered);
+                    _ = dvui.slider(@src(), .{
+                        .dir = .horizontal,
+                        .fraction = &in_threshold,
+                    }, .{
+                        .expand = .horizontal,
+                    });
+
+                    core.audio.capture_threshold.store(in_threshold, .unordered);
+
+                    const preview = dvui.box(@src(), .{ .dir = .horizontal }, .{
+                        .expand = .horizontal,
+                        .border = .all(1),
+                        .margin = .{ .x = 10, .w = 10 },
+                        .min_size_content = .{ .h = 3 },
+                    });
+
+                    var br = preview.data().contentRectScale().r;
+                    br.w *= power.load(.acquire);
+                    br.fill(.all(0), .{ .color = .yellow });
+
+                    preview.deinit();
+
+                    const test_label = if (capture) "Stop" else "Start Capture Test";
+                    if (dvui.button(@src(), test_label, .{}, .{ .gravity_x = 0.5 })) {
+                        if (capture) {
+                            capture = false;
+                            power.store(0, .release);
+                            core.audio.captureTestStop();
+                        } else {
+                            capture = true;
+                            core.audio.captureTestStart(&power);
+                        }
+                    }
+
+                    if (capture) dvui.refresh(null, @src(), null);
+                },
+            }
         }
         {
             var box = dvui.box(@src(), .{ .dir = .vertical }, .{

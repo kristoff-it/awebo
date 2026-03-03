@@ -42,6 +42,10 @@
             .url = "git+https://codeberg.org/brodo/xcode-frameworks.git#0354d5b3a3098932f49d0a2f7dff027648d82e04",
             .hash = "xcode_frameworks-0.0.0-VCh8gsJoXgcwWlY3xQurC1iFtCi92uDPoaBSLjO85JuP",
         },
+        .rnnoise = .{
+            .url = "git+https://github.com/allyourcodebase/rnnoise#2936a1d2607586b082bdc33e4079e6cc60a02396",
+            .hash = "rnnoise-0.0.1-7NNaDNcVAAAmBjXy_un0uV6YcC3pDW4g1tbrSQ9Vzbuc",
+        },
     },
     .paths = .{
         "build.zig",

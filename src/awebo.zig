@@ -3,6 +3,7 @@ const std = @import("std");
 const Io = std.Io;
 
 pub const opus = @import("awebo/opus.zig");
+pub const rnnoise = @import("awebo/rnnoise.zig");
 pub const permissions = @import("awebo/permissions.zig");
 pub const protocol = @import("awebo/protocol.zig");
 // pub const Clock = @import("awebo/Clock.zig");
