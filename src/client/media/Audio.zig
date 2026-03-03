@@ -1057,8 +1057,8 @@ const MiniAudioInterface = struct {
     pub fn setCaptureMute(mai: *MiniAudioInterface, state: DeviceMuteState) error{Failed}!void {
         assert(mai.capture_device_init);
         switch (state) {
-            .muted => ma_error_check(ma.ma_device_start(&mai.capture_device)) catch return error.Failed,
-            .unmuted => ma_error_check(ma.ma_device_stop(&mai.capture_device)) catch return error.Failed,
+            .muted => ma_error_check(ma.ma_device_stop(&mai.capture_device)) catch return error.Failed,
+            .unmuted => ma_error_check(ma.ma_device_start(&mai.capture_device)) catch return error.Failed,
         }
     }
 
