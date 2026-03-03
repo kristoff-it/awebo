@@ -330,6 +330,7 @@ pub fn setupTui(
     options.addOption(Context, "context", .client);
     options.addOption([]const u8, "version", version);
     options.addOption(bool, "local_cache", local_cache);
+    options.addOption(bool, "miniaudio", false); // for now just define it as false
     tui.root_module.addOptions("options", options);
     tui.root_module.addImport("vaxis", vaxis.module("vaxis"));
     tui.root_module.addImport("folders", folders.module("known-folders"));
@@ -407,6 +408,7 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.O
 
         const server, const server_test = setupServer(b, target, optimize, dep_optimize, false, false, zon.version);
         const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, .{ .local_cache = false, .use_miniaudio = false });
+        const gui_miniaudio, const gui_miniaudio_test = setupGui(b, target, optimize, dep_optimize, .{ .local_cache = false, .use_miniaudio = true });
         const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false);
 
         step.dependOn(&b.addInstallArtifact(server, .{}).step);
@@ -418,6 +420,9 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.O
 
         step.dependOn(&gui.step);
         step.dependOn(&gui_test.step);
+
+        step.dependOn(&gui_miniaudio.step);
+        step.dependOn(&gui_miniaudio_test.step);
 
         step.dependOn(&tui.step);
         step.dependOn(&tui_test.step);
