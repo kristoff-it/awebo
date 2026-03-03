@@ -364,7 +364,7 @@ pub fn captureTestStop(audio: *Audio) void {
 }
 
 /// Called by OS APIs to let us take audio data from the capture buffer.
-fn capturePush(audio: *Audio, frames: [*]f32, frame_count: u32) callconv(.c) void {
+fn capturePush(audio: *Audio, frames: [*]const f32, frame_count: u32) callconv(.c) void {
     const capture = &audio.capture_stream.channels[0];
     capture.writeSliceAssumeCapacity(frames[0..frame_count]);
     if (capture.len() < awebo.opus.PACKET_SAMPLE_COUNT) return;
@@ -839,14 +839,17 @@ const MiniAudioInterface = struct {
     }
 
     pub const MiniAudioCaller = struct {
-        caller: *Caller,
         pub fn init(caller: *Caller, audio: *Audio) MiniAudioCaller {
             audio.os.callSourceAdd(caller, .mono);
-            return .{ .caller = caller };
+            return .{};
         }
 
-        pub fn deinit(mac: MiniAudioCaller, audio: *Audio) void {
+        pub fn deinit(mac: *MiniAudioCaller, audio: *Audio) void {
             audio.os.callSourceRemove(mac);
+        }
+
+        pub fn get_caller(self: *MiniAudioCaller) *Caller {
+            return @alignCast(@fieldParentPtr("os", self));
         }
     };
 
@@ -863,6 +866,7 @@ const MiniAudioInterface = struct {
     capture_device: ma.ma_device = undefined,
     capture_device_init: bool = false,
 
+    // this should be behind a mutex
     callers: std.ArrayList(*Caller) = .empty,
 
     pub fn init(ac: *Audio) MiniAudioInterface {
@@ -871,7 +875,14 @@ const MiniAudioInterface = struct {
     }
 
     pub fn deinit(mai: *MiniAudioInterface, ac: *Audio) void {
-        _ = ac;
+        if (mai.capture_device_init) {
+            ma.ma_device_uninit(&mai.capture_device);
+        }
+        if (mai.playback_device_init) {
+            ma.ma_device_uninit(&mai.playback_device);
+        }
+        const core: *Core = @alignCast(@fieldParentPtr("audio", ac));
+        mai.callers.deinit(core.gpa);
         mai.deinitContext();
     }
 
@@ -894,8 +905,7 @@ const MiniAudioInterface = struct {
 
     pub fn callBegin(mai: *MiniAudioInterface, ac: *Audio) bool {
         const core: *Core = @alignCast(@fieldParentPtr("audio", ac));
-        mai.callers.deinit(core.gpa);
-        mai.callers = .empty;
+        mai.callers.clearAndFree(core.gpa);
         mai.captureStart(ac);
         mai.playbackStart();
         return true;
@@ -933,24 +943,27 @@ const MiniAudioInterface = struct {
     }
 
     fn playbackCb(
-        pDevice: [*c]ma.ma_device,
-        pOutput: ?*anyopaque,
-        pInput: ?*const anyopaque,
-        frameCount: ma.ma_uint32,
+        p_device: [*c]ma.ma_device,
+        p_output: ?*anyopaque,
+        p_input: ?*const anyopaque,
+        frame_count: ma.ma_uint32,
     ) callconv(.c) void {
-        _ = pInput;
-        const callers: *std.ArrayList(*Caller) = @ptrCast(@alignCast(pDevice.*.pUserData));
-        const count = frameCount * pDevice.*.capture.channels;
-        const output_m: [*]f32 = @ptrCast(@alignCast(pOutput));
-        const output = output_m[0..count];
+        _ = p_input;
+        const callers: *std.ArrayList(*Caller) = @ptrCast(@alignCast(p_device.*.pUserData));
+        const output_m: [*]f32 = @ptrCast(@alignCast(p_output));
+        const output = output_m[0..(frame_count * playback_channels)];
 
-        // for (callers.items) |caller| {
-        //     caller.playbackSourceMonoFill(output.ptr, frameCount);
-        // I NEED TO SUM THE CALLERS SAMPLES, NOT OVERRIDE
-        // }
-
-        _ = callers;
-        _ = output;
+        var temp: [4096]f32 = undefined;
+        for (callers.items) |caller| {
+            // I NEED TO SUM THE CALLERS SAMPLES, NOT OVERRIDE
+            caller.playbackSourceMonoFill(&temp, frame_count);
+            for (0..frame_count) |i| {
+                // repeat the same sample for each channel since the source is mono
+                for (0..playback_channels) |j| {
+                    output[i * playback_channels + j] += temp[i];
+                }
+            }
+        }
     }
 
     fn playbackStart(mai: *MiniAudioInterface) void {
@@ -970,8 +983,10 @@ const MiniAudioInterface = struct {
     }
 
     fn playbackStop(mai: *MiniAudioInterface) void {
-        assert(mai.playback_device_init);
-        ma.ma_device_uninit(&mai.playback_device);
+        if (mai.playback_device_init) {
+            ma.ma_device_uninit(&mai.playback_device);
+            mai.playback_device_init = false;
+        }
     }
 
     pub fn callSourceAdd(mai: *MiniAudioInterface, caller: *Caller, kind: SourceKind) void {
@@ -979,8 +994,8 @@ const MiniAudioInterface = struct {
         mai.callers.append(caller.core.gpa, caller) catch oom();
     }
 
-    pub fn callSourceRemove(mai: *MiniAudioInterface, caller: MiniAudioCaller) void {
-        if (std.mem.findScalar(*Caller, mai.callers.items, caller.caller)) |index| {
+    pub fn callSourceRemove(mai: *MiniAudioInterface, caller: *MiniAudioCaller) void {
+        if (std.mem.findScalar(*Caller, mai.callers.items, caller.get_caller())) |index| {
             _ = mai.callers.swapRemove(index);
         }
     }
@@ -1000,17 +1015,17 @@ const MiniAudioInterface = struct {
     }
 
     export fn captureCb(
-        pDevice: [*c]ma.ma_device,
-        pOutput: ?*anyopaque,
-        pInput: ?*const anyopaque,
-        frameCount: ma.ma_uint32,
+        p_device: [*c]ma.ma_device,
+        p_output: ?*anyopaque,
+        p_input: ?*const anyopaque,
+        frame_count: ma.ma_uint32,
     ) callconv(.c) void {
-        _ = pOutput;
-        const audio: *Audio = @ptrCast(@alignCast(pDevice.*.pUserData));
-        const count = frameCount * pDevice.*.capture.channels;
-        const input: [*]const f32 = @ptrCast(@alignCast(pInput));
+        _ = p_output;
+        const audio: *Audio = @ptrCast(@alignCast(p_device.*.pUserData));
+        const count = frame_count * p_device.*.capture.channels;
+        const input: [*]const f32 = @ptrCast(@alignCast(p_input));
         // const input = input_m[0..count];
-        audio.capturePush(@constCast(input), count);
+        audio.capturePush(input, count);
     }
 
     fn captureStart(mai: *MiniAudioInterface, ac: *Audio) void {
@@ -1032,23 +1047,32 @@ const MiniAudioInterface = struct {
     }
 
     fn captureStop(mai: *MiniAudioInterface) void {
+        if (mai.capture_device_init) {
+            ma.ma_device_uninit(&mai.capture_device);
+            mai.capture_device_init = false;
+        }
+    }
+
+    pub fn setCaptureMute(mai: *MiniAudioInterface, state: DeviceMuteState) error{Failed}!void {
         assert(mai.capture_device_init);
-        ma.ma_device_uninit(&mai.capture_device);
-        mai.capture_device_init = false;
+        switch (state) {
+            .muted => ma_error_check(ma.ma_device_start(&mai.capture_device)) catch return error.Failed,
+            .unmuted => ma_error_check(ma.ma_device_stop(&mai.capture_device)) catch return error.Failed,
+        }
     }
 
     fn captureTestCb(
-        pDevice: [*c]ma.ma_device,
-        pOutput: ?*anyopaque,
-        pInput: ?*const anyopaque,
-        frameCount: ma.ma_uint32,
+        p_device: [*c]ma.ma_device,
+        p_output: ?*anyopaque,
+        p_input: ?*const anyopaque,
+        frame_count: ma.ma_uint32,
     ) callconv(.c) void {
-        const count = frameCount * pDevice.*.capture.channels;
-        const output: [*]f32 = @ptrCast(@alignCast(pOutput));
-        const input_m: [*]const f32 = @ptrCast(@alignCast(pInput));
+        const count = frame_count * p_device.*.capture.channels;
+        const output: [*]f32 = @ptrCast(@alignCast(p_output));
+        const input_m: [*]const f32 = @ptrCast(@alignCast(p_input));
         const input = input_m[0..count];
         @memcpy(output, input);
-        const power: *std.atomic.Value(f32) = @ptrCast(@alignCast(pDevice.*.pUserData));
+        const power: *std.atomic.Value(f32) = @ptrCast(@alignCast(p_device.*.pUserData));
         power.store(computePower(input), .release);
     }
 

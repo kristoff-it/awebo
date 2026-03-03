@@ -7,6 +7,7 @@
         .miniaudio = .{
             .url = "https://github.com/mackron/miniaudio/archive/refs/tags/0.11.24.tar.gz",
             .hash = "N-V-__8AAKZFwACf17gBwzWswQ--hz9oK0axRpa0dHo8Efx0",
+            .lazy = true,
         },
         .dvui = .{
             .url = "git+https://github.com/david-vanderson/dvui.git?ref=zig16-dev#1b55bfd4cf94968de5563d0862e3e62a64b86b4d",

@@ -126,6 +126,14 @@ pub fn setupServer(
         .optimize = dep_optimize,
     });
 
+    // miniaudio should not be needed for server but zls complains
+    if (b.lazyDependency("miniaudio", .{
+        .target = target,
+        .optimize = dep_optimize,
+    })) |miniaudio| {
+        server.root_module.addIncludePath(miniaudio.path("."));
+    }
+
     const options = b.addOptions();
     options.addOption(Context, "context", .server);
     options.addOption(bool, "slow", slow);
@@ -217,9 +225,13 @@ pub fn setupGui(
     gui.root_module.addImport("rnnoise", rnnoise.module("rnnoise"));
     addSqlite(gui, zqlite, .client);
 
-    const miniaudio = b.dependency("miniaudio", .{});
-    gui.root_module.addIncludePath(miniaudio.path("."));
-    gui.root_module.addCSourceFile(.{ .file = miniaudio.path("miniaudio.c") });
+    if (b.lazyDependency("miniaudio", .{
+        .target = target,
+        .optimize = dep_optimize,
+    })) |miniaudio| {
+        gui.root_module.addIncludePath(miniaudio.path("."));
+        gui.root_module.addCSourceFile(.{ .file = miniaudio.path("miniaudio.c") });
+    }
 
     switch (target.result.os.tag) {
         .macos => {
@@ -303,6 +315,14 @@ pub fn setupTui(
         .@"osce-bwe" = true,
         .@"float-approx" = true,
     });
+
+    if (b.lazyDependency("miniaudio", .{
+        .target = target,
+        .optimize = dep_optimize,
+    })) |miniaudio| {
+        tui.root_module.addIncludePath(miniaudio.path("."));
+        tui.root_module.addCSourceFile(.{ .file = miniaudio.path("miniaudio.c") });
+    }
 
     const rnnoise = b.dependency("rnnoise", .{
         .target = target,
