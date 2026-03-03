@@ -1,6 +1,7 @@
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 
-@interface ScreenCaptureManager : NSObject <SCContentSharingPickerObserver>
+@interface ScreenCaptureManager : NSObject <SCContentSharingPickerObserver,
+                                            SCStreamDelegate, SCStreamOutput>
 @property(strong) SCContentSharingPicker *picker;
 @property(strong) SCStream *stream;
 @property void *userdata;
@@ -14,7 +15,7 @@ typedef struct Pixels {
   uint8_t *pixels;
 } Pixels;
 
-ScreenCaptureManager *screenCaptureManagerInit(void *userdata) {
+void *screenCaptureManagerInit(void *userdata) {
   NSLog(@"creating capture manager");
   ScreenCaptureManager *manager = [[ScreenCaptureManager alloc] init];
   manager.userdata = userdata;

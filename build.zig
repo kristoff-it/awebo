@@ -227,7 +227,7 @@ pub fn setupGui(
                     "-Wno-undef",
                     "-Wno-deprecated-declarations",
                     "-Wno-availability",
-                    "-Wno-unguarded-availability-new"
+                    "-Wno-unguarded-availability-new",
                 },
             });
         },
@@ -347,7 +347,7 @@ pub fn setupTui(
                     "-Wno-undef",
                     "-Wno-deprecated-declarations",
                     "-Wno-availability",
-                    "-Wno-unguarded-availability-new"
+                    "-Wno-unguarded-availability-new",
                 },
             });
         },
