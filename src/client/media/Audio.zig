@@ -1,6 +1,7 @@
 const Audio = @This();
 
 const builtin = @import("builtin");
+const options = @import("options");
 const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
@@ -80,7 +81,7 @@ playback_decoder: *awebo.opus.Decoder,
 playback_voice_processing: bool = false,
 
 /// Os interface
-os: switch (builtin.target.os.tag) {
+os: if (options.miniaudio) MiniAudioInterface else switch (builtin.target.os.tag) {
     .macos => MacOsInterface,
     else => DummyInterface,
 },
@@ -94,7 +95,7 @@ pub const Device = struct {
     default_out: bool,
     connected: bool,
     // OS specific device information
-    os: switch (builtin.target.os.tag) {
+    os: if (options.miniaudio) MiniAudioInterface.MiniAudioDevice else switch (builtin.target.os.tag) {
         .macos => MacOsInterface.MacOsDevice,
         else => DummyInterface.DummyDevice,
     },
@@ -115,7 +116,7 @@ pub const Caller = struct {
     decoder: *awebo.opus.Decoder,
     packets: JitterBuffer,
     voice: Stream(f32, 1),
-    os: switch (builtin.target.os.tag) {
+    os: if (options.miniaudio) MiniAudioInterface.MiniAudioCaller else switch (builtin.target.os.tag) {
         .macos => MacOsInterface.MacOsCaller,
         else => DummyInterface.DummyCaller,
     },
@@ -819,6 +820,211 @@ const MacOsInterface = struct {
         extern fn audioTestEnd(*AudioEngineManager) void;
         pub fn captureTestStop(ae: *AudioEngineManager) void {
             audioTestEnd(ae);
+        }
+    };
+};
+
+const MiniAudioInterface = struct {
+    const ma = @cImport(@cInclude("miniaudio.h"));
+
+    fn ma_error_check(result: ma.ma_result) !void {
+        if (result != ma.MA_SUCCESS) {
+            std.log.err("Miniaudio error: {}", .{result});
+            return error.MiniAudioError;
+        }
+    }
+
+    fn ma_panic() noreturn {
+        @panic("miniaudio error");
+    }
+
+    pub const MiniAudioCaller = struct {
+        pub fn init(caller: *Caller, audio: *Audio) MiniAudioCaller {
+            _ = caller;
+            _ = audio;
+            unreachable;
+        }
+
+        pub fn deinit(dc: MiniAudioCaller, audio: *Audio) void {
+            _ = dc;
+            _ = audio;
+        }
+    };
+
+    context: ma.ma_context = undefined,
+    context_init: bool = false,
+    capture_test_device: ma.ma_device = undefined,
+    capture_test_device_init: bool = false,
+    playback_device: ma.ma_device = undefined,
+    playback_device_init: bool = false,
+    capture_device: ma.ma_device = undefined,
+    capture_device_init: bool = false,
+
+    pub fn init() MiniAudioInterface {
+        return .{};
+    }
+
+    pub fn deinit(mai: *MiniAudioInterface, ac: *Audio) void {
+        _ = ac;
+        mai.deinitContext();
+    }
+
+    fn enumerateDevicesCb(pContext: [*c]ma.ma_context, deviceType: ma.ma_device_type, pInfo: [*c]const ma.ma_device_info, pUserData: ?*anyopaque) callconv(.c) ma.ma_bool32 {
+        _ = pContext;
+        const ac: *Audio = @ptrCast(@alignCast(pUserData));
+        const device_info: *const ma.ma_device_info = @ptrCast(pInfo);
+
+        const name = std.mem.span(@as([*c]const u8, &device_info.name));
+
+        ac.upsertDevice(&.{
+            .id = name,
+            .name = name,
+            .channels_in_count = if (deviceType == ma.ma_device_type_capture) 2 else 0,
+            .channels_out_count = if (deviceType == ma.ma_device_type_playback) 2 else 0,
+            .default_in = deviceType == ma.ma_device_type_capture and device_info.isDefault != 0,
+            .default_out = deviceType == ma.ma_device_type_playback and device_info.isDefault != 0,
+            .connected = true,
+            .os = .{ .id = device_info.id },
+        });
+
+        return 1;
+    }
+
+    pub fn discoverDevicesAndListen(mai: *MiniAudioInterface, ac: *Audio) void {
+        mai.initContext();
+        ma_error_check(ma.ma_context_enumerate_devices(&mai.context, enumerateDevicesCb, ac)) catch ma_panic();
+    }
+
+    fn playbackCb(
+        pDevice: [*c]ma.ma_device,
+        pOutput: ?*anyopaque,
+        pInput: ?*const anyopaque,
+        frameCount: ma.ma_uint32,
+    ) callconv(.c) void {
+        _ = pInput;
+        const audio: *Audio = @ptrCast(@alignCast(pDevice.*.pUserData));
+        const count = frameCount * pDevice.*.capture.channels;
+        const output_m: [*]const f32 = @ptrCast(@alignCast(pOutput));
+        const output = output_m[0..count];
+        _ = audio;
+        _ = output;
+    }
+
+    pub fn playbackStart(mai: *MiniAudioInterface, ac: *Audio, device: ?*Device) void {
+        initContext(mai);
+
+        var device_config = ma.ma_device_config_init(ma.ma_device_type_playback);
+        device_config.playback.pDeviceID = if (device) |d| &d.os.id else null;
+        device_config.playback.format = ma.ma_format_f32;
+        device_config.playback.channels = playback_channels;
+        device_config.sampleRate = playback_rate;
+        device_config.dataCallback = playbackCb;
+        device_config.pUserData = ac;
+
+        ma_error_check(ma.ma_device_init(&mai.context, &device_config, &mai.playback_device)) catch ma_panic();
+        ma_error_check(ma.ma_device_start(&mai.playback_device)) catch ma_panic();
+    }
+
+    pub fn playbackSourceAdd(_: *MiniAudioInterface) void {}
+    pub fn playbackSourceRemove(_: *MiniAudioInterface, _: *anyopaque) void {}
+    pub fn playbackStop(_: *MiniAudioInterface) void {}
+
+    fn initContext(mai: *MiniAudioInterface) void {
+        if (!mai.context_init) {
+            ma_error_check(ma.ma_context_init(null, 0, null, &mai.context)) catch ma_panic();
+            mai.context_init = true;
+        }
+    }
+
+    fn deinitContext(mai: *MiniAudioInterface) void {
+        if (mai.context_init) {
+            ma_error_check(ma.ma_context_uninit(&mai.context)) catch ma_panic();
+            mai.context_init = false;
+        }
+    }
+
+    export fn captureCb(
+        pDevice: [*c]ma.ma_device,
+        pOutput: ?*anyopaque,
+        pInput: ?*const anyopaque,
+        frameCount: ma.ma_uint32,
+    ) callconv(.c) void {
+        _ = pOutput;
+        const audio: *Audio = @ptrCast(@alignCast(pDevice.*.pUserData));
+        const count = frameCount * pDevice.*.capture.channels;
+        const input: [*]const f32 = @ptrCast(@alignCast(pInput));
+        // const input = input_m[0..count];
+        audio.capturePush(@constCast(input), count);
+    }
+
+    pub fn captureStart(mai: *MiniAudioInterface, ac: *Audio, device: ?*Device) void {
+        mai.initContext();
+
+        var device_config = ma.ma_device_config_init(ma.ma_device_type_capture);
+        device_config.capture.pDeviceID = if (device) |d| &d.os.id else null;
+        device_config.capture.format = ma.ma_format_f32;
+        device_config.capture.channels = capture_channels;
+        device_config.sampleRate = @intFromFloat(capture_rate);
+        device_config.dataCallback = captureCb;
+        device_config.pUserData = ac;
+
+        ma_error_check(ma.ma_device_init(&mai.context, &device_config, &mai.capture_device)) catch ma_panic();
+        ma_error_check(ma.ma_device_start(&mai.capture_device)) catch ma_panic();
+    }
+
+    pub fn captureStop(mai: *MiniAudioInterface) void {
+        ma.ma_device_uninit(&mai.capture_device);
+    }
+
+    fn captureTestCb(
+        pDevice: [*c]ma.ma_device,
+        pOutput: ?*anyopaque,
+        pInput: ?*const anyopaque,
+        frameCount: ma.ma_uint32,
+    ) callconv(.c) void {
+        const count = frameCount * pDevice.*.capture.channels;
+        const output: [*]f32 = @ptrCast(@alignCast(pOutput));
+        const input_m: [*]const f32 = @ptrCast(@alignCast(pInput));
+        const input = input_m[0..count];
+        @memcpy(output, input);
+        const power: *std.atomic.Value(f32) = @ptrCast(@alignCast(pDevice.*.pUserData));
+        power.store(computePower(input), .release);
+    }
+
+    pub fn captureTestStart(mai: *MiniAudioInterface, power: *std.atomic.Value(f32), capture: ?*Device, playback: ?*Device) void {
+        const capture_id = if (capture) |d| &d.os.id else null;
+        const playback_id = if (playback) |d| &d.os.id else null;
+        var device_config = ma.ma_device_config_init(ma.ma_device_type_duplex);
+        device_config.capture.pDeviceID = capture_id;
+        device_config.capture.format = ma.ma_format_f32;
+        device_config.capture.channels = playback_channels; // we need the same number of channels as playback, then miniaudio will do the conversion if needed
+        device_config.capture.shareMode = ma.ma_share_mode_shared;
+        device_config.playback.pDeviceID = playback_id;
+        device_config.playback.format = ma.ma_format_f32;
+        device_config.playback.channels = playback_channels;
+        device_config.playback.shareMode = ma.ma_share_mode_shared;
+        device_config.sampleRate = playback_rate;
+        device_config.dataCallback = captureTestCb;
+        device_config.pUserData = power;
+        device_config.noPreSilencedOutputBuffer = @intFromBool(true);
+        ma_error_check(ma.ma_device_init(null, &device_config, &mai.capture_test_device)) catch ma_panic();
+        mai.capture_test_device_init = true;
+        ma_error_check(ma.ma_device_start(&mai.capture_test_device)) catch ma_panic();
+    }
+
+    pub fn captureTestStop(mai: *MiniAudioInterface) void {
+        if (mai.capture_test_device_init) {
+            ma.ma_device_uninit(&mai.capture_test_device);
+            mai.capture_test_device_init = false;
+            std.log.debug("deinited capture_test_device", .{});
+        }
+    }
+
+    pub const MiniAudioDevice = struct {
+        id: ma.ma_device_id,
+        pub fn format(self: MiniAudioDevice, w: *Io.Writer) !void {
+            _ = self;
+            try w.print("MiniAudioDevice()", .{});
         }
     };
 };

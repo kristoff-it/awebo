@@ -51,10 +51,16 @@ pub fn build(b: *std.Build) void {
         "store client's .cache and .config dirs in cwd, useful for testing",
     ) orelse false;
 
+    const client_miniaudio = b.option(
+        bool,
+        "miniaudio",
+        "use miniaudio cross-platform audio backend",
+    ) orelse false;
+
     const server, const server_test = setupServer(b, target, optimize, dep_optimize, slow, echo, server_version);
     b.installArtifact(server);
 
-    const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, client_local_cache);
+    const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, .{ .local_cache = client_local_cache, .use_miniaudio = client_miniaudio });
     b.installArtifact(gui);
 
     const mac_os_bundle = b.step("mac_os_bundle", "create a mac os bundle");
@@ -139,12 +145,17 @@ pub fn setupServer(
     return .{ server, server_test };
 }
 
+const GuiOptions = struct {
+    local_cache: bool,
+    use_miniaudio: bool,
+};
+
 pub fn setupGui(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     dep_optimize: std.builtin.OptimizeMode,
-    local_cache: bool,
+    gui_options: GuiOptions,
 ) struct { *std.Build.Step.Compile, *std.Build.Step.Compile } {
     const dvui = b.dependency("dvui", .{
         .target = target,
@@ -196,7 +207,8 @@ pub fn setupGui(
 
     const options = b.addOptions();
     options.addOption(Context, "context", .client);
-    options.addOption(bool, "local_cache", local_cache);
+    options.addOption(bool, "local_cache", gui_options.local_cache);
+    options.addOption(bool, "miniaudio", gui_options.use_miniaudio);
     gui.root_module.addOptions("options", options);
     gui.root_module.addImport("dvui", dvui.module("dvui_sdl3"));
     gui.root_module.addImport("folders", folders.module("known-folders"));
@@ -204,6 +216,10 @@ pub fn setupGui(
     gui.root_module.linkLibrary(opus.artifact("opus"));
     gui.root_module.addImport("rnnoise", rnnoise.module("rnnoise"));
     addSqlite(gui, zqlite, .client);
+
+    const miniaudio = b.dependency("miniaudio", .{});
+    gui.root_module.addIncludePath(miniaudio.path("."));
+    gui.root_module.addCSourceFile(.{ .file = miniaudio.path("miniaudio.c") });
 
     switch (target.result.os.tag) {
         .macos => {
@@ -390,7 +406,7 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.O
         const optimize = .Debug;
 
         const server, const server_test = setupServer(b, target, optimize, dep_optimize, false, false, zon.version);
-        const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, false);
+        const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, .{ .local_cache = false, .use_miniaudio = false });
         const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false);
 
         step.dependOn(&b.addInstallArtifact(server, .{}).step);
