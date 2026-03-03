@@ -176,7 +176,7 @@ pub fn setupGui(
         .target = target,
         .optimize = dep_optimize,
         .assertions = optimize == .Debug,
-        // .rtcd = true,
+        .rtcd = true,
     });
 
     const folders = b.dependency("known_folders", .{
@@ -292,7 +292,7 @@ pub fn setupTui(
         .target = target,
         .optimize = dep_optimize,
         .assertions = optimize == .Debug,
-        // .rtcd = true,
+        .rtcd = true,
     });
 
     const folders = b.dependency("known_folders", .{

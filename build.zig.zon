@@ -43,8 +43,8 @@
             .hash = "xcode_frameworks-0.0.0-VCh8gkKaXwcEian-X8DvPvEkppbUu6hkdHy9u_ZLzGci",
         },
         .rnnoise = .{
-            .url = "git+https://github.com/allyourcodebase/rnnoise#2936a1d2607586b082bdc33e4079e6cc60a02396",
-            .hash = "rnnoise-0.0.1-7NNaDNcVAAAmBjXy_un0uV6YcC3pDW4g1tbrSQ9Vzbuc",
+            .url = "git+https://github.com/allyourcodebase/rnnoise#41ef44875913c889a38e07564b524055c9b5cf95",
+            .hash = "rnnoise-0.0.1-7NNaDHEZAAB5Cy2ztXkHQkqY1FOKzGTUrcNodvYPuU-0",
         },
     },
     .paths = .{
