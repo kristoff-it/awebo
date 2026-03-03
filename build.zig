@@ -341,6 +341,14 @@ pub fn setupTui(
                     "src/client/media/macos/screen-capture.m",
                     "src/client/media/macos/webcam-capture.m",
                 },
+                .flags = &[_][]const u8{
+                    "-pthread",
+                    "-fobjc-arc",
+                    "-Wno-undef",
+                    "-Wno-deprecated-declarations",
+                    "-Wno-availability",
+                    "-Wno-unguarded-availability-new"
+                },
             });
         },
         .windows => {
