@@ -210,6 +210,7 @@ pub fn setupGui(
             const xcode_frameworks = b.dependency("xcode_frameworks", .{});
             gui.root_module.addFrameworkPath(xcode_frameworks.path("Frameworks"));
             gui.root_module.addSystemIncludePath(xcode_frameworks.path("include"));
+            gui.root_module.addLibraryPath(xcode_frameworks.path("lib"));
             gui.root_module.linkFramework("AVFoundation", .{});
             gui.root_module.linkFramework("CoreAudio", .{});
             gui.root_module.linkFramework("ScreenCaptureKit", .{});
@@ -325,6 +326,7 @@ pub fn setupTui(
             const xcode_frameworks = b.dependency("xcode_frameworks", .{});
             tui.root_module.addFrameworkPath(xcode_frameworks.path("Frameworks"));
             tui.root_module.addSystemIncludePath(xcode_frameworks.path("include"));
+            tui.root_module.addLibraryPath(xcode_frameworks.path("lib"));
             tui.root_module.linkFramework("AVFoundation", .{});
             tui.root_module.linkFramework("AudioToolbox", .{});
             tui.root_module.linkFramework("CoreAudio", .{});
