@@ -210,6 +210,7 @@ pub fn setupGui(
             const xcode_frameworks = b.dependency("xcode_frameworks", .{});
             gui.root_module.addFrameworkPath(xcode_frameworks.path("Frameworks"));
             gui.root_module.addSystemIncludePath(xcode_frameworks.path("include"));
+            gui.root_module.addLibraryPath(xcode_frameworks.path("lib"));
             gui.root_module.linkFramework("AVFoundation", .{});
             gui.root_module.linkFramework("CoreAudio", .{});
             gui.root_module.linkFramework("ScreenCaptureKit", .{});
@@ -219,6 +220,14 @@ pub fn setupGui(
                     "src/client/media/macos/audio.m",
                     "src/client/media/macos/screen-capture.m",
                     "src/client/media/macos/webcam-capture.m",
+                },
+                .flags = &[_][]const u8{
+                    "-pthread",
+                    "-fobjc-arc",
+                    "-Wno-undef",
+                    "-Wno-deprecated-declarations",
+                    "-Wno-availability",
+                    "-Wno-unguarded-availability-new",
                 },
             });
         },
@@ -317,6 +326,7 @@ pub fn setupTui(
             const xcode_frameworks = b.dependency("xcode_frameworks", .{});
             tui.root_module.addFrameworkPath(xcode_frameworks.path("Frameworks"));
             tui.root_module.addSystemIncludePath(xcode_frameworks.path("include"));
+            tui.root_module.addLibraryPath(xcode_frameworks.path("lib"));
             tui.root_module.linkFramework("AVFoundation", .{});
             tui.root_module.linkFramework("AudioToolbox", .{});
             tui.root_module.linkFramework("CoreAudio", .{});
@@ -330,6 +340,14 @@ pub fn setupTui(
                     "src/client/media/macos/audio.m",
                     "src/client/media/macos/screen-capture.m",
                     "src/client/media/macos/webcam-capture.m",
+                },
+                .flags = &[_][]const u8{
+                    "-pthread",
+                    "-fobjc-arc",
+                    "-Wno-undef",
+                    "-Wno-deprecated-declarations",
+                    "-Wno-availability",
+                    "-Wno-unguarded-availability-new",
                 },
             });
         },
@@ -374,6 +392,10 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.O
         const server, const server_test = setupServer(b, target, optimize, dep_optimize, false, false, zon.version);
         const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, false);
         const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false);
+
+        step.dependOn(&b.addInstallArtifact(server, .{}).step);
+        step.dependOn(&b.addInstallArtifact(gui, .{}).step);
+        step.dependOn(&b.addInstallArtifact(tui, .{}).step);
 
         step.dependOn(&server.step);
         step.dependOn(&server_test.step);
