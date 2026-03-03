@@ -954,6 +954,7 @@ const MiniAudioInterface = struct {
         const output = output_m[0..(frame_count * playback_channels)];
 
         var temp: [4096]f32 = undefined;
+        assert(frame_count < temp.len); // if this fails, we need to make temp bigger
         for (callers.items) |caller| {
             // I NEED TO SUM THE CALLERS SAMPLES, NOT OVERRIDE
             caller.playbackSourceMonoFill(&temp, frame_count);
