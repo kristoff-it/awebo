@@ -44,6 +44,12 @@ pub const CapturePermission = enum(u32) {
 };
 const SourceKind = enum(u32) { mono = 1, stereo = 2 };
 
+/// Os interface
+const OsInterface = switch (builtin.target.os.tag) {
+    .macos => MacOsInterface,
+    else => MiniAudioInterface,
+};
+
 const playback_rate: f64 = 48000.0;
 const playback_channels: u32 = 2;
 
@@ -80,11 +86,7 @@ playback_stream: Stream(f32, 2),
 playback_decoder: *awebo.opus.Decoder,
 playback_voice_processing: bool = false,
 
-/// Os interface
-os: switch (builtin.target.os.tag) {
-    .macos => MacOsInterface,
-    else => MiniAudioInterface,
-},
+os: OsInterface,
 
 pub const Device = struct {
     id: [:0]const u8,
@@ -94,11 +96,7 @@ pub const Device = struct {
     default_in: bool,
     default_out: bool,
     connected: bool,
-    // OS specific device information
-    os: switch (builtin.target.os.tag) {
-        .macos => MacOsInterface.MacOsDevice,
-        else => MiniAudioInterface.MiniAudioDevice,
-    },
+    os: OsInterface.OsDevice,
 
     pub fn format(d: Device, w: *Io.Writer) !void {
         try w.print("AudioDevice(id: '{s}', name: '{s}', in: {}, out: {}, connected: {} os: {f})", .{
@@ -116,10 +114,7 @@ pub const Caller = struct {
     decoder: *awebo.opus.Decoder,
     packets: JitterBuffer,
     voice: Stream(f32, 1),
-    os: switch (builtin.target.os.tag) {
-        .macos => MacOsInterface.MacOsCaller,
-        else => MiniAudioInterface.MiniAudioCaller,
-    },
+    os: OsInterface.OsCaller,
 
     pub fn create(gpa: Allocator, core: *Core) !*Caller {
         const caller = try gpa.create(Caller);
@@ -489,14 +484,14 @@ const MacOsInterface = struct {
 
     engine: *AudioEngineManager,
 
-    pub const MacOsDevice = struct {
+    pub const OsDevice = struct {
         device_id: ca.AudioDeviceID,
-        pub fn format(md: MacOsDevice, w: *Io.Writer) !void {
+        pub fn format(md: OsDevice, w: *Io.Writer) !void {
             try w.print("MacOsDevice({})", .{md.device_id});
         }
     };
 
-    pub const MacOsCaller = struct {
+    pub const OsCaller = struct {
         source_node: *AVAudioSourceNode,
         comptime {
             @export(&Caller.playbackSourceMonoFill, .{
@@ -505,13 +500,13 @@ const MacOsInterface = struct {
             });
         }
 
-        pub fn init(caller: *Caller, audio: *Audio) MacOsCaller {
+        pub fn init(caller: *Caller, audio: *Audio) OsCaller {
             return .{
                 .source_node = audio.os.callSourceAdd(caller, .mono),
             };
         }
 
-        pub fn deinit(mc: MacOsCaller, audio: *Audio) void {
+        pub fn deinit(mc: OsCaller, audio: *Audio) void {
             audio.os.callSourceRemove(mc.source_node);
         }
     };
@@ -838,17 +833,17 @@ const MiniAudioInterface = struct {
         @panic("miniaudio error");
     }
 
-    pub const MiniAudioCaller = struct {
-        pub fn init(caller: *Caller, audio: *Audio) MiniAudioCaller {
+    pub const OsCaller = struct {
+        pub fn init(caller: *Caller, audio: *Audio) OsCaller {
             audio.os.callSourceAdd(caller, .mono);
             return .{};
         }
 
-        pub fn deinit(mac: *MiniAudioCaller, audio: *Audio) void {
+        pub fn deinit(mac: *OsCaller, audio: *Audio) void {
             audio.os.callSourceRemove(mac);
         }
 
-        pub fn get_caller(self: *MiniAudioCaller) *Caller {
+        pub fn get_caller(self: *OsCaller) *Caller {
             return @alignCast(@fieldParentPtr("os", self));
         }
     };
@@ -995,7 +990,7 @@ const MiniAudioInterface = struct {
         mai.callers.append(caller.core.gpa, caller) catch oom();
     }
 
-    pub fn callSourceRemove(mai: *MiniAudioInterface, caller: *MiniAudioCaller) void {
+    pub fn callSourceRemove(mai: *MiniAudioInterface, caller: *OsCaller) void {
         if (std.mem.findScalar(*Caller, mai.callers.items, caller.get_caller())) |index| {
             _ = mai.callers.swapRemove(index);
         }
@@ -1108,69 +1103,11 @@ const MiniAudioInterface = struct {
         }
     }
 
-    pub const MiniAudioDevice = struct {
+    pub const OsDevice = struct {
         id: ma.ma_device_id,
-        pub fn format(self: MiniAudioDevice, w: *Io.Writer) !void {
+        pub fn format(self: OsDevice, w: *Io.Writer) !void {
             _ = self;
             try w.print("MiniAudioDevice()", .{});
-        }
-    };
-};
-
-const DummyInterface = struct {
-    pub const DummyCaller = struct {
-        pub fn init(caller: *Caller, audio: *Audio) DummyCaller {
-            _ = caller;
-            _ = audio;
-            unreachable;
-        }
-
-        pub fn deinit(dc: DummyCaller, audio: *Audio) void {
-            _ = dc;
-            _ = audio;
-        }
-    };
-
-    pub fn init(_: *Audio) DummyInterface {
-        return .{};
-    }
-
-    pub fn deinit(_: *DummyInterface, _: *Audio) void {}
-
-    pub fn discoverDevicesAndListen(_: *DummyInterface, ac: *Audio) void {
-        var buf: [256]u8 = undefined;
-        for (0..5) |i| {
-            const id = std.fmt.bufPrintZ(&buf, "ID DummyAudioDevice #{}", .{i}) catch unreachable;
-            ac.upsertDevice(&.{
-                .id = id,
-                .name = id[3..],
-                .channels_in_count = 2,
-                .channels_out_count = 2,
-                .default_in = i == 0,
-                .default_out = i == 0,
-                .connected = i != 3,
-                .os = .{},
-            });
-        }
-    }
-
-    pub fn discoverCapturePermissionState(_: *DummyInterface) CapturePermission {
-        return .granted;
-    }
-    pub fn requestCapturePermission(_: *DummyInterface, _: *Audio) void {}
-    pub fn setCaptureMute(_: *DummyInterface, _: DeviceMuteState) error{Failed}!void {}
-    pub fn setDevices(_: *DummyInterface, _: ?*Device, _: ?*Device, _: bool) void {}
-    pub fn callBegin(_: *DummyInterface, _: *Audio) void {}
-    pub fn playbackSourceAdd(_: *DummyInterface) void {}
-    pub fn playbackSourceRemove(_: *DummyInterface, _: *anyopaque) void {}
-    pub fn callEnd(_: *DummyInterface) void {}
-    pub fn restart(_: *DummyInterface) void {}
-    pub fn captureTestStart(_: *DummyInterface, _: *std.atomic.Value(f32)) void {}
-    pub fn captureTestStop(_: *DummyInterface) void {}
-
-    pub const DummyDevice = struct {
-        pub fn format(_: DummyDevice, w: *Io.Writer) !void {
-            try w.print("DummyDevice()", .{});
         }
     };
 };
