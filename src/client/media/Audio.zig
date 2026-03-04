@@ -45,7 +45,7 @@ pub const CapturePermission = enum(u32) {
 const SourceKind = enum(u32) { mono = 1, stereo = 2 };
 
 /// Os interface
-const OsInterface = switch (builtin.target.os.tag) {
+const OsInterface = if (options.dummy) DummyInterface else switch (builtin.target.os.tag) {
     .macos => MacOsInterface,
     else => MiniAudioInterface,
 };
@@ -1108,6 +1108,61 @@ const MiniAudioInterface = struct {
         pub fn format(self: OsDevice, w: *Io.Writer) !void {
             _ = self;
             try w.print("MiniAudioDevice()", .{});
+        }
+    };
+};
+
+const DummyInterface = struct {
+    pub const OsCaller = struct {
+        pub fn init(caller: *Caller, audio: *Audio) OsCaller {
+            _ = caller;
+            _ = audio;
+            return .{};
+        }
+
+        pub fn deinit(dc: OsCaller, audio: *Audio) void {
+            _ = dc;
+            _ = audio;
+        }
+    };
+
+    pub fn init(_: *Audio) DummyInterface {
+        return .{};
+    }
+
+    pub fn deinit(_: *DummyInterface, _: *Audio) void {}
+
+    pub fn discoverDevicesAndListen(_: *DummyInterface, ac: *Audio) void {
+        var buf: [256]u8 = undefined;
+        for (0..5) |i| {
+            const id = std.fmt.bufPrintZ(&buf, "ID DummyAudioDevice #{}", .{i}) catch unreachable;
+            ac.upsertDevice(&.{
+                .id = id,
+                .name = id[3..],
+                .channels_in_count = 2,
+                .channels_out_count = 2,
+                .default_in = i == 0,
+                .default_out = i == 0,
+                .connected = i != 3,
+                .os = .{},
+            });
+        }
+    }
+
+    pub fn discoverCapturePermissionState(_: *DummyInterface) CapturePermission {
+        return .granted;
+    }
+    pub fn requestCapturePermission(_: *DummyInterface, _: *Audio) void {}
+    pub fn setCaptureMute(_: *DummyInterface, _: DeviceMuteState) error{Failed}!void {}
+    pub fn setDevices(_: *DummyInterface, _: ?*Device, _: ?*Device, _: bool) void {}
+    pub fn callBegin(_: *DummyInterface, _: *Audio) void {}
+    pub fn callEnd(_: *DummyInterface) void {}
+    pub fn captureTestStart(_: *DummyInterface, _: *std.atomic.Value(f32)) void {}
+    pub fn captureTestStop(_: *DummyInterface) void {}
+
+    pub const OsDevice = struct {
+        pub fn format(_: OsDevice, w: *Io.Writer) !void {
+            try w.print("DummyDevice()", .{});
         }
     };
 };
