@@ -126,14 +126,6 @@ pub fn setupServer(
         .optimize = dep_optimize,
     });
 
-    // miniaudio should not be needed for server but zls complains
-    if (b.lazyDependency("miniaudio", .{
-        .target = target,
-        .optimize = dep_optimize,
-    })) |miniaudio| {
-        server.root_module.addIncludePath(miniaudio.path("."));
-    }
-
     const options = b.addOptions();
     options.addOption(Context, "context", .server);
     options.addOption(bool, "slow", slow);
@@ -155,7 +147,7 @@ pub fn setupServer(
 
 const GuiOptions = struct {
     local_cache: bool,
-    use_miniaudio: bool,
+    use_miniaudio: bool, // force miniaudio for macOS
 };
 
 pub fn setupGui(
@@ -213,6 +205,11 @@ pub fn setupGui(
         .optimize = dep_optimize,
     });
 
+    const miniaudio = b.dependency("miniaudio", .{
+        .target = target,
+        .optimize = dep_optimize,
+    });
+
     const options = b.addOptions();
     options.addOption(Context, "context", .client);
     options.addOption(bool, "local_cache", gui_options.local_cache);
@@ -223,15 +220,8 @@ pub fn setupGui(
     gui.root_module.addImport("zeit", zeit.module("zeit"));
     gui.root_module.linkLibrary(opus.artifact("opus"));
     gui.root_module.addImport("rnnoise", rnnoise.module("rnnoise"));
+    gui.root_module.addImport("miniaudio", miniaudio.module("miniaudio"));
     addSqlite(gui, zqlite, .client);
-
-    if (b.lazyDependency("miniaudio", .{
-        .target = target,
-        .optimize = dep_optimize,
-    })) |miniaudio| {
-        gui.root_module.addIncludePath(miniaudio.path("."));
-        gui.root_module.addCSourceFile(.{ .file = miniaudio.path("miniaudio.c") });
-    }
 
     switch (target.result.os.tag) {
         .macos => {
@@ -316,13 +306,10 @@ pub fn setupTui(
         .@"float-approx" = true,
     });
 
-    if (b.lazyDependency("miniaudio", .{
+    const miniaudio = b.dependency("miniaudio", .{
         .target = target,
         .optimize = dep_optimize,
-    })) |miniaudio| {
-        tui.root_module.addIncludePath(miniaudio.path("."));
-        tui.root_module.addCSourceFile(.{ .file = miniaudio.path("miniaudio.c") });
-    }
+    });
 
     const rnnoise = b.dependency("rnnoise", .{
         .target = target,
@@ -350,13 +337,14 @@ pub fn setupTui(
     options.addOption(Context, "context", .client);
     options.addOption([]const u8, "version", version);
     options.addOption(bool, "local_cache", local_cache);
-    options.addOption(bool, "miniaudio", false); // for now just define it as false
+    options.addOption(bool, "miniaudio", false);
     tui.root_module.addOptions("options", options);
     tui.root_module.addImport("vaxis", vaxis.module("vaxis"));
     tui.root_module.addImport("folders", folders.module("known-folders"));
     tui.root_module.addImport("zeit", zeit.module("zeit"));
     tui.root_module.linkLibrary(opus.artifact("opus"));
     tui.root_module.addImport("rnnoise", rnnoise.module("rnnoise"));
+    tui.root_module.addImport("miniaudio", miniaudio.module("miniaudio"));
     addSqlite(tui, zqlite, .client);
     switch (target.result.os.tag) {
         .macos => {
@@ -428,7 +416,6 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.O
 
         const server, const server_test = setupServer(b, target, optimize, dep_optimize, false, false, zon.version);
         const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, .{ .local_cache = false, .use_miniaudio = false });
-        const gui_miniaudio, const gui_miniaudio_test = setupGui(b, target, optimize, dep_optimize, .{ .local_cache = false, .use_miniaudio = true });
         const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false);
 
         step.dependOn(&b.addInstallArtifact(server, .{}).step);
@@ -441,8 +428,12 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.O
         step.dependOn(&gui.step);
         step.dependOn(&gui_test.step);
 
-        step.dependOn(&gui_miniaudio.step);
-        step.dependOn(&gui_miniaudio_test.step);
+        if (target.result.os.tag == .macos) {
+            // Test macOS also with miniaudio instead of native implementation
+            const gui_miniaudio, const gui_miniaudio_test = setupGui(b, target, optimize, dep_optimize, .{ .local_cache = false, .use_miniaudio = true });
+            step.dependOn(&gui_miniaudio.step);
+            step.dependOn(&gui_miniaudio_test.step);
+        }
 
         step.dependOn(&tui.step);
         step.dependOn(&tui_test.step);

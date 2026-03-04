@@ -5,9 +5,8 @@
     .minimum_zig_version = "0.16.0-dev.2676+4e2cec265",
     .dependencies = .{
         .miniaudio = .{
-            .url = "https://github.com/mackron/miniaudio/archive/refs/tags/0.11.24.tar.gz",
-            .hash = "N-V-__8AAKZFwACf17gBwzWswQ--hz9oK0axRpa0dHo8Efx0",
-            .lazy = true,
+            .url = "git+https://github.com/allyourcodebase/miniaudio#21bc669859ef3f6aabd0a2de0931b80cff8837c5",
+            .hash = "miniaudio-0.11.25-LWmAG1UgAAABQoUxopYnG2xp1un2FWnSfdKiTLX2ix-i",
         },
         .dvui = .{
             .url = "git+https://github.com/david-vanderson/dvui.git?ref=zig16-dev#1b55bfd4cf94968de5563d0862e3e62a64b86b4d",

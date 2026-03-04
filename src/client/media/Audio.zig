@@ -825,7 +825,7 @@ const MacOsInterface = struct {
 };
 
 const MiniAudioInterface = struct {
-    const ma = @cImport(@cInclude("miniaudio.h"));
+    const ma = @import("miniaudio");
 
     fn ma_error_check(result: ma.ma_result) !void {
         if (result != ma.MA_SUCCESS) {
