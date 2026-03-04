@@ -18,8 +18,8 @@
             .lazy = true,
         },
         .opus = .{
-            .url = "git+https://github.com/allyourcodebase/opus#b6462e9a9948c6d94787b899374c23bc1b527c97",
-            .hash = "opus-0.0.2-vuF-cM1QAADDkw1UZlGEk37xGmPuqOofkgkY0caAPbz9",
+            .url = "git+https://github.com/allyourcodebase/opus#3c14d100bc514c634f73c5fca4fd290a9ece1fd7",
+            .hash = "opus-0.0.2-vuF-cLmEAACeAWnRyb-zApAPnyHp_hLMSsh7lLb-Gf6d",
         },
         .zqlite = .{
             .url = "git+https://github.com/andrewrk/zqlite.zig.git#205dcc49a212b27e5a78868cda09135d0945fc7a",

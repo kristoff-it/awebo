@@ -82,7 +82,7 @@ playback_voice_processing: bool = false,
 
 /// Os interface
 os: switch (builtin.target.os.tag) {
-    .macos => if (options.miniaudio) MiniAudioInterface else MacOsInterface,
+    .macos => MacOsInterface,
     else => MiniAudioInterface,
 },
 
@@ -96,7 +96,7 @@ pub const Device = struct {
     connected: bool,
     // OS specific device information
     os: switch (builtin.target.os.tag) {
-        .macos => if (options.miniaudio) MiniAudioInterface.MiniAudioDevice else MacOsInterface.MacOsDevice,
+        .macos => MacOsInterface.MacOsDevice,
         else => MiniAudioInterface.MiniAudioDevice,
     },
 
@@ -117,7 +117,7 @@ pub const Caller = struct {
     packets: JitterBuffer,
     voice: Stream(f32, 1),
     os: switch (builtin.target.os.tag) {
-        .macos => if (options.miniaudio) MiniAudioInterface.MiniAudioCaller else MacOsInterface.MacOsCaller,
+        .macos => MacOsInterface.MacOsCaller,
         else => MiniAudioInterface.MiniAudioCaller,
     },
 

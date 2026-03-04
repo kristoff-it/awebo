@@ -51,16 +51,10 @@ pub fn build(b: *std.Build) void {
         "store client's .cache and .config dirs in cwd, useful for testing",
     ) orelse false;
 
-    const client_miniaudio = b.option(
-        bool,
-        "miniaudio",
-        "use miniaudio cross-platform audio backend",
-    ) orelse false;
-
     const server, const server_test = setupServer(b, target, optimize, dep_optimize, slow, echo, server_version);
     b.installArtifact(server);
 
-    const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, .{ .local_cache = client_local_cache, .use_miniaudio = client_miniaudio });
+    const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, client_local_cache);
     b.installArtifact(gui);
 
     const mac_os_bundle = b.step("mac_os_bundle", "create a mac os bundle");
@@ -145,17 +139,12 @@ pub fn setupServer(
     return .{ server, server_test };
 }
 
-const GuiOptions = struct {
-    local_cache: bool,
-    use_miniaudio: bool, // force miniaudio for macOS
-};
-
 pub fn setupGui(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     dep_optimize: std.builtin.OptimizeMode,
-    gui_options: GuiOptions,
+    local_cache: bool,
 ) struct { *std.Build.Step.Compile, *std.Build.Step.Compile } {
     const dvui = b.dependency("dvui", .{
         .target = target,
@@ -176,18 +165,17 @@ pub fn setupGui(
         .target = target,
         .optimize = dep_optimize,
         .dred = true,
-        .assertions = optimize == .Debug,
         .@"deep-plc" = true,
         .osce = true,
         .@"osce-bwe" = true,
         .@"float-approx" = true,
+        .rtcd = !target.query.isNativeCpu(),
     });
 
     const rnnoise = b.dependency("rnnoise", .{
         .target = target,
         .optimize = dep_optimize,
-        .assertions = optimize == .Debug,
-        .rtcd = true,
+        .rtcd = !target.query.isNativeCpu(),
     });
 
     const folders = b.dependency("known_folders", .{
@@ -212,13 +200,12 @@ pub fn setupGui(
 
     const options = b.addOptions();
     options.addOption(Context, "context", .client);
-    options.addOption(bool, "local_cache", gui_options.local_cache);
-    options.addOption(bool, "miniaudio", gui_options.use_miniaudio);
+    options.addOption(bool, "local_cache", local_cache);
     gui.root_module.addOptions("options", options);
     gui.root_module.addImport("dvui", dvui.module("dvui_sdl3"));
     gui.root_module.addImport("folders", folders.module("known-folders"));
     gui.root_module.addImport("zeit", zeit.module("zeit"));
-    gui.root_module.linkLibrary(opus.artifact("opus"));
+    gui.root_module.addImport("opus", opus.module("opus"));
     gui.root_module.addImport("rnnoise", rnnoise.module("rnnoise"));
     gui.root_module.addImport("miniaudio", miniaudio.module("miniaudio"));
     addSqlite(gui, zqlite, .client);
@@ -299,11 +286,11 @@ pub fn setupTui(
         .target = target,
         .optimize = dep_optimize,
         .dred = true,
-        .assertions = optimize == .Debug,
         .@"deep-plc" = true,
         .osce = true,
         .@"osce-bwe" = true,
         .@"float-approx" = true,
+        .rtcd = !target.query.isNativeCpu(),
     });
 
     const miniaudio = b.dependency("miniaudio", .{
@@ -314,8 +301,7 @@ pub fn setupTui(
     const rnnoise = b.dependency("rnnoise", .{
         .target = target,
         .optimize = dep_optimize,
-        .assertions = optimize == .Debug,
-        .rtcd = true,
+        .rtcd = !target.query.isNativeCpu(),
     });
 
     const folders = b.dependency("known_folders", .{
@@ -337,12 +323,11 @@ pub fn setupTui(
     options.addOption(Context, "context", .client);
     options.addOption([]const u8, "version", version);
     options.addOption(bool, "local_cache", local_cache);
-    options.addOption(bool, "miniaudio", false);
     tui.root_module.addOptions("options", options);
     tui.root_module.addImport("vaxis", vaxis.module("vaxis"));
     tui.root_module.addImport("folders", folders.module("known-folders"));
     tui.root_module.addImport("zeit", zeit.module("zeit"));
-    tui.root_module.linkLibrary(opus.artifact("opus"));
+    tui.root_module.addImport("opus", opus.module("opus"));
     tui.root_module.addImport("rnnoise", rnnoise.module("rnnoise"));
     tui.root_module.addImport("miniaudio", miniaudio.module("miniaudio"));
     addSqlite(tui, zqlite, .client);
@@ -415,7 +400,7 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.O
         const optimize = .Debug;
 
         const server, const server_test = setupServer(b, target, optimize, dep_optimize, false, false, zon.version);
-        const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, .{ .local_cache = false, .use_miniaudio = false });
+        const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, false);
         const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false);
 
         step.dependOn(&b.addInstallArtifact(server, .{}).step);
@@ -427,13 +412,6 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.O
 
         step.dependOn(&gui.step);
         step.dependOn(&gui_test.step);
-
-        if (target.result.os.tag == .macos) {
-            // Test macOS also with miniaudio instead of native implementation
-            const gui_miniaudio, const gui_miniaudio_test = setupGui(b, target, optimize, dep_optimize, .{ .local_cache = false, .use_miniaudio = true });
-            step.dependOn(&gui_miniaudio.step);
-            step.dependOn(&gui_miniaudio_test.step);
-        }
 
         step.dependOn(&tui.step);
         step.dependOn(&tui_test.step);
