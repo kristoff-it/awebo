@@ -1,18 +1,27 @@
+const Main = @This();
+
 const std = @import("std");
 const dvui = @import("dvui");
 const awebo = @import("../../awebo.zig");
-const host_bar = @import("main/host_bar.zig");
-const channel_list = @import("main/channel_list.zig");
-const chat_panel = @import("main/chat_panel.zig");
-const home_panel = @import("main/home_panel.zig");
-const screenshare_box = @import("main/screenshare_box.zig");
-const App = @import("../../main_client_gui.zig").App;
+const HostBar = @import("main/HostBar.zig");
+const ChannelList = @import("main/ChannelList.zig");
+const ChatPanel = @import("main/ChatPanel.zig");
+const HomePanel = @import("main/HomePanel.zig");
+const ScreenshareBox = @import("main/ScreenshareBox.zig");
+const Gui = @import("../Gui.zig");
 const Core = @import("../Core.zig");
 const Host = awebo.Host;
 const Voice = awebo.channels.Voice;
 
-pub fn draw(app: *App) !void {
-    const core = &app.core;
+subviews: struct {
+    host_bar: HostBar = .{},
+    channel_list: ChannelList = .{},
+    chat_panel: ChatPanel = .{},
+    home_panel: HomePanel = .{},
+    screenshare_box: ScreenshareBox = .{},
+} = .{},
+
+pub fn draw(main: *Main, core: *Core, active_screen: *Gui.ActiveScreen) !void {
     if (core.active_host == 0) {
         core.active_host = core.hosts.items.keys()[0];
     }
@@ -20,7 +29,7 @@ pub fn draw(app: *App) !void {
     const h = core.hosts.get(core.active_host).?;
     const frozen = h.client.connection_status != .synced;
 
-    host_bar.draw(app);
+    main.subviews.host_bar.draw(core);
 
     {
         var vbox = dvui.box(@src(), .{ .dir = .vertical }, .{
@@ -65,16 +74,16 @@ pub fn draw(app: *App) !void {
             .background = true,
         });
         defer hbox.deinit();
-        try channel_list.draw(app);
+        try main.subviews.channel_list.draw(core, active_screen);
         if (h.client.active_channel) |ac| {
             switch (h.channels.get(ac).?.kind) {
-                .chat => try chat_panel.draw(app, frozen),
+                .chat => try main.subviews.chat_panel.draw(core, frozen),
                 .voice => @panic("TODO"),
             }
         }
     }
 
     if (core.webcam_capture.share_intent or core.screen_capture.share_intent) {
-        try screenshare_box.draw(core);
+        try main.subviews.screenshare_box.draw(core);
     }
 }

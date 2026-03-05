@@ -1,32 +1,18 @@
+const Av = @This();
+
 const builtin = @import("builtin");
 const std = @import("std");
 const Io = std.Io;
 const dvui = @import("dvui");
 const Core = @import("../../Core.zig");
-const App = @import("../../../main_client_gui.zig").App;
 
 pub const menu_name = "Audio / Video";
 pub const tab_name = "Audio / Video";
 
-var capture = false;
-var power: std.atomic.Value(f32) = .init(0);
+capture: bool = false,
+power: std.atomic.Value(f32) = .init(0),
 
-pub fn draw(app: *App) !void {
-    const core = &app.core;
-    var vbox = dvui.box(@src(), .{ .dir = .vertical }, .{
-        .expand = .both,
-        .background = true,
-        .border = .{ .x = 1 },
-    });
-    defer vbox.deinit();
-    dvui.labelNoFmt(@src(), tab_name, .{}, .{
-        .gravity_x = 0.5,
-        .font = dvui.Font.theme(.title).larger(4),
-    });
-    _ = dvui.separator(@src(), .{ .expand = .horizontal });
-
-    _ = dvui.spacer(@src(), .{});
-
+pub fn draw(av: *Av, core: *Core) !void {
     if (builtin.target.os.tag == .macos) {
         dvui.labelNoFmt(@src(),
             \\Sorry audio is a bit janky on macOS.
@@ -117,24 +103,24 @@ pub fn draw(app: *App) !void {
                     });
 
                     var br = preview.data().contentRectScale().r;
-                    br.w *= power.load(.acquire);
+                    br.w *= av.power.load(.acquire);
                     br.fill(.all(0), .{ .color = .yellow });
 
                     preview.deinit();
 
-                    const test_label = if (capture) "Stop" else "Start Capture Test";
+                    const test_label = if (av.capture) "Stop" else "Start Capture Test";
                     if (dvui.button(@src(), test_label, .{}, .{ .gravity_x = 0.5 })) {
-                        if (capture) {
-                            capture = false;
-                            power.store(0, .release);
+                        if (av.capture) {
+                            av.capture = false;
+                            av.power.store(0, .release);
                             core.audio.captureTestStop();
                         } else {
-                            capture = true;
-                            core.audio.captureTestStart(&power);
+                            av.capture = true;
+                            core.audio.captureTestStart(&av.power);
                         }
                     }
 
-                    if (capture) dvui.refresh(null, @src(), null);
+                    if (av.capture) dvui.refresh(null, @src(), null);
                 },
             }
         }

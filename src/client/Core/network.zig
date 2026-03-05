@@ -250,7 +250,7 @@ fn runHostManagerFallible(
     });
     var buf: [2]Select.Union = undefined;
     var select: Select = .init(io, &buf);
-    defer select.cancel();
+    defer select.cancelDiscard();
 
     try select.concurrent(.receive, runHostReceive, .{ core, hc, host_id });
     try select.concurrent(.send, runHostSend, .{ core, hc });
@@ -375,7 +375,7 @@ pub fn runHostMediaManager(
     });
     var buf: [2]Select.Union = undefined;
     var select: Select = .init(io, &buf);
-    defer select.cancel();
+    defer select.cancelDiscard();
 
     select.concurrent(.receive, runHostMediaReceiver, .{ core, sock, &server, host_id }) catch return;
     select.concurrent(.send, runHostMediaSender, .{ core, sock, &server, host_id }) catch return;

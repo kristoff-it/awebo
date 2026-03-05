@@ -6,6 +6,8 @@ const assert = std.debug.assert;
 const log = std.log.scoped(.core);
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
+const zeit = @import("zeit");
+const cli = @import("../cli.zig");
 const awebo = @import("../awebo.zig");
 const Host = awebo.Host;
 const HostId = awebo.Host.ClientOnly.Id;
@@ -21,14 +23,19 @@ pub const Audio = @import("media/Audio.zig");
 gpa: Allocator,
 io: Io,
 environ: *std.process.Environ.Map,
+/// Set to true once data has been loaded from disk.
+loaded: std.atomic.Value(bool) = .init(false),
+command_queue: Io.Queue(Event),
+refresh: *const RefreshFn,
+start_time: Io.Timestamp,
+cache_path: []const u8 = undefined,
+tz: zeit.TimeZone,
+
 /// Protects all the fields after this one.
 mutex: Io.Mutex = .init,
 /// Set to an error message when the core logic encounters an unrecoverable error.
 /// The application should show an error dialog and shutdown when this happens.
 failure: UnrecoverableFailure = .none,
-/// Set to true once data has been loaded from disk.
-loaded: bool = false,
-cache_path: []const u8 = undefined,
 hosts: Hosts = .{},
 active_host: awebo.Host.ClientOnly.Id = 0,
 message_window: awebo.Channel.Chat.MessageWindow = .{},
@@ -40,10 +47,6 @@ active_call: ?ActiveCall = null,
 audio: Audio,
 screen_capture: ScreenCapture = undefined,
 webcam_capture: WebcamCapture,
-
-command_queue: Io.Queue(Event),
-refresh: *const RefreshFn,
-start_time: Io.Timestamp,
 
 // this is only set to pass the message to `chat_panel`
 search_messages_reply: ?awebo.protocol.server.SearchMessagesReply = null,
@@ -119,6 +122,9 @@ pub fn init(
         .command_queue = .init(command_queue_buffer),
         .webcam_capture = .init(),
         .audio = undefined,
+        .tz = zeit.local(gpa, io, .{}) catch |err| {
+            cli.fatal("unable to load local timezone: {t}", .{err});
+        },
     };
 }
 

@@ -1,3 +1,5 @@
+const ChannelList = @This();
+
 const builtin = @import("builtin");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -5,7 +7,7 @@ const Io = std.Io;
 const dvui = @import("dvui");
 const awebo = @import("../../../awebo.zig");
 const Channel = awebo.Channel;
-const App = @import("../../../main_client_gui.zig").App;
+const Gui = @import("../../Gui.zig");
 const Core = @import("../../Core.zig");
 
 const debug = if (builtin.mode != .Debug) void else struct {
@@ -15,30 +17,31 @@ const debug = if (builtin.mode != .Debug) void else struct {
     var webcam = false;
 };
 
-var show_deny_popup = false;
-var show_requesting_popup = false;
+show_new_chat: bool = false,
+pending_new_chat: ?*Core.ui.ChannelCreate = null,
+show_deny_popup: bool = false,
+show_requesting_popup: bool = false,
 
-pub fn draw(app: *App) !void {
-    const core = &app.core;
+pub fn draw(cl: *ChannelList, core: *Core, active_screen: *Gui.ActiveScreen) !void {
     const h = core.hosts.get(core.active_host).?;
     var box = dvui.box(@src(), .{ .dir = .vertical }, .{
         .expand = .vertical,
     });
     defer box.deinit();
 
-    if (app.show_new_chat or app.pending_new_chat != null) {
-        try newChatFloatingWindow(app, h);
+    if (cl.show_new_chat or cl.pending_new_chat != null) {
+        try cl.newChatFloatingWindow(core, h);
     }
 
-    hostName(app, h);
-    try channelList(h, core);
-    try joinedVoice(core);
-    try userbox(app, h);
-    if (show_deny_popup) denyPopup();
-    if (show_requesting_popup) requestingPopup();
+    cl.hostName(core, h);
+    try cl.channelList(core, h);
+    try cl.joinedVoice(core);
+    try cl.userbox(active_screen, h);
+    if (cl.show_deny_popup) cl.denyPopup();
+    if (cl.show_requesting_popup) cl.requestingPopup();
 }
 
-pub fn hostName(app: *App, h: *awebo.Host) void {
+pub fn hostName(cl: *ChannelList, core: *Core, h: *awebo.Host) void {
     {
         var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{
             .expand = .horizontal,
@@ -67,7 +70,7 @@ pub fn hostName(app: *App, h: *awebo.Host) void {
                 defer fw.deinit();
 
                 if (dvui.menuItemLabel(@src(), "New Chat", .{}, .{}) != null) {
-                    app.show_new_chat = true;
+                    cl.show_new_chat = true;
                     m.close();
                 }
                 if (dvui.menuItemLabel(@src(), "Awebo A/V Debug Window", .{}, .{}) != null) {
@@ -80,7 +83,7 @@ pub fn hostName(app: *App, h: *awebo.Host) void {
                 }
             }
 
-            if (debug.window) renderAVDebugWindow(&app.core);
+            if (debug.window) cl.renderAVDebugWindow(core);
         }
 
         dvui.labelNoFmt(@src(), h.name, .{}, .{
@@ -91,8 +94,7 @@ pub fn hostName(app: *App, h: *awebo.Host) void {
     _ = dvui.separator(@src(), .{ .expand = .horizontal });
 }
 
-pub fn newChatFloatingWindow(app: *App, h: *awebo.Host) !void {
-    const core = &app.core;
+pub fn newChatFloatingWindow(cl: *ChannelList, core: *Core, h: *awebo.Host) !void {
     const gpa = core.gpa;
     const fw = dvui.floatingWindow(@src(), .{ .modal = true }, .{
         .padding = dvui.Rect.all(10),
@@ -107,7 +109,7 @@ pub fn newChatFloatingWindow(app: *App, h: *awebo.Host) !void {
         if (dvui.button(@src(), "X", .{}, .{
             .expand = .vertical,
         })) {
-            app.show_new_chat = false;
+            cl.show_new_chat = false;
         }
         dvui.labelNoFmt(@src(), "Create new Chat", .{}, .{
             .gravity_x = 0.5,
@@ -121,7 +123,7 @@ pub fn newChatFloatingWindow(app: *App, h: *awebo.Host) !void {
         .expand = .horizontal,
     });
 
-    if (app.pending_new_chat) |nc| blk: {
+    if (cl.pending_new_chat) |nc| blk: {
         const msg = switch (nc.status.get()) {
             .pending => "pending...",
             .connection_failure => "connection failure",
@@ -129,8 +131,8 @@ pub fn newChatFloatingWindow(app: *App, h: *awebo.Host) !void {
             .rate_limit => "rate limit error",
             .no_permission => "no permission",
             .ok => {
-                app.pending_new_chat = null;
-                app.show_new_chat = false;
+                cl.pending_new_chat = null;
+                cl.show_new_chat = false;
                 break :blk;
             },
             // .fail => "missing permissions",
@@ -184,13 +186,13 @@ pub fn newChatFloatingWindow(app: *App, h: *awebo.Host) !void {
 
     if (clicked or enter_pressed) blk: {
         const raw = std.mem.trim(u8, in.getText(), " \t\n\r");
-        if (app.pending_new_chat) |p| {
+        if (cl.pending_new_chat) |p| {
             if (p.status.get() == .ok) {
                 p.destroy(gpa);
             } else break :blk;
         }
         if (raw.len > 0) {
-            app.show_new_chat = false;
+            cl.show_new_chat = false;
             const name = try gpa.dupe(u8, raw);
             const cmd = try gpa.create(Core.ui.ChannelCreate);
             cmd.* = .{
@@ -199,7 +201,7 @@ pub fn newChatFloatingWindow(app: *App, h: *awebo.Host) !void {
                 .kind = .chat,
                 .name = name,
             };
-            app.pending_new_chat = cmd;
+            cl.pending_new_chat = cmd;
             try core.channelCreate(cmd);
 
             in.len = 0;
@@ -207,7 +209,7 @@ pub fn newChatFloatingWindow(app: *App, h: *awebo.Host) !void {
     }
 }
 
-pub fn channelList(h: *awebo.Host, core: *Core) !void {
+pub fn channelList(cl: *ChannelList, core: *Core, h: *awebo.Host) !void {
     var list_scroll = dvui.scrollArea(
         @src(),
         .{},
@@ -300,12 +302,12 @@ pub fn channelList(h: *awebo.Host, core: *Core) !void {
                     .id_extra = idx,
                 });
             },
-            .voice => try renderVoiceChannel(h, core, channel, idx),
+            .voice => try cl.renderVoiceChannel(core, h, channel, idx),
         }
     }
 }
 
-fn renderVoiceChannel(h: *awebo.Host, core: *Core, v: *const Channel, idx: usize) !void {
+fn renderVoiceChannel(cl: *ChannelList, core: *Core, h: *awebo.Host, v: *const Channel, idx: usize) !void {
     {
         var box = dvui.box(@src(), .{ .dir = .horizontal }, .{
             .id_extra = idx,
@@ -323,8 +325,8 @@ fn renderVoiceChannel(h: *awebo.Host, core: *Core, v: *const Channel, idx: usize
             })) {
                 switch (try core.callJoin(h.client.host_id, v.id)) {
                     .granted, .unknown => {},
-                    .denied => show_deny_popup = true,
-                    .requesting => show_requesting_popup = true,
+                    .denied => cl.show_deny_popup = true,
+                    .requesting => cl.show_requesting_popup = true,
                 }
             }
         }
@@ -454,7 +456,8 @@ fn renderVoiceChannel(h: *awebo.Host, core: *Core, v: *const Channel, idx: usize
     }
 }
 
-fn joinedVoice(core: *Core) !void {
+fn joinedVoice(cl: *ChannelList, core: *Core) !void {
+    _ = cl;
     if (core.active_call) |call| {
         const hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{
             .expand = .horizontal,
@@ -495,7 +498,9 @@ fn joinedVoice(core: *Core) !void {
     }
 }
 
-fn userbox(app: *App, h: *awebo.Host) !void {
+fn userbox(cl: *ChannelList, active_screen: *Gui.ActiveScreen, h: *awebo.Host) !void {
+    _ = cl;
+
     var user_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
         .expand = .horizontal,
         // x left, y top, w right, h bottom
@@ -539,11 +544,13 @@ fn userbox(app: *App, h: *awebo.Host) !void {
     }
 
     if (dvui.button(@src(), "Settings", .{}, .{})) {
-        app.active_screen = .user_settings;
+        active_screen.* = .user_settings;
     }
 }
 
-fn renderAVDebugWindow(core: *Core) void {
+fn renderAVDebugWindow(cl: *ChannelList, core: *Core) void {
+    _ = cl;
+
     const fw = dvui.floatingWindow(@src(), .{ .modal = false }, .{
         .padding = dvui.Rect.all(10),
     });
@@ -585,12 +592,12 @@ fn renderAVDebugWindow(core: *Core) void {
         @import("../../Core/network.zig").debug.send_bad_capture_packet.store(true, .release);
     }
 
-    const screenshare_box = @import("screenshare_box.zig");
-    if (debug.webcam) screenshare_box.drawSource(core, .webcam) catch unreachable;
-    if (debug.screen) screenshare_box.drawSource(core, .screen) catch unreachable;
+    // const screenshare_box = @import("screenshare_box.zig");
+    // if (debug.webcam) screenshare_box.drawSource(core, .webcam) catch unreachable;
+    // if (debug.screen) screenshare_box.drawSource(core, .screen) catch unreachable;
 }
 
-fn denyPopup() void {
+fn denyPopup(cl: *ChannelList) void {
     var fw = dvui.floatingWindow(@src(), .{ .modal = true }, .{});
     defer fw.deinit();
 
@@ -600,11 +607,11 @@ fn denyPopup() void {
     , .{}, .{});
 
     if (dvui.button(@src(), "OK", .{}, .{ .gravity_x = 0.5 })) {
-        show_deny_popup = false;
+        cl.show_deny_popup = false;
     }
 }
 
-fn requestingPopup() void {
+fn requestingPopup(cl: *ChannelList) void {
     var fw = dvui.floatingWindow(@src(), .{ .modal = true }, .{});
     defer fw.deinit();
 
@@ -614,6 +621,6 @@ fn requestingPopup() void {
     , .{}, .{});
 
     if (dvui.button(@src(), "OK", .{}, .{ .gravity_x = 0.5 })) {
-        show_requesting_popup = false;
+        cl.show_requesting_popup = false;
     }
 }

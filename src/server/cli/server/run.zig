@@ -214,7 +214,7 @@ fn runClientManager(io: Io, gpa: Allocator, stream: Io.net.Stream) Io.Cancelable
 
     var buf: [2]Select.Union = undefined;
     var select: Select = .init(io, &buf);
-    defer select.cancel();
+    defer select.cancelDiscard();
 
     select.concurrent(.receive, runClientTcpRead, .{ io, gpa, &client }) catch {
         log.err("TODO fix this error handling code", .{});

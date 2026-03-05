@@ -2,7 +2,7 @@
     .name = .awebo,
     .version = "0.0.1",
     .fingerprint = 0x50424de2ba07ebcc,
-    .minimum_zig_version = "0.16.0-dev.2676+4e2cec265",
+    .minimum_zig_version = "0.16.0-dev.2694+74f361a5c",
     .dependencies = .{
         .miniaudio = .{
             .url = "git+https://github.com/allyourcodebase/miniaudio#21bc669859ef3f6aabd0a2de0931b80cff8837c5",
