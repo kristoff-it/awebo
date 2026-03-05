@@ -51,16 +51,22 @@ pub fn build(b: *std.Build) void {
         "store client's .cache and .config dirs in cwd, useful for testing",
     ) orelse false;
 
+    const client_dummy = b.option(
+        bool,
+        "dummy",
+        "Use dummy OS interfaces for A/V in client",
+    ) orelse false;
+
     const server, const server_test = setupServer(b, target, optimize, dep_optimize, slow, echo, server_version);
     b.installArtifact(server);
 
-    const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, client_local_cache);
+    const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, client_local_cache, client_dummy);
     b.installArtifact(gui);
 
     const mac_os_bundle = b.step("mac_os_bundle", "create a mac os bundle");
     setupMacOsBundle(b, mac_os_bundle, gui);
 
-    const tui, const tui_test = setupTui(b, target_tui, optimize, dep_optimize, client_version, client_local_cache);
+    const tui, const tui_test = setupTui(b, target_tui, optimize, dep_optimize, client_version, client_local_cache, client_dummy);
     b.installArtifact(tui);
 
     const server_step = b.step("server", "Launch the server executable");
@@ -145,6 +151,7 @@ pub fn setupGui(
     optimize: std.builtin.OptimizeMode,
     dep_optimize: std.builtin.OptimizeMode,
     local_cache: bool,
+    dummy: bool,
 ) struct { *std.Build.Step.Compile, *std.Build.Step.Compile } {
     const dvui = b.dependency("dvui", .{
         .target = target,
@@ -201,6 +208,7 @@ pub fn setupGui(
     const options = b.addOptions();
     options.addOption(Context, "context", .client);
     options.addOption(bool, "local_cache", local_cache);
+    options.addOption(bool, "dummy", dummy);
     gui.root_module.addOptions("options", options);
     gui.root_module.addImport("dvui", dvui.module("dvui_sdl3"));
     gui.root_module.addImport("folders", folders.module("known-folders"));
@@ -267,6 +275,7 @@ pub fn setupTui(
     dep_optimize: std.builtin.OptimizeMode,
     version: []const u8,
     local_cache: bool,
+    dummy: bool,
 ) struct { *std.Build.Step.Compile, *std.Build.Step.Compile } {
     const tui = b.addExecutable(.{
         .name = "awebo-tui",
@@ -323,6 +332,7 @@ pub fn setupTui(
     options.addOption(Context, "context", .client);
     options.addOption([]const u8, "version", version);
     options.addOption(bool, "local_cache", local_cache);
+    options.addOption(bool, "dummy", dummy);
     tui.root_module.addOptions("options", options);
     tui.root_module.addImport("vaxis", vaxis.module("vaxis"));
     tui.root_module.addImport("folders", folders.module("known-folders"));
@@ -400,8 +410,10 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.O
         const optimize = .Debug;
 
         const server, const server_test = setupServer(b, target, optimize, dep_optimize, false, false, zon.version);
-        const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, false);
-        const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false);
+        const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, false, false);
+        const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false, false);
+        const dummy_gui, const dummy_gui_test = setupGui(b, target, optimize, dep_optimize, false, true);
+        const dummy_tui, const dummy_tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false, true);
 
         step.dependOn(&b.addInstallArtifact(server, .{}).step);
         step.dependOn(&b.addInstallArtifact(gui, .{}).step);
@@ -415,6 +427,11 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.O
 
         step.dependOn(&tui.step);
         step.dependOn(&tui_test.step);
+
+        step.dependOn(&dummy_gui.step);
+        step.dependOn(&dummy_gui_test.step);
+        step.dependOn(&dummy_tui.step);
+        step.dependOn(&dummy_tui_test.step);
     }
 }
 
