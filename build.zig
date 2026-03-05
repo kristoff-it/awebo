@@ -63,7 +63,7 @@ pub fn build(b: *std.Build) void {
     const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, client_local_cache, client_dummy);
     b.installArtifact(gui);
 
-    const mac_os_bundle = b.step("mac_os_bundle", "create a mac os bundle");
+    const mac_os_bundle = b.step("macos-bundle", "create a mac os bundle");
     setupMacOsBundle(b, mac_os_bundle, gui);
 
     const tui, const tui_test = setupTui(b, target_tui, optimize, dep_optimize, client_version, client_local_cache, client_dummy);
@@ -153,6 +153,10 @@ pub fn setupGui(
     local_cache: bool,
     dummy: bool,
 ) struct { *std.Build.Step.Compile, *std.Build.Step.Compile } {
+    const appicon = b.createModule(.{
+        .root_source_file = b.path("src/client/assets/AppIcon.png"),
+    });
+
     const dvui = b.dependency("dvui", .{
         .target = target,
         .optimize = optimize,
@@ -210,6 +214,7 @@ pub fn setupGui(
     options.addOption(bool, "local_cache", local_cache);
     options.addOption(bool, "dummy", dummy);
     gui.root_module.addOptions("options", options);
+    gui.root_module.addImport("appicon", appicon);
     gui.root_module.addImport("dvui", dvui.module("dvui_sdl3"));
     gui.root_module.addImport("folders", folders.module("known-folders"));
     gui.root_module.addImport("zeit", zeit.module("zeit"));
@@ -418,19 +423,13 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.O
         step.dependOn(&b.addInstallArtifact(server, .{}).step);
         step.dependOn(&b.addInstallArtifact(gui, .{}).step);
         step.dependOn(&b.addInstallArtifact(tui, .{}).step);
+        step.dependOn(&b.addInstallArtifact(dummy_gui, .{ .dest_sub_path = "dummy" }).step);
+        step.dependOn(&b.addInstallArtifact(dummy_tui, .{ .dest_sub_path = "dummy" }).step);
 
-        step.dependOn(&server.step);
         step.dependOn(&server_test.step);
-
-        step.dependOn(&gui.step);
         step.dependOn(&gui_test.step);
-
-        step.dependOn(&tui.step);
         step.dependOn(&tui_test.step);
-
-        step.dependOn(&dummy_gui.step);
         step.dependOn(&dummy_gui_test.step);
-        step.dependOn(&dummy_tui.step);
         step.dependOn(&dummy_tui_test.step);
     }
 }
@@ -488,7 +487,7 @@ fn runArtifact(
 }
 pub fn setupMacOsBundle(b: *std.Build, bundle_step: *std.Build.Step, exe: *std.Build.Step.Compile) void {
     bundle_step.dependOn(&exe.step);
-    const png_path = b.path("assets/AppIcon.png");
+    const png_path = b.path("src/client/assets/AppIcon.png");
     const icon_set = b.addWriteFiles();
     const tmp_dir = b.addWriteFiles();
     for ([_]u32{ 16, 32, 128, 256, 512 }) |s| {
@@ -517,7 +516,7 @@ pub fn setupMacOsBundle(b: *std.Build, bundle_step: *std.Build.Step, exe: *std.B
         .dest_sub_path = app_name,
     });
     bundle_step.dependOn(&install_exe_in_bundle.step);
-    const install_plist = b.addInstallFile(b.path("assets/macOSBundle/Info.plist"), b.fmt("{s}.app/Contents/Info.plist", .{exe.name}));
+    const install_plist = b.addInstallFile(b.path("src/client/assets/macOSBundle/Info.plist"), b.fmt("{s}.app/Contents/Info.plist", .{exe.name}));
     bundle_step.dependOn(&install_plist.step);
     const codesign = b.addSystemCommand(&.{
         "codesign",
@@ -528,7 +527,7 @@ pub fn setupMacOsBundle(b: *std.Build, bundle_step: *std.Build.Step, exe: *std.B
         "runtime",
         "--entitlements",
     });
-    codesign.addFileArg(b.path("assets/macOSBundle/entitlements.plist"));
+    codesign.addFileArg(b.path("src/client/assets/macOSBundle/entitlements.plist"));
     codesign.addArg(b.getInstallPath(bundle_dir, app_name));
     codesign.step.dependOn(&install_exe_in_bundle.step);
     bundle_step.dependOn(&codesign.step);

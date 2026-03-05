@@ -13,7 +13,7 @@ const cli = @import("cli.zig");
 
 const log = std.log.scoped(.client);
 
-const window_icon_png = @embedFile("client/data/zig-favicon.png");
+const window_icon_png = @embedFile("appicon");
 const vsync = true;
 
 pub const Core = @import("client/Core.zig");

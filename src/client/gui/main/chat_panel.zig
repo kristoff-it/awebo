@@ -9,7 +9,7 @@ const Core = @import("../../Core.zig");
 const App = @import("../../../main_client_gui.zig").App;
 const Host = awebo.Host;
 
-const zig_logo = @embedFile("../../data/zig-favicon.png");
+const awebby = @embedFile("appicon");
 
 const log = std.log.scoped(.chat_panel);
 
@@ -579,7 +579,7 @@ fn drawMessage(
             _ = dvui.image(@src(), .{
                 .source = .{
                     .imageFile = .{
-                        .bytes = zig_logo,
+                        .bytes = awebby,
                         .name = "avatar",
                     },
                 },
