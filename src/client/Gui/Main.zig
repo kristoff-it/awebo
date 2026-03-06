@@ -7,7 +7,6 @@ const HostBar = @import("main/HostBar.zig");
 const ChannelList = @import("main/ChannelList.zig");
 const ChatPanel = @import("main/ChatPanel.zig");
 const HomePanel = @import("main/HomePanel.zig");
-const ScreenshareBox = @import("main/ScreenshareBox.zig");
 const Gui = @import("../Gui.zig");
 const Core = @import("../Core.zig");
 const Host = awebo.Host;
@@ -18,10 +17,9 @@ subviews: struct {
     channel_list: ChannelList = .{},
     chat_panel: ChatPanel = .{},
     home_panel: HomePanel = .{},
-    screenshare_box: ScreenshareBox = .{},
 } = .{},
 
-pub fn draw(main: *Main, core: *Core, active_screen: *Gui.ActiveScreen) !void {
+pub fn draw(main: *Main, core: *Core, active_scene: *Gui.ActiveScene) !void {
     if (core.active_host == 0) {
         core.active_host = core.hosts.items.keys()[0];
     }
@@ -74,16 +72,12 @@ pub fn draw(main: *Main, core: *Core, active_screen: *Gui.ActiveScreen) !void {
             .background = true,
         });
         defer hbox.deinit();
-        try main.subviews.channel_list.draw(core, active_screen);
+        try main.subviews.channel_list.draw(core, active_scene);
         if (h.client.active_channel) |ac| {
             switch (h.channels.get(ac).?.kind) {
                 .chat => try main.subviews.chat_panel.draw(core, frozen),
                 .voice => @panic("TODO"),
             }
         }
-    }
-
-    if (core.webcam_capture.share_intent or core.screen_capture.share_intent) {
-        try main.subviews.screenshare_box.draw(core);
     }
 }

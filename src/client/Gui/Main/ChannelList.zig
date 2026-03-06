@@ -9,20 +9,24 @@ const awebo = @import("../../../awebo.zig");
 const Channel = awebo.Channel;
 const Gui = @import("../../Gui.zig");
 const Core = @import("../../Core.zig");
-
-const debug = if (builtin.mode != .Debug) void else struct {
-    var window = false;
-    var playback = false;
-    var screen = false;
-    var webcam = false;
-};
+const ScreenshareBox = @import("ScreenshareBox.zig");
 
 show_new_chat: bool = false,
 pending_new_chat: ?*Core.ui.ChannelCreate = null,
 show_deny_popup: bool = false,
 show_requesting_popup: bool = false,
+debug: Debug = if (builtin.mode != .Debug) {} else .{},
 
-pub fn draw(cl: *ChannelList, core: *Core, active_screen: *Gui.ActiveScreen) !void {
+const Debug = if (builtin.mode != .Debug) void else struct {
+    window: bool = false,
+    playback: bool = false,
+    screen: bool = false,
+    webcam: bool = false,
+    screen_box: ScreenshareBox = .{},
+    webcam_box: ScreenshareBox = .{},
+};
+
+pub fn draw(cl: *ChannelList, core: *Core, active_scene: *Gui.ActiveScene) !void {
     const h = core.hosts.get(core.active_host).?;
     var box = dvui.box(@src(), .{ .dir = .vertical }, .{
         .expand = .vertical,
@@ -36,7 +40,7 @@ pub fn draw(cl: *ChannelList, core: *Core, active_screen: *Gui.ActiveScreen) !vo
     cl.hostName(core, h);
     try cl.channelList(core, h);
     try cl.joinedVoice(core);
-    try cl.userbox(active_screen, h);
+    try cl.userbox(active_scene, h);
     if (cl.show_deny_popup) cl.denyPopup();
     if (cl.show_requesting_popup) cl.requestingPopup();
 }
@@ -54,7 +58,7 @@ pub fn hostName(cl: *ChannelList, core: *Core, h: *awebo.Host) void {
         });
         defer m.deinit();
 
-        if (debug != void) {
+        if (Debug != void) {
             if (dvui.menuItemLabel(
                 @src(),
                 "Debug",
@@ -74,7 +78,7 @@ pub fn hostName(cl: *ChannelList, core: *Core, h: *awebo.Host) void {
                     m.close();
                 }
                 if (dvui.menuItemLabel(@src(), "Awebo A/V Debug Window", .{}, .{}) != null) {
-                    debug.window = !debug.window;
+                    cl.debug.window = !cl.debug.window;
                     m.close();
                 }
                 if (dvui.menuItemLabel(@src(), "DVUI Debug Window", .{}, .{}) != null) {
@@ -83,7 +87,7 @@ pub fn hostName(cl: *ChannelList, core: *Core, h: *awebo.Host) void {
                 }
             }
 
-            if (debug.window) cl.renderAVDebugWindow(core);
+            if (cl.debug.window) cl.renderAVDebugWindow(core);
         }
 
         dvui.labelNoFmt(@src(), h.name, .{}, .{
@@ -498,7 +502,7 @@ fn joinedVoice(cl: *ChannelList, core: *Core) !void {
     }
 }
 
-fn userbox(cl: *ChannelList, active_screen: *Gui.ActiveScreen, h: *awebo.Host) !void {
+fn userbox(cl: *ChannelList, active_scene: *Gui.ActiveScene, h: *awebo.Host) !void {
     _ = cl;
 
     var user_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
@@ -544,38 +548,36 @@ fn userbox(cl: *ChannelList, active_screen: *Gui.ActiveScreen, h: *awebo.Host) !
     }
 
     if (dvui.button(@src(), "Settings", .{}, .{})) {
-        active_screen.* = .user_settings;
+        active_scene.* = .user_settings;
     }
 }
 
 fn renderAVDebugWindow(cl: *ChannelList, core: *Core) void {
-    _ = cl;
-
     const fw = dvui.floatingWindow(@src(), .{ .modal = false }, .{
         .padding = dvui.Rect.all(10),
     });
     defer fw.deinit();
 
-    fw.dragAreaSet(dvui.windowHeader("Awebo A/V Debug", "", &debug.window));
+    fw.dragAreaSet(dvui.windowHeader("Awebo A/V Debug", "", &cl.debug.window));
 
-    const webcam_label = if (debug.webcam) "Camera OFF" else "Camera ON";
+    const webcam_label = if (cl.debug.webcam) "Camera OFF" else "Camera ON";
     if (dvui.button(@src(), webcam_label, .{}, .{})) {
-        if (debug.webcam) {
-            debug.webcam = false;
+        if (cl.debug.webcam) {
+            cl.debug.webcam = false;
             _ = core.webcam_capture.stopCapture();
         } else {
-            debug.webcam = true;
+            cl.debug.webcam = true;
             _ = core.webcam_capture.startCapture();
         }
     }
 
-    const screen_label = if (debug.screen) "Screenshare OFF" else "Screenshare ON";
+    const screen_label = if (cl.debug.screen) "Screenshare OFF" else "Screenshare ON";
     if (dvui.button(@src(), screen_label, .{}, .{})) {
-        if (debug.screen) {
-            debug.screen = false;
+        if (cl.debug.screen) {
+            cl.debug.screen = false;
             _ = core.screen_capture.stopCapture();
         } else {
-            debug.screen = true;
+            cl.debug.screen = true;
             _ = core.screen_capture.showOsPicker();
         }
     }
@@ -592,9 +594,8 @@ fn renderAVDebugWindow(cl: *ChannelList, core: *Core) void {
         @import("../../Core/network.zig").debug.send_bad_capture_packet.store(true, .release);
     }
 
-    // const screenshare_box = @import("screenshare_box.zig");
-    // if (debug.webcam) screenshare_box.drawSource(core, .webcam) catch unreachable;
-    // if (debug.screen) screenshare_box.drawSource(core, .screen) catch unreachable;
+    if (cl.debug.webcam) cl.debug.webcam_box.draw(core, .webcam) catch unreachable;
+    if (cl.debug.screen) cl.debug.screen_box.draw(core, .screen) catch unreachable;
 }
 
 fn denyPopup(cl: *ChannelList) void {

@@ -13,9 +13,9 @@ const Pages = struct {
     av: Av = .{},
 };
 
-pub fn draw(s: *Settings, core: *Core, active_screen: *Gui.ActiveScreen) void {
+pub fn draw(s: *Settings, core: *Core, active_scene: *Gui.ActiveScene) void {
     s.sidebar();
-    s.page(core, active_screen);
+    s.page(core, active_scene);
 }
 
 pub fn sidebar(s: *Settings) void {
@@ -76,7 +76,7 @@ pub fn sidebar(s: *Settings) void {
     }
 }
 
-fn page(s: *Settings, core: *Core, active_screen: *Gui.ActiveScreen) void {
+fn page(s: *Settings, core: *Core, active_scene: *Gui.ActiveScene) void {
     switch (s.active_page) {
         inline else => |tag| {
             const p = &@field(s.pages, @tagName(tag));
@@ -105,7 +105,7 @@ fn page(s: *Settings, core: *Core, active_screen: *Gui.ActiveScreen) void {
                     .gravity_y = 0.5,
                 })) {
                     core.audio.captureTestStop();
-                    active_screen.* = .main;
+                    active_scene.* = .main;
                 }
             }
             _ = dvui.separator(@src(), .{ .expand = .horizontal });

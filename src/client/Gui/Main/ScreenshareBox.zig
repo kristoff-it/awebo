@@ -6,14 +6,9 @@ const dvui = @import("dvui");
 const Backend = @import("SDLBackend");
 const Core = @import("../../Core.zig");
 
-textures: [2]?dvui.Texture = .{ null, null },
+texture: ?dvui.Texture = null,
 
-pub fn draw(sb: *ScreenshareBox, core: *Core) !void {
-    if (core.webcam_capture.share_intent) try sb.drawSource(core, .webcam);
-    if (core.screen_capture.share_intent) try sb.drawSource(core, .screen);
-}
-
-pub fn drawSource(sb: *ScreenshareBox, core: *Core, source: enum { webcam, screen }) !void {
+pub fn draw(sb: *ScreenshareBox, core: *Core, source: enum { webcam, screen }) !void {
     const extra = @intFromEnum(source);
 
     const id = dvui.Id.extendId(null, @src(), extra);
@@ -34,7 +29,7 @@ pub fn drawSource(sb: *ScreenshareBox, core: *Core, source: enum { webcam, scree
             };
 
             var backend = dvui.currentWindow().backend;
-            sb.textures[extra] = try backend.textureCreate(pixels, @intCast(img.width), @intCast(img.height), .nearest, .bgra_32);
+            sb.texture = try backend.textureCreate(pixels, @intCast(img.width), @intCast(img.height), .nearest, .bgra_32);
         }
         const millis = @divFloor(dvui.frameTimeNS(), 1_000_000);
         const left = @as(i32, @intCast(@rem(millis, millis_per_frame)));
@@ -42,7 +37,7 @@ pub fn drawSource(sb: *ScreenshareBox, core: *Core, source: enum { webcam, scree
         dvui.timer(id, wait);
     }
 
-    const tex = sb.textures[extra] orelse return;
+    const tex = sb.texture orelse return;
 
     const preview_width_pixels = 160 * 3;
     const width_ratio = tex.width / preview_width_pixels;

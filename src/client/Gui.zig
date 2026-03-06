@@ -3,14 +3,14 @@ const Gui = @This();
 const dvui = @import("dvui");
 const Core = @import("Core.zig");
 
-active_screen: ActiveScreen = .main,
+active_scene: ActiveScene = .main,
 scenes: struct {
     empty: @import("Gui/Empty.zig") = .{},
     main: @import("Gui/Main.zig") = .{},
     settings: @import("Gui/Settings.zig") = .{},
 } = .{},
 
-pub const ActiveScreen = enum {
+pub const ActiveScene = enum {
     loading,
     main,
     user_settings,
@@ -33,9 +33,9 @@ pub fn draw(gui: *Gui, core: *Core) !void {
         return;
     }
 
-    switch (gui.active_screen) {
-        .main => try gui.scenes.main.draw(core, &gui.active_screen),
-        .user_settings => gui.scenes.settings.draw(core, &gui.active_screen),
+    switch (gui.active_scene) {
+        .main => try gui.scenes.main.draw(core, &gui.active_scene),
+        .user_settings => gui.scenes.settings.draw(core, &gui.active_scene),
         else => @panic("TODO"),
     }
 }
