@@ -20,7 +20,6 @@ pub fn load(core: *Core) error{Failed}!void {
         core.failure = .{ .db_load = err };
         return error.Failed;
     };
-    core.loaded.store(true, .unordered);
 }
 
 pub fn loadImpl(core: *Core) error{OutOfMemory}!void {

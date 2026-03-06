@@ -106,6 +106,9 @@ pub const Hosts = struct {
     }
 };
 
+// This init function should be kept lightweight, we run it in the main thread
+// and it blocks showing the initial spinner animation. Core.run will perform
+// secondary initialization (eg starting audio) in a separate thread.
 pub fn init(
     gpa: Allocator,
     io: Io,
@@ -120,14 +123,16 @@ pub fn init(
         .start_time = .now(io, .awake),
         .refresh = refreshFn,
         .command_queue = .init(command_queue_buffer),
-        .webcam_capture = .init(),
-        .audio = undefined,
         .tz = zeit.local(gpa, io, .{}) catch |err| {
             cli.fatal("unable to load local timezone: {t}", .{err});
         },
+        .webcam_capture = undefined, // inited in Core.run
+        .audio = undefined, // inited in Core.run
     };
 }
 
+// Should only denit what is inited in init().
+// Resources inited in Core.run should be deinited by Core.run.
 pub fn deinit(core: *Core) void {
     core.hosts.identities.deinit(core.gpa);
     core.hosts.items.deinit(core.gpa);
@@ -156,6 +161,7 @@ pub fn run(core: *Core) void {
     core.screen_capture.init();
 
     log.debug("discovering camera devices", .{});
+    core.webcam_capture = .init();
     core.webcam_capture.discoverDevicesAndListen();
     defer core.webcam_capture.deinit();
 
@@ -186,6 +192,9 @@ pub fn run(core: *Core) void {
             ac.disconnect(core);
         }
     }
+
+    // Done loading, we can now show the main application screen.
+    core.loaded.store(true, .unordered);
 
     while (true) {
         const event = core.command_queue.getOne(io) catch return;

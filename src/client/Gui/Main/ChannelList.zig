@@ -321,17 +321,39 @@ fn renderVoiceChannel(cl: *ChannelList, core: *Core, h: *awebo.Host, v: *const C
 
         const maybe_call = core.active_call;
         if (maybe_call == null or maybe_call.?.voice_id != v.id) {
-            if (dvui.button(@src(), "Join", .{}, .{
-                .id_extra = idx,
-                .expand = .vertical,
-                .gravity_x = 1,
-                .margin = dvui.Rect.all(4),
-            })) {
-                switch (try core.callJoin(h.client.host_id, v.id)) {
-                    .granted, .unknown => {},
-                    .denied => cl.show_deny_popup = true,
-                    .requesting => cl.show_requesting_popup = true,
+            if (h.client.connection_status == .synced) {
+                if (dvui.button(@src(), "Join", .{}, .{
+                    .id_extra = idx,
+                    .expand = .vertical,
+                    .gravity_x = 1,
+                    .margin = dvui.Rect.all(4),
+                })) {
+                    switch (try core.callJoin(h.client.host_id, v.id)) {
+                        .granted, .unknown => {},
+                        .denied => cl.show_deny_popup = true,
+                        .requesting => cl.show_requesting_popup = true,
+                    }
                 }
+            } else {
+                var bw: dvui.ButtonWidget = undefined;
+                const control_opts: dvui.Options = .{};
+                const color = dvui.Color.average(control_opts.color(.text), control_opts.color(.fill));
+                bw.init(@src(), .{}, .{
+                    .id_extra = idx,
+                    .expand = .vertical,
+                    .gravity_x = 1,
+                    .margin = dvui.Rect.all(4),
+                    .color_text = color,
+                    .tab_index = 0,
+                });
+                defer bw.deinit();
+
+                bw.drawBackground();
+                bw.drawFocus();
+
+                dvui.labelNoFmt(@src(), "Join", .{}, .{
+                    .color_text = color,
+                });
             }
         }
 

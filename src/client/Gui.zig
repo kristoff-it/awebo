@@ -11,7 +11,6 @@ scenes: struct {
 } = .{},
 
 pub const ActiveScene = enum {
-    loading,
     main,
     user_settings,
     server_settings,

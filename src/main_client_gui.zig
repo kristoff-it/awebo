@@ -47,13 +47,16 @@ fn init(window: *dvui.Window) !void {
 
 fn deinit() void {}
 
+/// Contains references to Core, Gui and other resources needed to
+/// start the application. Adding more state to this struct is most
+/// likely a mistake. Gui state belongs to Gui or one of its views.
 pub const App = struct {
-    window: *dvui.Window,
-    core_future: Io.Future(void),
-    core: Core,
-    command_queue_buffer: [1024]Core.Event,
-    environ: *std.process.Environ.Map,
     gui: Gui = .{},
+    core: Core,
+    core_future: Io.Future(void),
+    command_queue_buffer: [1024]Core.Event = undefined,
+    environ: *std.process.Environ.Map,
+    window: *dvui.Window,
 
     fn init(app: *App, window: *dvui.Window) void {
         const io = dvui.io;
@@ -62,7 +65,6 @@ pub const App = struct {
 
         app.* = .{
             .window = window,
-            .command_queue_buffer = undefined,
             .environ = environ,
             .core = Core.init(
                 gpa,
@@ -73,9 +75,11 @@ pub const App = struct {
             ) catch |err| {
                 std.process.fatal("unable to init core: {t}", .{err});
             },
-            .core_future = io.concurrent(Core.run, .{&app.core}) catch |err| {
-                cli.fatal("unable to start awebo client core: {t}", .{err});
-            },
+            .core_future = undefined,
+        };
+
+        app.core_future = io.concurrent(Core.run, .{&app.core}) catch |err| {
+            cli.fatal("unable to start awebo client core: {t}", .{err});
         };
     }
 };
