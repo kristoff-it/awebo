@@ -1,0 +1,13 @@
+[Unit]
+Description=awebo-server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+WorkingDirectory=/path/to/awebo/directory
+ExecStart=/path/to/awebo-server server run
+NoNewPrivileges=yes
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
