@@ -20,19 +20,66 @@ pub fn button(
     var bw: dvui.ButtonWidget = undefined;
 
     const control_opts: dvui.Options = .{};
-    var ttout: dvui.WidgetData = undefined;
+    var btout: dvui.WidgetData = undefined;
     var disabled_opt = opt;
-    disabled_opt.tab_index = 0;
+    // disabled_opt.tab_index = 0;
     disabled_opt.color_text = dvui.Color.average(control_opts.color(.text), control_opts.color(.fill));
-    disabled_opt.data_out = &ttout;
+    disabled_opt.data_out = &btout;
 
     bw.init(src, bo, disabled_opt);
     defer bw.deinit();
 
-    dvui.tooltip(@src(), .{ .active_rect = ttout.borderRectScale().r }, "{s}", .{enabled.off}, .{});
-
+    bw.processEvents();
     bw.drawBackground();
     bw.drawFocus();
+
     dvui.labelNoFmt(@src(), label, .{}, .{ .color_text = disabled_opt.color_text });
+
+    const tt = tooltip(@src(), .{ .active_rect = btout.borderRectScale().r }, "{s}", .{enabled.off}, .{
+        .id_extra = disabled_opt.id_extra,
+    });
+    defer tt.deinit();
+
+    if (dvui.animationGet(tt.data().id, "xoffset")) |a| {
+        std.log.debug("wiggle frame!", .{});
+        var r = tt.data().rect;
+        std.log.debug("before: {any}", .{r});
+        r.x += 20 * (1.0 - a.value()) * (1.0 - a.value()) * @sin(a.value() * std.math.pi * 50);
+        std.log.debug("after: {any}", .{r});
+        tt.data().rect = r;
+    }
+
+    if (bw.clicked()) {
+        std.log.debug("wiggle on!", .{});
+        dvui.animation(tt.data().id, "xoffset", .{
+            .start_val = 0,
+            .end_val = 1.0,
+            .start_time = 0,
+            .end_time = 500_000,
+        });
+    }
+
     return false;
+}
+
+fn tooltip(
+    src: std.builtin.SourceLocation,
+    init_opts: dvui.FloatingTooltipWidget.InitOptions,
+    comptime fmt: []const u8,
+    fmt_args: anytype,
+    opts: dvui.Options,
+) *dvui.FloatingTooltipWidget {
+    var tt = dvui.widgetAlloc(dvui.FloatingTooltipWidget);
+    tt.init(src, init_opts, opts.override(.{ .role = .tooltip }));
+    if (tt.shown()) {
+        var tl2 = dvui.textLayout(@src(), .{}, .{ .background = false });
+        tl2.format(fmt, fmt_args, .{});
+        tl2.deinit();
+        if (tt.data().accesskit_node()) |ak_node| {
+            var str_builder: std.Io.Writer.Allocating = .init(dvui.currentWindow().arena());
+            str_builder.writer.print(fmt, fmt_args) catch {};
+            dvui.AccessKit.nodeSetLabel(ak_node, str_builder.toOwnedSliceSentinel(0) catch "");
+        }
+    }
+    return tt;
 }

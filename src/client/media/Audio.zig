@@ -137,9 +137,9 @@ pub const Caller = struct {
     }
 
     pub fn destroy(c: *Caller, gpa: Allocator, audio: *Audio) void {
+        c.os.deinit(audio);
         c.decoder.destroy();
         c.voice.deinit(gpa);
-        c.os.deinit(audio);
         gpa.destroy(c);
     }
 

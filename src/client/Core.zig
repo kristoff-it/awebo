@@ -501,48 +501,58 @@ fn mediaConnectionDetails(
     var locked = lockState(core);
     defer locked.unlock();
 
-    if (core.active_call) |*ac| {
-        if (ac.host_id == host_id and ac.voice_id == mcd.voice) {
-            if (ac.status.updateCompare(core, @src(), .intent, .connecting) == .intent) {
+    // Only trust the server if we have expressed the intent to join a call.
+    // The intent is represented by having a non-null core.active_call.
+    const ac = &(core.active_call orelse {
+        log.debug(
+            "ignoring media connection info as we don't want to be in a call anymore",
+            .{},
+        );
+        return;
+    });
 
-                // Activates audio streams
-                core.audio.callBegin();
-
-                const host = core.hosts.get(host_id).?;
-                if (host.client.callers.getVoiceRoom(ac.voice_id)) |callers| {
-                    for (callers) |c| {
-                        log.debug("Adding pre-existing caller cid {} user {}", .{
-                            c,
-                            host.client.callers.get(c).?.user,
-                        });
-                        const gop = ac.callers.getOrPut(core.gpa, c) catch oom();
-                        if (!gop.found_existing) {
-                            gop.value_ptr.* = Audio.Caller.create(core.gpa, core) catch oom();
-                        }
-                    }
-                }
-
-                // Asks to the network layer to start the UDP data transfer
-                // for this call.
-                ac.manager_future = io.concurrent(network.runHostMediaManager, .{
-                    core,
-                    host_id,
-                    host.client.status.synced,
-                    mcd.tcp_client,
-                    mcd.nonce,
-                }) catch @panic("no concurrency");
-            } else log.debug(
-                "ignoring media connection info, already connected or quit",
-                .{},
-            );
-        } else log.debug(
+    // Only trust the server if the call is in the host and channel we want to join.
+    if (ac.host_id != host_id or ac.voice_id != mcd.voice) {
+        log.debug(
             "ignoring info for channel we don't care about",
             .{},
         );
-    } else log.debug(
-        "ignoring media connection info as we don't want to be in a call anymore",
-        .{},
-    );
+        return;
+    }
+
+    // Ignore the message if the user has already decided to quit the call.
+    if (ac.status.updateCompare(core, @src(), .intent, .connecting) != .intent) {
+        log.debug(
+            "ignoring media connection info, already connected or quit",
+            .{},
+        );
+    }
+
+    // Reaching this point means:
+    // - We have an active intent to be in a call.
+    // - The right server has given us MCD for the right channel.
+    // - The active_call has successfully transitioned state to 'connecting'.
+
+    const host = core.hosts.get(host_id).?;
+    if (host.client.callers.getVoiceRoom(ac.voice_id)) |callers| {
+        for (callers) |c| {
+            const gop = ac.callers.getOrPut(core.gpa, c) catch oom();
+            if (!gop.found_existing) {
+                gop.value_ptr.* = Audio.Caller.create(core.gpa, core) catch oom();
+            }
+        }
+    }
+
+    // Activate audio streams, which we know will not fail for missing
+    // microphone permissions because callJoin esures it.
+    core.audio.callBegin();
+    ac.manager_future = io.concurrent(network.runHostMediaManager, .{
+        core,
+        host_id,
+        host.client.status.synced,
+        mcd.tcp_client,
+        mcd.nonce,
+    }) catch @panic("no concurrency");
 }
 
 pub const Locked = struct {
@@ -576,13 +586,23 @@ pub const UpdateDevicesEvent = union(enum) {
 
 pub const ActiveCall = struct {
     host_id: Host.ClientOnly.Id = undefined,
-    caller_id: ?awebo.Caller.Id = null,
     voice_id: Channel.Id = undefined,
+    caller_id: ?awebo.Caller.Id = null,
     status: Status = .{},
     push_future: ?Io.Future(error{ Closed, Canceled }!void) = null,
     manager_future: ?Io.Future(void) = null,
     callers: std.AutoArrayHashMapUnmanaged(awebo.Caller.Id, *Audio.Caller),
 
+    /// The user has pressed the mute button and expressed the intent of
+    /// staying muted. The server might apply server-side mute but, once
+    /// that ends, this variable is the source of truth for whether to
+    /// unmute the audio interface or not.
+    ///
+    /// Lastly, the audio interface also has a muted state but that
+    /// represents the state of the audio device, not the user intent. For
+    /// example when we are affected by server side mute the audio
+    /// interface will be set to muted as well, but this variable will be
+    /// still set to `unmuted`.
     muted: Audio.DeviceMuteState = .unmuted,
 
     pub const Status = ui.AtomicEnum(true, .intent, &.{
@@ -732,6 +752,9 @@ pub fn callJoin(
     const gpa = core.gpa;
     const io = core.io;
 
+    // We ensure now that we can use the microphone but the actual audio
+    // activation will happen once we receve MediaConnectionDetails from
+    // the host.
     const permission = core.audio.ensureCapturePermission();
     if (permission != .granted) return permission;
 
