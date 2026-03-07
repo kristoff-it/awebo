@@ -139,7 +139,8 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const HostSync) void {
     if (context != .client) @compileError("client only");
 
     host.client.user_id = delta.user_id;
-    host.client.connection_status = .synced;
+    const conn = host.client.status.connected;
+    host.client.status = .{ .synced = conn };
 
     const db = host.client.db;
     const qs = &host.client.qs;
@@ -260,17 +261,17 @@ pub const ClientOnly = struct {
     input_len: usize = 0,
     active_channel: ?Channel.Id = null,
 
-    connection: ?*network.HostConnection = null,
-    connection_status: ConnectionStatus = .connecting,
+    // connection: ?*network.HostConnection = null,
+    status: Status = .connecting,
 
     pending_requests: std.AutoArrayHashMapUnmanaged(u64, *u8) = .{},
 
     last_sent_typing: u64 = 0,
 
-    pub const ConnectionStatus = union(enum) {
+    pub const Status = union(enum) {
         connecting, // essentially the same as .disconected but should NOT be shown in UI
         connected: *network.HostConnection, // TODO: this maybe should be host state
-        synced,
+        synced: *network.HostConnection,
         disconnected: u64, // essentially the esame as .connecting but should be shown in UI
         reconnecting,
         deleting, // host is being deleted

@@ -24,8 +24,7 @@ pub const dvui_app: dvui.App = .{
             .title = "Awebo",
             .icon = @embedFile("appicon"),
             .window_init_options = .{
-                // Could set a default theme here
-                // .theme = dvui.Theme.builtin.dracula,
+                .theme = dvui.Theme.builtin.adwaita_dark,
             },
         },
     },

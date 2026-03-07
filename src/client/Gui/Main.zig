@@ -25,7 +25,7 @@ pub fn draw(main: *Main, core: *Core, active_scene: *Gui.ActiveScene) !void {
     }
 
     const h = core.hosts.get(core.active_host).?;
-    const frozen = h.client.connection_status != .synced;
+    const frozen = h.client.status != .synced;
 
     main.subviews.host_bar.draw(core);
 
@@ -43,7 +43,7 @@ pub fn draw(main: *Main, core: *Core, active_scene: *Gui.ActiveScene) !void {
             });
             defer bar.deinit();
 
-            switch (h.client.connection_status) {
+            switch (h.client.status) {
                 .synced => unreachable,
                 .disconnected => |retry_time| {
                     {
@@ -62,7 +62,7 @@ pub fn draw(main: *Main, core: *Core, active_scene: *Gui.ActiveScene) !void {
                     }
                 },
                 else => {
-                    dvui.labelNoFmt(@src(), @tagName(h.client.connection_status), .{}, .{ .gravity_x = 0.5 });
+                    dvui.labelNoFmt(@src(), @tagName(h.client.status), .{}, .{ .gravity_x = 0.5 });
                 },
             }
         }

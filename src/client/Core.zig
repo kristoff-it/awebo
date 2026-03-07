@@ -169,8 +169,6 @@ pub fn run(core: *Core) void {
     var first_connect_group: Io.Group = .init;
     defer first_connect_group.cancel(io);
     {
-        var locked = lockState(core);
-        defer locked.unlock();
         persistence.load(core) catch return;
         const hosts = core.hosts.items.values();
         for (hosts) |h| first_connect_group.async(io, network.runHostManager, .{
@@ -187,14 +185,14 @@ pub fn run(core: *Core) void {
         });
     }
 
+    // Done loading, we can now show the main application screen.
+    core.loaded.store(true, .unordered);
+
     defer {
         if (core.active_call) |*ac| {
             ac.disconnect(core);
         }
     }
-
-    // Done loading, we can now show the main application screen.
-    core.loaded.store(true, .unordered);
 
     while (true) {
         const event = core.command_queue.getOne(io) catch return;
@@ -202,7 +200,7 @@ pub fn run(core: *Core) void {
             .network => |msg| {
                 // log.debug("from host {} got {any}", .{ msg.host_id, msg.cmd });
                 switch (msg.cmd) {
-                    .host_connection_update => |hcu| hostConnectionUpdate(core, msg.host_id, hcu),
+                    .host_update => |hcu| hostUpdate(core, msg.host_id, hcu),
                     .caller_speaking => |cs| {
                         var locked = lockState(core);
                         defer locked.unlock();
@@ -240,7 +238,7 @@ pub const Event = union(enum) {
     pub const Network = struct {
         host_id: awebo.Host.ClientOnly.Id,
         cmd: union(enum) {
-            host_connection_update: awebo.Host.ClientOnly.ConnectionStatus,
+            host_update: awebo.Host.ClientOnly.Status,
             caller_speaking: CallerSpeaking,
 
             host_sync: awebo.protocol.server.HostSync,
@@ -267,19 +265,12 @@ pub fn putEvent(core: *Core, event: Event) error{ Canceled, Closed }!void {
     return core.command_queue.putOne(core.io, event);
 }
 
-fn hostConnectionUpdate(core: *Core, id: HostId, hcu: awebo.Host.ClientOnly.ConnectionStatus) void {
+fn hostUpdate(core: *Core, id: HostId, hu: awebo.Host.ClientOnly.Status) void {
     var locked = lockState(core);
     defer locked.unlock();
 
     const host = core.hosts.get(id).?;
-
-    host.client.connection_status = hcu;
-    switch (hcu) {
-        .connected => |hc| host.client.connection = hc,
-        else => {},
-    }
-
-    core.refresh(core, @src(), 0);
+    host.client.status = hu;
 }
 
 fn hostSync(core: *Core, id: HostId, hs: *const awebo.protocol.server.HostSync) void {
@@ -536,7 +527,7 @@ fn mediaConnectionDetails(
                 ac.manager_future = io.concurrent(network.runHostMediaManager, .{
                     core,
                     host_id,
-                    host.client.connection.?,
+                    host.client.status.synced,
                     mcd.tcp_client,
                     mcd.nonce,
                 }) catch @panic("no concurrency");
@@ -628,11 +619,7 @@ pub fn chatHistoryGet(
     from_uid: u64,
     direction: awebo.protocol.client.ChatHistoryGet.Direction,
 ) void {
-    switch (h.client.connection_status) {
-        .connecting, .connected, .disconnected, .reconnecting, .deleting => unreachable, // UI should have prevented this attempt
-        .synced => {},
-    }
-    const conn = h.client.connection.?; // connection must be present if status == .synced
+    const conn = h.client.status.synced; // UI must prevent chatHistoryGet when disconnected
 
     const chg: awebo.protocol.client.ChatHistoryGet = .{
         .chat_channel = channel_id,
@@ -657,11 +644,10 @@ pub fn chatTypingNotify(core: *Core, h: *Host, c: *Channel) !void {
     if (timestamp -% h.client.last_sent_typing <= throttle) return;
     h.client.last_sent_typing = timestamp;
 
-    switch (h.client.connection_status) {
-        .connecting, .connected, .disconnected, .reconnecting, .deleting => unreachable, // UI should have prevented this attempt
-        .synced => {},
-    }
-    const conn = h.client.connection.?; // connection must be present if status == .synced
+    const conn = switch (h.client.status) {
+        .synced => |conn| conn,
+        else => return, // do nothing if we're not synced
+    };
 
     const ChatTypingNotify = awebo.protocol.client.ChatTypingNotify;
     const ctn: ChatTypingNotify = .{
@@ -687,11 +673,7 @@ pub fn messageSend(core: *Core, h: *Host, c: *Channel, text: []const u8) !void {
         .text = text,
     };
 
-    switch (h.client.connection_status) {
-        .connecting, .connected, .disconnected, .reconnecting, .deleting => unreachable, // UI should have prevented this attempt
-        .synced => {},
-    }
-    const conn = h.client.connection.?; // connection must be present if status == .synced
+    const conn = h.client.status.synced; // UI must prevent messageSend if disconnected
 
     // for max performance it would be better to do serialization work in a separate coroutine
     // but from a robustness perspective doing the work here lets us rollback gracefully
@@ -726,7 +708,7 @@ pub fn channelCreate(core: *Core, cmd: *ui.ChannelCreate) !void {
 
     const bytes = try msg.serializeAlloc(gpa);
     try cmd.host.client.pending_requests.put(gpa, cmd.origin, @ptrCast(&cmd.status.impl.raw));
-    try cmd.host.client.connection.?.tcp.queue.putOne(io, bytes);
+    try cmd.host.client.status.synced.tcp.queue.putOne(io, bytes);
 }
 
 /// Returns a future representing the frist connection attempt.
@@ -754,14 +736,9 @@ pub fn callJoin(
     if (permission != .granted) return permission;
 
     const host = core.hosts.get(host_id).?;
-    switch (host.client.connection_status) {
-        .connecting, .connected, .disconnected, .reconnecting, .deleting => unreachable, // UI should have prevented this attempt
-        .synced => {},
-    }
-    const conn = host.client.connection.?; // connection must be present if status == .synced
+    const conn = host.client.status.synced; // UI must prevent callJoin in other states
 
     log.debug("call join: '{}'", .{voice_id});
-
     const cj: awebo.protocol.client.CallJoin = .{
         .voice = voice_id,
         .origin = core.now(),
@@ -778,7 +755,7 @@ pub fn callJoin(
     };
 
     // Attempt to push immediately, in case of contention spawn a coroutine for doing it.
-    if (conn.tcp.queue.put(io, &.{bytes}, 0) catch 0 == 0) {
+    if (0 == conn.tcp.queue.put(io, &.{bytes}, 0) catch return .granted) {
         call.push_future = try io.concurrent(@TypeOf(conn.tcp.queue).putOne, .{
             &conn.tcp.queue,
             io,
@@ -788,7 +765,6 @@ pub fn callJoin(
 
     if (core.active_call) |*ac| ac.disconnect(core);
     core.active_call = call;
-
     return .granted;
 }
 
@@ -816,7 +792,7 @@ pub fn callSetMute(core: *Core, new_state: Audio.DeviceMuteState) void {
             .deafened = false,
         };
         const bytes = msg.serializeAlloc(core.gpa) catch oom();
-        host.client.connection.?.tcp.queue.putOne(core.io, bytes) catch {
+        host.client.status.synced.tcp.queue.putOne(core.io, bytes) catch {
             log.debug("unable to push message!", .{});
         };
         core.refresh(core, @src(), 0);
@@ -834,7 +810,7 @@ pub fn callLeave(core: *Core) !void {
     const host = core.hosts.get(host_id).?;
     const msg: awebo.protocol.client.CallLeave = .{};
     const bytes = try msg.serializeAlloc(gpa);
-    try host.client.connection.?.tcp.queue.putOne(io, bytes);
+    try host.client.status.synced.tcp.queue.putOne(io, bytes);
 }
 
 pub fn now(core: *Core) u64 {

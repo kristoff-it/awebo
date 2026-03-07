@@ -103,7 +103,7 @@ fn header(cp: *ChatPanel, core: *Core, host: *Host, channel: *Channel) !void {
             const bytes = try cp.search.query.serializeAlloc(core.gpa);
             errdefer core.gpa.free(bytes);
 
-            const conn = host.client.connection.?;
+            const conn = host.client.status.synced;
             if (conn.tcp.queue.putOne(core.io, bytes)) {
                 search_bar.enter_pressed = false;
                 cp.search.state = .waiting;
@@ -252,7 +252,7 @@ fn messageList(cp: *ChatPanel, core: *Core, h: *awebo.Host, channel_id: awebo.Ch
     // are we close enough to the top to load more old messages?
     const oldest_uid = if (core.message_window.oldest()) |old| old.id else 1;
 
-    const want_more_history = c.client.state == .ready and
+    const want_more_history = h.client.status == .synced and c.client.state == .ready and
         // on first frame layout calculations are not reliable
         (!first_load and scroll_info.offset(.vertical) <= 100) and
         !c.client.loaded_all_old_messages;
@@ -329,7 +329,7 @@ fn messageList(cp: *ChatPanel, core: *Core, h: *awebo.Host, channel_id: awebo.Ch
 
     // are we close enough to the bottom to want to load newer messages?
     const newest_uid = if (core.message_window.latest()) |new| new.id else 1;
-    const want_more_present = c.client.state == .ready and
+    const want_more_present = h.client.status == .synced and c.client.state == .ready and
         (!first_load and scroll_info.offset(.vertical) > scroll_info.scrollMax(.vertical) - 150) and
         !c.client.loaded_all_new_messages;
 

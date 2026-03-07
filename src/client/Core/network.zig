@@ -65,7 +65,7 @@ pub fn runHostManager(
                 .network = .{
                     .host_id = mode.connect.host_id,
                     .cmd = .{
-                        .host_connection_update = .{ .disconnected = core.now() + (2 * std.time.ns_per_s) },
+                        .host_update = .{ .disconnected = core.now() + (2 * std.time.ns_per_s) },
                     },
                 },
             }) catch return;
@@ -256,7 +256,7 @@ fn runHostManagerFallible(
     try select.concurrent(.send, runHostSend, .{ core, hc });
 
     log.debug("notifying core we connected successfully", .{});
-    try core.putEvent(.{ .network = .{ .host_id = host_id, .cmd = .{ .host_connection_update = .{ .connected = hc } } } });
+    try core.putEvent(.{ .network = .{ .host_id = host_id, .cmd = .{ .host_update = .{ .connected = hc } } } });
 
     _ = try select.await();
 
