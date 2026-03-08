@@ -107,6 +107,10 @@ fn checkClosing(app: *App) bool {
         if ((e.evt == .window and e.evt.window.action == .close) or (e.evt == .app and e.evt.app.action == .quit)) {
             e.handle(@src(), wd);
             log.debug("shutting down core from ui", .{});
+            if (builtin.target.os.tag == .windows) {
+                log.debug("FIXME: delete windows shutdown workaround when zig fixes cancelation", .{});
+                std.process.exit(0);
+            }
             app.core_future.cancel(io);
             return true;
         }
