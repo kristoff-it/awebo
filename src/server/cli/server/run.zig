@@ -16,13 +16,6 @@ const cli = @import("../../../cli.zig");
 
 const server_log = std.log.scoped(.server);
 
-const HANDLER_ROUTINE = *const fn (dwCtrlType: std.os.windows.DWORD) callconv(.winapi) std.os.windows.BOOL;
-
-extern "kernel32" fn SetConsoleCtrlHandler(
-    HandlerRoutine: ?HANDLER_ROUTINE,
-    Add: std.os.windows.BOOL,
-) callconv(.winapi) std.os.windows.BOOL;
-
 var shutdown_event_io: Io = undefined;
 var shutdown_event: Io.Event = .unset;
 pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
@@ -53,6 +46,15 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
         .windows => {
             const win = std.os.windows;
             const Impl = struct {
+                const HANDLER_ROUTINE = *const fn (
+                    dwCtrlType: std.os.windows.DWORD,
+                ) callconv(.winapi) std.os.windows.BOOL;
+
+                extern "kernel32" fn SetConsoleCtrlHandler(
+                    HandlerRoutine: ?HANDLER_ROUTINE,
+                    Add: std.os.windows.BOOL,
+                ) callconv(.winapi) std.os.windows.BOOL;
+
                 fn handler(crtl_type: win.DWORD) callconv(.winapi) win.BOOL {
                     const CTRL_C_EVENT: std.os.windows.DWORD = 0;
                     switch (crtl_type) {
@@ -65,7 +67,7 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
                 }
             };
 
-            if (SetConsoleCtrlHandler(&Impl.handler, std.os.windows.TRUE) == 0) {
+            if (Impl.SetConsoleCtrlHandler(&Impl.handler, std.os.windows.TRUE) == 0) {
                 server_log.err("unable to setup ctrl+c handler, continuing anyway", .{});
             }
         },
@@ -432,7 +434,7 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
                 };
 
                 if ((header.sequence >> 31) > 0) {
-                    server_log.debug("client sent a sequence id > maxint/2,", .{});
+                    server_log.debug("client sent a sequence id > maxint/2, disconnecting", .{});
                     sender.deinit(io, gpa, state);
                     continue;
                 }
@@ -445,41 +447,45 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
                 const receivers = room.keys();
                 var batch: [64]Io.net.OutgoingMessage = undefined;
                 var batch_idx: usize = 0;
-                for (receivers, 0..) |client, idx| {
-                    if (client.udp) |*receiver_udp| {
-                        if (!options.echo) {
-                            if (receiver_udp.id == sender.udp.?.id) continue;
-                        }
-
-                        if (options.echo or receiver_udp.id != sender.udp.?.id) {
-                            // batch[batch_idx] = .{
-                            //     .address = &receiver_udp.addr,
-                            //     .data_ptr = packet.data.ptr,
-                            //     .data_len = packet.data.len,
-                            // };
-
-                            // batch_idx += 1;
-
-                            udp.send(io, &client.udp.?.addr, packet.data) catch unreachable;
-                            _ = &batch;
-                            _ = &batch_idx;
-                            _ = idx;
-                        } else {
-                            server_log.debug("same user, skipping", .{});
-                        }
-                    } else {
+                for (receivers) |client| {
+                    const receiver_udp = &(client.udp orelse {
                         server_log.debug("client {} has no udp yet, skipping", .{client.authenticated.?});
+                        continue;
+                    });
+
+                    if (!options.echo) {
+                        if (receiver_udp.id == sender.udp.?.id) {
+                            server_log.debug("same user, skipping", .{});
+                            continue;
+                        }
                     }
 
-                    // if (batch_idx == batch.len or idx == receivers.len - 1) {
-                    //     udp.sendMany(io, batch[0..batch_idx], .{}) catch |err| {
-                    //         server_log.err("sendMany encountered error {t} while sending {} packets", .{
-                    //             err, batch_idx,
-                    //         });
-                    //         continue;
-                    //     };
-                    //     batch_idx = 0;
-                    // }
+                    batch[batch_idx] = .{
+                        .address = &receiver_udp.addr,
+                        .data_ptr = packet.data.ptr,
+                        .data_len = packet.data.len,
+                    };
+
+                    batch_idx += 1;
+
+                    if (batch_idx == batch.len) {
+                        udp.sendMany(io, batch[0..batch_idx], .{}) catch |err| {
+                            server_log.err("sendMany encountered error {t} while sending {} packets", .{
+                                err, batch_idx,
+                            });
+                            continue;
+                        };
+                        batch_idx = 0;
+                    }
+                }
+
+                if (batch_idx > 0) {
+                    udp.sendMany(io, batch[0..batch_idx], .{}) catch |err| {
+                        server_log.err("sendMany encountered error {t} while sending {} packets", .{
+                            err, batch_idx,
+                        });
+                        continue;
+                    };
                 }
             },
         }
