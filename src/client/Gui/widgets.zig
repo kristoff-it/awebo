@@ -35,22 +35,26 @@ pub fn button(
 
     dvui.labelNoFmt(@src(), label, .{}, .{ .color_text = disabled_opt.color_text });
 
-    const tt = tooltip(@src(), .{ .active_rect = btout.borderRectScale().r }, "{s}", .{enabled.off}, .{
-        .id_extra = disabled_opt.id_extra,
-    });
+    var tt: dvui.FloatingTooltipWidget = undefined;
+    tt.init(@src(), .{ .active_rect = btout.borderRectScale().r }, .{ .background = false, .border = .{} });
     defer tt.deinit();
 
-    if (dvui.animationGet(tt.data().id, "xoffset")) |a| {
-        std.log.debug("wiggle frame!", .{});
-        var r = tt.data().rect;
-        std.log.debug("before: {any}", .{r});
-        r.x += 20 * (1.0 - a.value()) * (1.0 - a.value()) * @sin(a.value() * std.math.pi * 50);
-        std.log.debug("after: {any}", .{r});
-        tt.data().rect = r;
+    if (tt.shown()) {
+        var vbox: dvui.BoxWidget = undefined;
+        vbox.init(@src(), .{}, dvui.FloatingTooltipWidget.defaults.override(.{ .expand = .both }));
+        defer vbox.deinit();
+
+        if (dvui.animationGet(tt.data().id, "xoffset")) |a| {
+            var r = vbox.data().rect;
+            r.x += 20 * (1.0 - a.value()) * (1.0 - a.value()) * @sin(a.value() * std.math.pi * 50);
+            vbox.data().rectSet(r);
+        }
+        vbox.drawBackground();
+
+        dvui.label(@src(), "{s}", .{enabled.off}, .{});
     }
 
     if (bw.clicked()) {
-        std.log.debug("wiggle on!", .{});
         dvui.animation(tt.data().id, "xoffset", .{
             .start_val = 0,
             .end_val = 1.0,
