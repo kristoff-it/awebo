@@ -43,8 +43,8 @@
             .hash = "zeit-0.6.0-5I6bk2i6AgDYOczMsuuKcM7NYuOoTtxWEsZDsg8kSTiv",
         },
         .xcode_frameworks = .{
-            .url = "git+https://codeberg.org/brodo/xcode-frameworks.git#29958a106e81574a824dc7b6266fe5b8ce585325",
-            .hash = "xcode_frameworks-0.0.0-VCh8gkKaXwcEian-X8DvPvEkppbUu6hkdHy9u_ZLzGci",
+            .url = "git+https://codeberg.org/brodo/xcode-frameworks.git#b59ab39b4f1b761b8e619575bb1258159b5022da",
+            .hash = "xcode_frameworks-0.0.0-VCh8ghQdbgdbo3YAORsgC-OkhpmcEFsgSbx_XqoFR_G0",
         },
         .rnnoise = .{
             .url = "git+https://github.com/allyourcodebase/rnnoise#41ef44875913c889a38e07564b524055c9b5cf95",
