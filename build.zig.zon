@@ -2,15 +2,15 @@
     .name = .awebo,
     .version = "0.0.1",
     .fingerprint = 0x50424de2ba07ebcc,
-    .minimum_zig_version = "0.16.0-dev.2694+74f361a5c",
+    .minimum_zig_version = "0.16.0-dev.2821+3edaef9e0",
     .dependencies = .{
         .miniaudio = .{
             .url = "git+https://github.com/allyourcodebase/miniaudio#21bc669859ef3f6aabd0a2de0931b80cff8837c5",
             .hash = "miniaudio-0.11.25-LWmAG1UgAAABQoUxopYnG2xp1un2FWnSfdKiTLX2ix-i",
         },
         .dvui = .{
-            .url = "git+https://github.com/david-vanderson/dvui.git?ref=zig16-dev#52199cb4a4304fed7f71aea37db2a32e2dd14cb2",
-            .hash = "dvui-0.4.0-dev-AQFJmfli2wBlGBUETD1lhP0E2ZnY2nIKgCdeUIH43c8J",
+            .url = "git+https://github.com/david-vanderson/dvui.git?ref=zig16-dev#90faef537a337249292add8393d4a2b1a77083ee",
+            .hash = "dvui-0.4.0-dev-AQFJmRBj2wAhrS3dRe3YtpXKBboC4Rpszy_e0TyfEFQz",
         },
         .pulseaudio = .{
             .url = "https://github.com/andrewrk/pulseaudio/archive/909a2ceebcc4efe74418107c279ac239f28e0f61.tar.gz",
@@ -35,8 +35,8 @@
             .hash = "known_folders-0.0.0-Fy-PJiXKAACLbIUjxVqJRTSLc6HNnMkCSBnC5LW0Lx_v",
         },
         .vaxis = .{
-            .url = "git+https://github.com/andrewrk/libvaxis?ref=awebo#06917890fed93daf5b78d951557acb57033e7d16",
-            .hash = "vaxis-0.5.1-BWNV_AxECQCj3p4Hcv4U3Yo1WMUJ7Z2FUj0UkpuJGxQQ",
+            .url = "git+https://github.com/andrewrk/libvaxis?ref=awebo#c0d9aaa40db960124275b865fba28c6674e237e1",
+            .hash = "vaxis-0.5.1-BWNV_CBGCQBsWrTf5tTIyT9QfAlP9-icjn3jMaEbkLMf",
         },
         .zeit = .{
             .url = "git+https://github.com/andrewrk/zeit?ref=0.16#ec2953277276acd1d938490a8000782482142d12",
