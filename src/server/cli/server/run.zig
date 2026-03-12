@@ -11,7 +11,7 @@ const Database = awebo.Database;
 const Query = Database.Query;
 const Host = awebo.Host;
 const Header = awebo.protocol.media.Header;
-const OpenStream = awebo.protocol.media.OpenStream;
+const OpenPath = awebo.protocol.media.OpenPath;
 const cli = @import("../../../cli.zig");
 
 const server_log = std.log.scoped(.server);
@@ -346,7 +346,7 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
     server_log.debug("{s} started", .{@src().fn_name});
     defer server_log.debug("{s} exiting", .{@src().fn_name});
 
-    awebo.network_utils.setCurrentThreadRealtime();
+    awebo.network_utils.setCurrentThreadRealtime(20);
 
     var dbuf: [1280]u8 = undefined;
 
@@ -377,117 +377,142 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
         defer locked.unlock(io);
         const state = locked.state;
 
-        switch (header.kind()) {
-            .open_stream => {
-                const os = OpenStream.parse(body) orelse {
-                    server_log.debug("not enough bytes to parse OpenStream, ignoring", .{});
-                    continue;
+        // OpenStream packet
+        if (header.sequence == 0) {
+            if (@intFromEnum(header.stream_id.kind) != 0) {
+                server_log.debug("dropping bad open stream packet", .{});
+                continue;
+            }
+
+            const os = OpenPath.parse(body) orelse {
+                server_log.debug("bad OpenStream packet, ignoring", .{});
+                continue;
+            };
+
+            server_log.debug("new udp client: {f} {any}", .{ packet.from, os });
+
+            const client = state.clients.tcp_index.get(header.stream_id.client_id) orelse {
+                server_log.debug("could not find matching TCP connection, ignoring", .{});
+                continue;
+            };
+
+            const v = client.voice orelse {
+                server_log.debug("TCP client did not request a UDP session, ignoring", .{});
+                continue;
+            };
+
+            if (v.nonce != os.nonce) {
+                server_log.debug("bad nonce, ignoring", .{});
+                continue;
+            }
+
+            if (client.udp != null) {
+                _ = state.removeUdp(io, gpa, client);
+            }
+
+            state.setUdp(gpa, client, packet.from);
+
+            {
+                server_log.debug("CU JOIN = {}", .{client.authenticated.?});
+                const cu: awebo.protocol.server.CallersUpdate = .{
+                    .caller = .{
+                        .id = client.authenticated.?,
+                        .voice = client.voice.?.id,
+                        .state = .{},
+                    },
+                    .action = .join,
                 };
 
-                server_log.debug("new udp client: {f} {any}", .{ packet.from, os });
+                const msg = cu.serializeAlloc(gpa) catch unreachable;
+                errdefer gpa.free(msg);
 
-                const client = state.clients.tcp_index.get(@intCast(os.tcp_client)) orelse {
-                    server_log.debug("could not find matching TCP connection, ignoring", .{});
-                    continue;
-                };
+                state.tcpBroadcast(io, gpa, msg);
+            }
+            continue;
+        }
 
-                const v = client.voice orelse {
-                    server_log.debug("TCP client did not request a UDP session, ignoring", .{});
-                    continue;
-                };
+        // Media packet
 
-                if (v.nonce != os.nonce) {
-                    server_log.debug("bad nonce, ignoring", .{});
-                    continue;
-                }
+        const sender = state.clients.udp_index.get(packet.from) orelse {
+            server_log.debug("received media udp packet from unknown source: {f}", .{packet.from});
+            continue;
+        };
 
-                if (client.udp != null) {
-                    _ = state.removeUdp(io, gpa, client);
-                }
+        if ((header.sequence >> 31) > 0) {
+            server_log.debug("client sent a sequence id > maxint/2, disconnecting", .{});
+            sender.deinit(io, gpa, state);
+            continue;
+        }
 
-                state.setUdp(gpa, client, packet.from);
+        // Make sure the client doesn't spoof the sender id
+        // sender.udp.?.last_msg_ms = state.id.new();
+        header.stream_id.client_id = sender.authenticated.?;
 
-                {
-                    server_log.debug("CU JOIN = {}", .{client.udp.?.id});
-                    const cu: awebo.protocol.server.CallersUpdate = .{
-                        .caller = .{
-                            .id = @intCast(client.udp.?.id),
-                            .voice = client.voice.?.id,
-                            .user = client.authenticated.?,
-                            .state = .{},
-                        },
-                        .action = .join,
-                    };
-
-                    const msg = cu.serializeAlloc(gpa) catch unreachable;
-                    errdefer gpa.free(msg);
-
-                    state.tcpBroadcast(io, gpa, msg);
-                }
+        switch (header.stream_id.kind) {
+            else => unreachable,
+            .voice => {
+                const voice, _ = awebo.protocol.media.Voice.parse(body) orelse continue;
+                server_log.debug("Voice({f} seq: {} restart: {})", .{
+                    header.stream_id.client_id,
+                    header.sequence,
+                    voice.restart,
+                });
             },
+            .screen => {
+                const screen, _ = awebo.protocol.media.Video.parse(body) orelse continue;
+                server_log.debug("Screen({f} seq: {} chunk: [{}/{}]{s})", .{
+                    header.stream_id.client_id,
+                    header.sequence,
+                    screen.chunk_id,
+                    screen.total_chunks,
+                    if (screen.keyframe) "k" else "",
+                });
+            },
+        }
 
-            .media => {
-                server_log.debug("received {}", .{header.sequence});
-                const sender = state.clients.udp_index.get(packet.from) orelse {
-                    server_log.debug("received media udp packet from unknown source: {f}", .{packet.from});
-                    continue;
-                };
+        const room = state.clients.voice_index.get(sender.voice.?.id).?;
+        const receivers = room.keys();
+        var batch: [64]Io.net.OutgoingMessage = undefined;
+        var batch_idx: usize = 0;
+        for (receivers) |client| {
+            const receiver_udp = &(client.udp orelse {
+                server_log.debug("client {} has no udp yet, skipping", .{client.authenticated.?});
+                continue;
+            });
 
-                if ((header.sequence >> 31) > 0) {
-                    server_log.debug("client sent a sequence id > maxint/2, disconnecting", .{});
-                    sender.deinit(io, gpa, state);
+            if (!options.echo) {
+                if (client.authenticated.? == sender.authenticated.?) {
+                    server_log.debug("same user, skipping", .{});
                     continue;
                 }
+            }
 
-                // Make sure the client doen't spoof the sender id
-                sender.udp.?.last_msg_ms = state.id.new();
-                header.id.client_id = sender.udp.?.id;
+            batch[batch_idx] = .{
+                .address = &receiver_udp.addr,
+                .data_ptr = packet.data.ptr,
+                .data_len = packet.data.len,
+            };
 
-                const room = state.clients.voice_index.get(sender.voice.?.id).?;
-                const receivers = room.keys();
-                var batch: [64]Io.net.OutgoingMessage = undefined;
-                var batch_idx: usize = 0;
-                for (receivers) |client| {
-                    const receiver_udp = &(client.udp orelse {
-                        server_log.debug("client {} has no udp yet, skipping", .{client.authenticated.?});
-                        continue;
+            batch_idx += 1;
+
+            if (batch_idx == batch.len) {
+                udp.sendMany(io, batch[0..batch_idx], .{}) catch |err| {
+                    server_log.err("sendMany encountered error {t} while sending {} packets", .{
+                        err, batch_idx,
                     });
+                    continue;
+                };
+                batch_idx = 0;
+            }
+        }
 
-                    if (!options.echo) {
-                        if (receiver_udp.id == sender.udp.?.id) {
-                            server_log.debug("same user, skipping", .{});
-                            continue;
-                        }
-                    }
-
-                    batch[batch_idx] = .{
-                        .address = &receiver_udp.addr,
-                        .data_ptr = packet.data.ptr,
-                        .data_len = packet.data.len,
-                    };
-
-                    batch_idx += 1;
-
-                    if (batch_idx == batch.len) {
-                        udp.sendMany(io, batch[0..batch_idx], .{}) catch |err| {
-                            server_log.err("sendMany encountered error {t} while sending {} packets", .{
-                                err, batch_idx,
-                            });
-                            continue;
-                        };
-                        batch_idx = 0;
-                    }
-                }
-
-                if (batch_idx > 0) {
-                    udp.sendMany(io, batch[0..batch_idx], .{}) catch |err| {
-                        server_log.err("sendMany encountered error {t} while sending {} packets", .{
-                            err, batch_idx,
-                        });
-                        continue;
-                    };
-                }
-            },
+        if (batch_idx > 0) {
+            udp.sendMany(io, batch[0..batch_idx], .{}) catch |err| {
+                server_log.err("sendMany encountered error {t} while sending {} packets", .{
+                    err, batch_idx,
+                });
+                continue;
+            };
         }
     }
 }
@@ -525,14 +550,13 @@ const Client = struct {
         queue: Io.Queue(*TcpMessage),
     },
 
-    authenticated: ?awebo.User.Id = null,
+    authenticated: ?awebo.protocol.client.Id = null,
     voice: ?struct {
         id: awebo.Channel.Id,
         nonce: u64,
     } = null,
 
     udp: ?struct {
-        id: u15,
         addr: Io.net.IpAddress,
         last_msg_ms: u64,
     } = null,
@@ -556,7 +580,7 @@ const Client = struct {
         }
 
         // remove from tcp index
-        _ = state.clients.tcp_index.remove(client.tcp.connected_at);
+        _ = state.clients.tcp_index.remove(client.authenticated orelse return);
 
         // remove from callers
         _ = state.removeFromCall(io, gpa, client);
@@ -611,15 +635,21 @@ const Client = struct {
         try state.host.users.set(gpa, user);
 
         log.debug("client authenticated successfully as '{s}'", .{user.handle});
-        client.authenticated = user.id;
+        const client_id: awebo.protocol.client.Id = .{
+            .user_id = user.id,
+            .slot = 0, // Temporary hack
+        };
+
+        client.authenticated = client_id;
+
         if (state.clients.head) |old_head| {
             client.next = old_head;
             old_head.prev = client;
         }
 
         state.clients.head = client;
-        state.clients.tcp_index.putNoClobber(gpa, client.tcp.connected_at, client) catch @panic("oom");
-        errdefer assert(state.clients.tcp_index.remove(client.tcp.connected_at));
+        state.clients.tcp_index.putNoClobber(gpa, client_id, client) catch @panic("oom");
+        errdefer assert(state.clients.tcp_index.remove(client_id));
 
         const reply: awebo.protocol.server.AuthenticateReply = .{
             .protocol_version = 1,
@@ -627,7 +657,7 @@ const Client = struct {
         };
         const auth_bytes = try reply.serializeAlloc(gpa);
 
-        const hs = try state.host.computeDelta(gpa, &state.clients, user.id, cmd.max_uid, state.id.last);
+        const hs = try state.host.computeDelta(gpa, &state.clients, client_id, cmd.max_uid, state.id.last);
         const bytes = try hs.serializeAlloc(gpa);
         errdefer gpa.free(bytes);
 
@@ -726,7 +756,7 @@ const Client = struct {
             const state = locked.state;
 
             {
-                const gop = try state.user_limits.getOrPut(gpa, client.authenticated.?);
+                const gop = try state.client_limits.getOrPut(gpa, client.authenticated.?);
                 if (!gop.found_existing) gop.value_ptr.* = .init(io, .user_action);
 
                 const limiter = gop.value_ptr;
@@ -776,8 +806,7 @@ const Client = struct {
 
         const mcd: awebo.protocol.server.MediaConnectionDetails = .{
             .voice = cmd.voice,
-            .tcp_client = client.tcp.connected_at,
-            .nonce = 12345,
+            .nonce = 12345, // number chosen by me, guaranteed to be random!
         };
         const bytes = try mcd.serializeAlloc(gpa);
         errdefer gpa.free(bytes);
@@ -798,7 +827,7 @@ const Client = struct {
             const state = locked.state;
 
             {
-                const gop = try state.user_limits.getOrPut(gpa, client.authenticated.?);
+                const gop = try state.client_limits.getOrPut(gpa, client.authenticated.?);
                 if (!gop.found_existing) gop.value_ptr.* = .init(io, .user_action);
 
                 const limiter = gop.value_ptr;
@@ -834,13 +863,11 @@ const Client = struct {
 
             caller_state.muted = cmd.muted;
             caller_state.deafened = cmd.deafened;
-            const udp = client.udp orelse return;
 
             const cu: awebo.protocol.server.CallersUpdate = .{
                 .caller = .{
-                    .id = @intCast(udp.id),
+                    .id = client.authenticated.?,
                     .voice = voice.id,
-                    .user = client.authenticated.?,
                     .state = caller_state.*,
                 },
                 .action = .update,
@@ -864,7 +891,7 @@ const Client = struct {
             // subject to rate limiting if the request results in a noop.
             const was_noop = !state.removeFromCall(io, gpa, client);
             if (was_noop) {
-                const gop = try state.user_limits.getOrPut(gpa, client.authenticated.?);
+                const gop = try state.client_limits.getOrPut(gpa, client.authenticated.?);
                 if (!gop.found_existing) gop.value_ptr.* = .init(io, .user_action);
 
                 const limiter = gop.value_ptr;
@@ -894,7 +921,7 @@ const Client = struct {
         defer locked.unlock(io);
         const state = locked.state;
 
-        const gop = try state.user_limits.getOrPut(gpa, client.authenticated.?);
+        const gop = try state.client_limits.getOrPut(gpa, client.authenticated.?);
         if (!gop.found_existing) gop.value_ptr.* = .init(io, .user_action);
 
         const limiter = gop.value_ptr;
@@ -910,7 +937,7 @@ const Client = struct {
         };
 
         const ct: awebo.protocol.server.ChatTyping = .{
-            .uid = client.authenticated.?,
+            .uid = client.authenticated.?.user_id,
             .channel = channel.id,
         };
 
@@ -928,7 +955,7 @@ const Client = struct {
         defer locked.unlock(io);
         const state = locked.state;
 
-        const gop = try state.user_limits.getOrPut(gpa, client.authenticated.?);
+        const gop = try state.client_limits.getOrPut(gpa, client.authenticated.?);
         if (!gop.found_existing) gop.value_ptr.* = .init(io, .user_action);
 
         const limiter = gop.value_ptr;
@@ -964,7 +991,7 @@ const Client = struct {
             .created = .now(io, state.host.epoch),
             .update_uid = null,
             .kind = .chat,
-            .author = client.authenticated.?,
+            .author = client.authenticated.?.user_id,
             .text = cms.text,
         };
 
@@ -1003,7 +1030,7 @@ const Client = struct {
         defer locked.unlock(io);
         const state = locked.state;
 
-        const gop = try state.user_limits.getOrPut(gpa, client.authenticated.?);
+        const gop = try state.client_limits.getOrPut(gpa, client.authenticated.?);
         if (!gop.found_existing) gop.value_ptr.* = .init(io, .user_action);
 
         const limiter = gop.value_ptr;
@@ -1132,7 +1159,7 @@ const Client = struct {
 
     pub const ClientLog = struct {
         client: *const Client,
-        const fmt_prefix = "{f} ({?d}) ";
+        const fmt_prefix = "{f} ({?f}) ";
         pub fn debug(l: ClientLog, comptime fmt: []const u8, args: anytype) void {
             server_log.debug(fmt_prefix ++ fmt, .{ l.client.tcp.stream.socket.address, l.client.authenticated } ++ args);
         }
@@ -1171,12 +1198,11 @@ var ___state: struct {
     settings: Settings = undefined,
     host: Host = .{},
     /// Per-user rate limiters, use User.Id to index into the array
-    user_limits: std.AutoHashMapUnmanaged(awebo.User.Id, RateLimiter) = .empty,
+    client_limits: std.AutoHashMapUnmanaged(awebo.protocol.client.Id, RateLimiter) = .empty,
     clients: struct {
         head: ?*Client = null,
 
-        /// We use connection time of a TCP socket as a unique identifier
-        tcp_index: std.AutoHashMapUnmanaged(i96, *Client) = .{},
+        tcp_index: std.AutoHashMapUnmanaged(awebo.protocol.client.Id, *Client) = .{},
 
         /// Clients gain a udp address when they connect to a call.
         udp_index: std.AutoHashMapUnmanaged(Io.net.IpAddress, *Client) = .{},
@@ -1201,8 +1227,6 @@ var ___state: struct {
             self.voice_index.deinit(gpa);
         }
     } = .{},
-
-    var client_id: u15 = 0;
 
     fn init(state: *State, io: Io, gpa: Allocator) !void {
         _ = io;
@@ -1318,15 +1342,13 @@ var ___state: struct {
 
         state.host.deinit(gpa);
         state.clients.deinit(gpa);
-        state.user_limits.deinit(gpa);
+        state.client_limits.deinit(gpa);
     }
 
     fn setUdp(state: *State, gpa: Allocator, client: *Client, addr: Io.net.IpAddress) void {
         std.debug.assert(client.udp == null);
 
-        client_id += 1;
         client.udp = .{
-            .id = client_id,
             .addr = addr,
             .last_msg_ms = state.id.new(),
         };
@@ -1355,14 +1377,12 @@ var ___state: struct {
     }
 
     fn removeUdp(state: *State, io: Io, gpa: Allocator, client: *Client) bool {
-        const udp = client.udp orelse return false;
         const vid = client.voice.?.id;
-        server_log.debug("CU LEAVE = {}", .{udp.id});
+        server_log.debug("CU LEAVE = {}", .{client.authenticated.?});
         const cu: awebo.protocol.server.CallersUpdate = .{
             .caller = .{
-                .id = @intCast(udp.id),
+                .id = client.authenticated.?,
                 .voice = vid,
-                .user = client.authenticated.?,
                 .state = .{},
             },
             .action = .leave,
@@ -1573,7 +1593,7 @@ pub const Queries = struct {
     , .{
         .kind = .row,
         .cols = struct {
-            id: u64,
+            id: awebo.User.Id,
             created: awebo.Date,
             display_name: []const u8,
             update_uid: u64,

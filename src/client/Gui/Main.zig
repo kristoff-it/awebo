@@ -5,8 +5,9 @@ const dvui = @import("dvui");
 const awebo = @import("../../awebo.zig");
 const HostBar = @import("Main/HostBar.zig");
 const ChannelList = @import("Main/ChannelList.zig");
-const ChatPanel = @import("Main/ChatPanel.zig");
 const HomePanel = @import("Main/HomePanel.zig");
+const ChatPanel = @import("Main/ChatPanel.zig");
+const VoicePanel = @import("Main/VoicePanel.zig");
 const Gui = @import("../Gui.zig");
 const Core = @import("../Core.zig");
 const Host = awebo.Host;
@@ -15,8 +16,9 @@ const Voice = awebo.channels.Voice;
 subviews: struct {
     host_bar: HostBar = .{},
     channel_list: ChannelList = .{},
-    chat_panel: ChatPanel = .{},
     home_panel: HomePanel = .{},
+    chat_panel: ChatPanel = .{},
+    voice_panel: VoicePanel = .{},
 } = .{},
 
 pub fn draw(main: *Main, core: *Core, active_scene: *Gui.ActiveScene) !void {
@@ -76,7 +78,7 @@ pub fn draw(main: *Main, core: *Core, active_scene: *Gui.ActiveScene) !void {
         if (h.client.active_channel) |ac| {
             switch (h.channels.get(ac).?.kind) {
                 .chat => try main.subviews.chat_panel.draw(core, frozen),
-                .voice => @panic("TODO"),
+                .voice => try main.subviews.voice_panel.draw(core, frozen),
             }
         }
     }

@@ -348,6 +348,10 @@ fn renderVoiceChannel(cl: *ChannelList, core: *Core, h: *awebo.Host, v: *const C
             });
             defer item.deinit();
 
+            if (item.activated) {
+                h.client.active_channel = v.id;
+            }
+
             if (core.active_call) |call| {
                 const active = call.voice_id == v.id;
                 if (active) {
@@ -372,14 +376,14 @@ fn renderVoiceChannel(cl: *ChannelList, core: *Core, h: *awebo.Host, v: *const C
     for (callers) |cid| {
         const caller = h.client.callers.get(cid).?;
 
-        if (caller.user == h.client.user_id and
+        if (caller.id == h.client.id and
             core.active_call == null) continue;
 
-        const m = h.users.get(caller.user).?;
+        const m = h.users.get(caller.id.user_id).?;
         const item = dvui.menuItem(@src(), .{}, .{
             .margin = .{ .x = 8, .w = 8 },
             .gravity_x = 0,
-            .id_extra = caller.id,
+            .id_extra = caller.id.toInt(),
             .expand = .horizontal,
         });
         defer item.deinit();
@@ -432,12 +436,12 @@ fn renderVoiceChannel(cl: *ChannelList, core: *Core, h: *awebo.Host, v: *const C
             else => false,
         } else false;
 
-        const text_color: dvui.Color = if (caller.user == h.client.user_id and pending) .gray else .white;
+        const text_color: dvui.Color = if (caller.id == h.client.id and pending) .gray else .white;
 
         var speaking = false;
         if (core.active_call) |*ac| {
             if (ac.callers.get(caller.id)) |c| {
-                speaking = c.speaking_last_ns + (250 * std.time.ns_per_ms) >= core.now();
+                speaking = c.audio.speaking_last_ns + (250 * std.time.ns_per_ms) >= core.now();
             }
         }
 
@@ -456,7 +460,7 @@ fn renderVoiceChannel(cl: *ChannelList, core: *Core, h: *awebo.Host, v: *const C
             if (caller.state.muted) " [M]" else "",
         }, .{
             .font = .theme(.title),
-            .id_extra = caller.id,
+            .id_extra = caller.id.toInt(),
             .color_text = text_color,
             .background = true,
             .color_border = bg_color,
@@ -520,7 +524,7 @@ fn userbox(cl: *ChannelList, active_scene: *Gui.ActiveScene, h: *awebo.Host) !vo
     });
     defer user_box.deinit();
 
-    const user = h.users.get(h.client.user_id) orelse return;
+    const user = h.users.get(h.client.id.user_id) orelse return;
     // try dvui.image(@src(), "avatar", user.avatar, .{
     //     .gravity_y = 0,
     //     .gravity_x = 0.5,

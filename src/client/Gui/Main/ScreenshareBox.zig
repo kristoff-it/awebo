@@ -22,7 +22,7 @@ pub fn draw(sb: *ScreenshareBox, core: *Core, source: enum { webcam, screen }) !
 
         if (maybe_frame) |new| {
             defer new.deinit();
-            const img = new.getPixels();
+            const img = new.getImage();
             const pixels = img.pixels orelse {
                 std.log.debug("null pixels", .{});
                 return;
@@ -61,4 +61,9 @@ pub fn draw(sb: *ScreenshareBox, core: *Core, source: enum { webcam, screen }) !
     defer w.deinit();
 
     try dvui.renderTexture(tex, w.wd.contentRectScale(), .{});
+
+    dvui.label(@src(), "{t} preview", .{source}, .{
+        .gravity_x = 1,
+        .gravity_y = 1,
+    });
 }

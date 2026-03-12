@@ -52,7 +52,13 @@ pub fn MakeSerializeFn(T: type) SerializeFn(T) {
                 .void => {},
                 .bool => try w.writeByte(@intFromBool(elem)),
                 .int => try w.writeInt(E, elem, .little),
-                .@"enum" => |enum_info| try w.writeInt(enum_info.tag_type, @intFromEnum(elem), .little),
+                .@"enum" => |enum_info| {
+                    const Int = switch (enum_info.tag_type) {
+                        u26 => u32,
+                        else => enum_info.tag_type,
+                    };
+                    try w.writeInt(Int, @intFromEnum(elem), .little);
+                },
                 .optional => {
                     if (elem) |e| {
                         try w.writeByte(1);
@@ -87,6 +93,14 @@ pub fn MakeSerializeFn(T: type) SerializeFn(T) {
                     comptime assert(@hasDecl(T, "protocol")); // all structs in a message must define a protocol decl
                     if (@hasDecl(E.protocol, "skip") and E.protocol.skip) return;
                     if (@hasDecl(E.protocol, "serialize")) return E.protocol.serialize(elem, serializeInner, w);
+                    if (struct_info.layout == .@"packed") {
+                        const RawInt = struct_info.backing_integer.?;
+                        const Int = switch (RawInt) {
+                            u30 => u32,
+                            else => |I| @compileError("add support for " ++ @typeName(I)),
+                        };
+                        return w.writeInt(Int, @as(RawInt, @bitCast(elem)), .little);
+                    }
                     inline for (struct_info.fields) |f| {
                         switch (@typeInfo(f.type)) {
                             else => try serializeInner(@field(elem, f.name), w),
@@ -137,7 +151,13 @@ pub fn MakeDeserializeFn(T: type) DeserializeFn(T) {
                 .void => return {},
                 .bool => return (try r.takeByte()) == 1,
                 .int => return r.takeInt(E, .little),
-                .@"enum" => |enum_info| return @enumFromInt(try r.takeInt(enum_info.tag_type, .little)),
+                .@"enum" => |enum_info| {
+                    const Int = switch (enum_info.tag_type) {
+                        u26 => u32,
+                        else => enum_info.tag_type,
+                    };
+                    return @enumFromInt(try r.takeInt(Int, .little));
+                },
                 .@"union" => |union_info| {
                     if (!@hasDecl(E, "protocol")) {
                         @compileError("missing protocol decl in union " ++ @typeName(E));
@@ -157,6 +177,14 @@ pub fn MakeDeserializeFn(T: type) DeserializeFn(T) {
                     comptime assert(@hasDecl(E, "protocol")); // all structs in a message must define a protocol decl
                     if (@hasDecl(E.protocol, "skip") and E.protocol.skip) return .{};
                     if (@hasDecl(E.protocol, "deserialize")) return E.protocol.deserialize(deserializeInner, r);
+                    if (struct_info.layout == .@"packed") {
+                        const RawInt = struct_info.backing_integer.?;
+                        const Int = switch (RawInt) {
+                            u30 => u32,
+                            else => |I| @compileError("add support for " ++ @typeName(I)),
+                        };
+                        return @bitCast(@as(RawInt, @truncate(try r.takeInt(Int, .little))));
+                    }
 
                     var s: E = undefined;
                     inline for (struct_info.fields) |f| {
@@ -191,7 +219,13 @@ pub fn MakeDeserializeAllocFn(T: type) DeserializeAllocFn(T) {
                 .void => return {},
                 .bool => return (try r.takeByte()) == 1,
                 .int => return r.takeInt(E, .little),
-                .@"enum" => |enum_info| return @enumFromInt(try r.takeInt(enum_info.tag_type, .little)),
+                .@"enum" => |enum_info| {
+                    const Int = switch (enum_info.tag_type) {
+                        u26 => u32,
+                        else => enum_info.tag_type,
+                    };
+                    return @enumFromInt(try r.takeInt(Int, .little));
+                },
                 .optional => |opt_info| {
                     const present = try r.takeByte();
                     switch (present) {
@@ -241,6 +275,14 @@ pub fn MakeDeserializeAllocFn(T: type) DeserializeAllocFn(T) {
                     comptime assert(@hasDecl(T, "protocol")); // all structs in a message must define a protocol decl
                     if (@hasDecl(E.protocol, "skip") and E.protocol.skip) return .{};
                     if (@hasDecl(E.protocol, "deserializeAlloc")) return E.protocol.deserializeAlloc(deserializeAllocInner, gpa, r);
+                    if (struct_info.layout == .@"packed") {
+                        const RawInt = struct_info.backing_integer.?;
+                        const Int = switch (RawInt) {
+                            u30 => u32,
+                            else => |I| @compileError("add support for " ++ @typeName(I)),
+                        };
+                        return @bitCast(@as(RawInt, @truncate(try r.takeInt(Int, .little))));
+                    }
 
                     var s: E = undefined;
                     // TODO: errdefer :^)

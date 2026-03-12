@@ -160,7 +160,7 @@ fn typingActivity(cp: *ChatPanel, core: *Core, h: *awebo.Host, c: *Channel) !voi
 
             i += 1;
 
-            if (uid == h.client.user_id) continue;
+            if (uid == h.client.id.user_id) continue;
 
             min_timeout = @min(min_timeout, diff);
 
@@ -437,7 +437,7 @@ fn messageList(cp: *ChatPanel, core: *Core, h: *awebo.Host, channel_id: awebo.Ch
 
         if (mit.peek() == null) {
             if (c.client.pending_messages.count() > 0) {
-                var id = if (last_author != h.client.user_id) h.client.user_id else null;
+                var id = if (last_author != h.client.id.user_id) h.client.id.user_id else null;
                 for (c.client.pending_messages.values(), 0..) |pm, pmidx| {
                     drawMessage(
                         h,
@@ -534,7 +534,7 @@ fn drawMessage(
     text: []const u8,
     idx: usize,
 ) void {
-    if (date_fmt == null) if (author_id) |aid| assert(aid == h.client.user_id);
+    if (date_fmt == null) if (author_id) |aid| assert(aid == h.client.id.user_id);
 
     const msg_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
         .expand = .horizontal,

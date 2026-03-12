@@ -1,9 +1,25 @@
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const awebo = @import("../../awebo.zig");
-const Voice = awebo.channels.Voice;
 
-/// Header attached to all UDP messages
+pub const StreamId = packed struct(u32) {
+    client_id: awebo.protocol.client.Id,
+    kind: StreamKind,
+
+    pub fn format(sid: StreamId, w: *Io.Writer) !void {
+        try w.print("Stream({f}, {t})", .{ sid.client_id, sid.kind });
+    }
+};
+
+pub const StreamKind = enum(u2) {
+    voice = 0,
+    camera = 1,
+    screen = 2,
+    reserved = 3,
+};
+
+/// Header attached to all UDP messages.
 pub const Header = extern struct {
     //  0                   1                   2                   3
     //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -12,67 +28,39 @@ pub const Header = extern struct {
     // |                       IP + UDP Header                         | 28
     // |                                                               |
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    // |             Unused            |            Client ID        |S| 4
+    // |                          User ID                  |  CSN  | S | 4 (StreamId)
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     // |                    Packet Sequence Number                     | 4
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    // |                          RestartID                            | 4
-    // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     // |                                                               |
     // |                                                               |
-    // |                             Data                              | 1460
+    // |              Packet-specific fields and data                  | 1256
     // |                                                               |
     // |                                                               |
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-    unused: u16 = 0,
-    id: Id,
+    stream_id: StreamId,
     sequence: u32,
-    restart: u32,
 
     comptime {
-        std.debug.assert(@sizeOf(Header) == 12);
-    }
-
-    pub const Id = packed struct(u16) {
-        /// Always left unset by clients and set by the server
-        /// before broadcasting the message to other clients
-        client_id: u15, // 32k clients, 64k streams
-        source: enum(u1) { mic, share },
-    };
-
-    pub fn streamId(h: Header) u16 {
-        const ptr: *const u16 = @ptrCast(&h.id.client_id);
-        return ptr.*;
+        std.debug.assert(@bitSizeOf(Header) == 64);
     }
 
     /// If there are not enough bytes to parse a Header,
     /// returns null, otherwise returns a header and a slice
     /// to the bytes after the header.
-    pub fn parse(msg: []u8) ?struct { *align(1) Header, []u8 } {
-        if (msg.len < @sizeOf(Header)) return null;
+    pub fn parse(udp_data: []u8) ?struct { *align(1) Header, []u8 } {
+        if (udp_data.len < @sizeOf(Header)) return null;
         const header = std.mem.bytesAsValue(
             Header,
-            msg[0..@sizeOf(Header)],
+            udp_data[0..@sizeOf(Header)],
         );
 
-        return .{ header, msg[@sizeOf(Header)..] };
-    }
-
-    const Kind = enum {
-        media,
-        open_stream,
-    };
-    pub fn kind(h: Header) Kind {
-        if (h.sequence == 0) {
-            return .open_stream;
-        }
-
-        return .media;
+        return .{ header, udp_data[@sizeOf(Header)..] };
     }
 };
 
-/// A open stream request sends to the server the same nonce we received
+/// A open path request sends to the server the same nonce we received
 /// when first asking to join a call over TCP. Confirmation will be sent
 /// by the server over TCP if the packet was received and the UDP stream
 /// has been opened successfully. If the client doesn't receive such
@@ -80,10 +68,11 @@ pub const Header = extern struct {
 /// was lost and send it again. The server should ignore duplicates and
 /// spurious requests.
 ///
-/// An open stream request is marked by Packet Sequence Number set to 0.
-/// The rest of the header data will be ignored.
-pub const OpenStream = extern struct {
-    tcp_client: i128,
+/// An open path request is marked by Packet Sequence Number set to 0.
+/// Additionally an OpenStream packet must:
+/// - have S (StreamType) set to 0 (2 lowest bits of StreamId)
+/// - not contain any other data
+pub const OpenPath = extern struct {
     nonce: u64,
 
     //  0                   1                   2                   3
@@ -93,124 +82,206 @@ pub const OpenStream = extern struct {
     // |                       IP + UDP Header                         | 28
     // |                                                               |
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    // |             Unused            |            Client ID        |S| 4
+    // |                          User ID                  |  CID  | S | 4  (client id << 2)
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    // |                    Packet Sequence Number                     | 4
-    // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    // |                          RestartID                            | 4
-    // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    // |                                                               |
-    // |                        TCP Client ID                          | 8
-    // |                                                               |
+    // |                    Packet Sequence Number                     | 4  (end of header)
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     // |                                                               |
     // |                            Nonce                              | 8
     // |                                                               |
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    // |                                                               |
-    // |                           Unused                              |
-    // |                                                               |
-    // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-    pub fn serialize(os: OpenStream, gpa: Allocator) ![]const u8 {
+    pub inline fn serialize(
+        client_id: awebo.protocol.client.Id,
+        nonce: u64,
+    ) [@sizeOf(Header) + @sizeOf(OpenPath)]u8 {
         const header: Header = .{
-            .id = .{
-                .client_id = 0,
-                .source = .mic,
+            .stream_id = .{
+                .client_id = client_id,
+                .kind = @enumFromInt(0),
             },
             .sequence = 0,
-            .restart = 0,
         };
 
-        return std.fmt.allocPrint(gpa, "{s}{s}", .{
+        const open: OpenPath = .{
+            .nonce = nonce,
+        };
+
+        var out: [@sizeOf(Header) + @sizeOf(OpenPath)]u8 = undefined;
+        _ = std.fmt.bufPrint(&out, "{s}{s}", .{
             std.mem.asBytes(&header),
-            std.mem.asBytes(&os),
-        });
+            std.mem.asBytes(&open),
+        }) catch unreachable;
+
+        return out;
     }
 
-    pub fn parse(buf: []const u8) ?OpenStream {
-        if (buf.len != @sizeOf(OpenStream)) return null;
-        return std.mem.bytesToValue(OpenStream, buf);
+    pub fn parse(body: []const u8) ?OpenPath {
+        if (body.len != @sizeOf(OpenPath)) return null;
+        return std.mem.bytesToValue(OpenPath, body);
     }
 };
 
-// pub const Connect = struct {
-//     pub const marker = .connect;
+/// A packet containing voice data.
+/// Both Packet Sequence Number and Restart Sequence Number start at 1.
+/// Contains Opus encoded data, usually smaller than 200 bytes.
+pub const Voice = extern struct {
+    restart: u32,
 
-//     // Client
-//     pub const Request = struct {
-//         token: [6]u8,
+    //  0                   1                   2                   3
+    //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    // |                                                               |
+    // |                           Header                              | 36
+    // |                                                               |
+    // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    // |                   Restart Sequence Number                     | 4
+    // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    // |                                                               |
+    // |                            Data                               |  1256
+    // |                                                               |
+    // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-//         comptime {
-//             std.debug.assert(@sizeOf(Request) + 1 < awebo.srt.MESSAGE_SIZE);
-//         }
+    pub fn serialize(
+        out: []u8,
+        stream_type: StreamKind,
+        sequence: u32,
+        restart: u32,
+        data: []const u8,
+    ) ![]const u8 {
+        const header: Header = .{
+            .stream_id = .{
+                .client_id = undefined,
+                .kind = stream_type,
+            },
+            .sequence = sequence,
+        };
 
-//         pub fn serialize(req: Request, buf: *[awebo.srt.MESSAGE_SIZE]u8) []const u8 {
-//             var fbs = std.io.fixedBufferStream(buf);
-//             const w = fbs.writer();
-//             w.writeByte(marker) catch unreachable;
-//             w.writeAll(&req.token) catch unreachable;
-//             return fbs.getWritten();
-//         }
-//     };
+        const voice: Voice = .{
+            .restart = restart,
+        };
 
-//     // Server
-//     pub const Response = struct {
-//         ok: bool,
-//         err: []const u8,
+        return std.fmt.bufPrint(out, "{s}{s}{s}", .{
+            std.mem.asBytes(&header),
+            std.mem.asBytes(&voice),
+            data,
+        });
+    }
 
-//         comptime {
-//             std.debug.assert(@sizeOf(Response) + 1 < awebo.srt.MESSAGE_SIZE);
-//         }
+    pub fn parse(body: []const u8) ?struct { Voice, []const u8 } {
+        if (body.len < @sizeOf(Voice)) return null;
+        return .{
+            std.mem.bytesToValue(Voice, body[0..@sizeOf(Voice)]),
+            body[@sizeOf(Voice)..],
+        };
+    }
+};
 
-//         pub fn serialize(res: Response, gpa: std.mem.Allocator) ![]const u8 {
-//             var buf = std.ArrayList(u8).init(gpa);
-//             const w = buf.writer();
+/// Represents a video packet from either the 'camera' or the 'screen' stream.
+/// Since video produces big frames, a video packet can be split into multiple
+/// chunks. Chunk sequence numbers start at the total number of chunks and
+/// are decremented until reaching 0. Chunk ID 0 is always the last UDP packet
+/// that makes up a Video packet. The first chunk will also have F (first_of_chunk)
+/// set to true.
+pub const Video = packed struct {
+    keyframe: bool,
+    chunk_id: u15,
+    unused: bool = false,
+    total_chunks: u15,
 
-//             try w.writeByte(@intFromBool(res.ok));
-//             try utils.writeSmallSlice(w, res.err);
+    //  0                   1                   2                   3
+    //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    // |                                                               |
+    // |                           Header                              | 36
+    // |                                                               |
+    // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    // |K|          Chunk ID           |U|         Total Chunks        | 4
+    // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    // |                                                               |
+    // |                            Data                               |  1258
+    // |                                                               |
+    // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-//             return try buf.toOwnedSlice();
-//         }
-//     };
-// };
+    /// Number of bytes present in a full chunk.
+    /// All chunks are full except the last one, which might be shorter.
+    pub const data_per_chunk: usize = 1280 - (@sizeOf(Header) + @sizeOf(Video));
 
-// pub const CloseStream = struct {
-//     pub const marker = 'C';
+    pub fn serialize(
+        out: []u8,
+        stream: StreamId,
+        sequence: u32,
+        chunk_id: @FieldType(Video, "chunk_id"),
+        total_chunks: @FieldType(Video, "total_chunks"),
+        keyframe: bool,
+        data: []const u8,
+    ) ![]const u8 {
+        const header: Header = .{
+            .stream_id = stream,
+            .sequence = sequence,
+        };
 
-//     // Client
-//     pub const Request = struct {
-//         stream: enum { mic, screenshare },
+        const video: Video = .{
+            .keyframe = @intFromBool(keyframe),
+            .chunk_id = chunk_id,
+            .total_chunks = total_chunks,
+        };
 
-//         comptime {
-//             std.debug.assert(@sizeOf(Request) + 1 < awebo.srt.MESSAGE_SIZE);
-//         }
+        return std.fmt.bufPrint(out, "{s}{s}{s}", .{
+            std.mem.asBytes(&header),
+            std.mem.asBytes(&video),
+            data,
+        });
+    }
 
-//         pub fn serialize(req: Request, gpa: std.mem.Allocator) ![]const u8 {
-//             var buf = std.ArrayList(u8).init(gpa);
-//             const w = buf.writer();
-//             try w.writeAll(req.token);
-//             return try buf.toOwnedSlice();
-//         }
-//     };
+    pub fn parse(body: []const u8) ?struct { Video, []const u8 } {
+        if (body.len < @sizeOf(Video)) return null;
+        return .{
+            std.mem.bytesToValue(Video, body[0..@sizeOf(Video)]),
+            body[@sizeOf(Video)..],
+        };
+    }
+};
 
-//     // Server
-//     pub const Response = struct {
-//         ok: bool,
-//         err: []const u8,
+/// Requests to resend one or more UDP packets that make up a Video packet.
+/// Can be sent by both clients and server.
+pub const ResendVideoChunk = packed struct {
 
-//         comptime {
-//             std.debug.assert(@sizeOf(Response) + 1 < awebo.srt.MESSAGE_SIZE);
-//         }
+    //  0                   1                   2                   3
+    //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    // |                                                               |
+    // |                           Header                              | 36
+    // |                                                               |
+    // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    // |      Chunk ID Start       | U |       Chunk ID End        | U | 4
+    // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-//         pub fn serialize(res: Response, gpa: std.mem.Allocator) ![]const u8 {
-//             var buf = std.ArrayList(u8).init(gpa);
-//             const w = buf.writer();
+    pub fn serialize(
+        out: *[@sizeOf(ResendVideoChunk)]u8,
+        stream: StreamId,
+        sequence: u32,
+        chunk_start: u14,
+        chunk_end: u14,
+    ) ![]const u8 {
+        const header: Header = .{
+            .stream_id = stream,
+            .sequence = sequence,
+        };
 
-//             try w.writeByte(@intFromBool(res.ok));
-//             try utils.writeSmallSlice(w, res.err);
+        const video: Video = .{
+            .chunk_start = chunk_start,
+            .chunk_end = chunk_end,
+        };
 
-//             return try buf.toOwnedSlice();
-//         }
-//     };
-// };
+        return std.fmt.bufPrint(out, "{s}{s}", .{
+            std.mem.asBytes(&header),
+            std.mem.asBytes(&video),
+        });
+    }
+
+    pub fn parse(body: []const u8) ?@This() {
+        if (body.len < @sizeOf(@This())) return null;
+        return std.mem.bytesToValue(@This(), body[0..@sizeOf(@This())]);
+    }
+};

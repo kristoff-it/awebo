@@ -49,14 +49,14 @@ pub fn computeDelta(
     host: *Host,
     gpa: Allocator,
     clients: anytype, // sorry horrible temp hack
-    user_id: User.Id,
+    client_id: proto.client.Id,
     client_max_uid: u64,
     server_max_uid: u64,
 ) !HostSync {
     if (context != .server) @compileError("server only");
 
     log.debug("computing delta for user {} max_uid {}", .{
-        user_id, client_max_uid,
+        client_id.user_id, client_max_uid,
     });
 
     var delta_users: std.ArrayList(User) = .empty;
@@ -113,19 +113,17 @@ pub fn computeDelta(
     var callers: std.ArrayList(Caller) = .empty;
     var maybe_client = clients.head;
     while (maybe_client) |c| : (maybe_client = c.next) {
-        const udp = &(c.udp orelse continue);
         const voice = c.voice orelse continue;
-        const uid = c.authenticated orelse continue;
+        const cid = c.authenticated orelse continue;
         try callers.append(gpa, .{
-            .id = udp.id,
-            .user = uid,
+            .id = cid,
             .voice = voice.id,
             .state = clients.voice_index.get(voice.id).?.get(c) orelse .{},
         });
     }
 
     return .{
-        .user_id = user_id,
+        .client_id = client_id,
         .server_max_uid = server_max_uid,
         .name = host.name,
         .epoch = host.epoch,
@@ -138,7 +136,7 @@ pub fn computeDelta(
 pub fn sync(host: *Host, gpa: Allocator, delta: *const HostSync) void {
     if (context != .client) @compileError("client only");
 
-    host.client.user_id = delta.user_id;
+    host.client.id = delta.client_id;
     const conn = host.client.status.connected;
     host.client.status = .{ .synced = conn };
 
@@ -168,8 +166,7 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const HostSync) void {
         qs.upsert_user.run(@src(), db, .{
             .id = new_user.id,
             .created = 0,
-            // .update_uid = new_user.update_id,
-            .update_uid = new_user.id,
+            .update_uid = @intFromEnum(new_user.id), // hack
             .invited_by = new_user.invited_by,
             .power = new_user.power,
             .handle = new_user.handle,
@@ -249,7 +246,7 @@ pub const ClientOnly = struct {
     identity: []const u8 = undefined,
     host_id: Id = undefined,
     max_uid: u64 = undefined,
-    user_id: User.Id = undefined,
+    id: proto.client.Id = undefined,
     username: []const u8 = undefined,
     password: []const u8 = undefined,
     db: Database = undefined,

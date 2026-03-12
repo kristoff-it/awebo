@@ -1,4 +1,5 @@
 #import <AVFoundation/AVFoundation.h>
+#import <VideoToolbox/VideoToolbox.h>
 
 // Device info structure for passing to Zig
 typedef struct VideoDevice {
@@ -26,6 +27,9 @@ aweboWebcamSwapFrame(void *userdata, CVPixelBufferRef ref) {
 @property(strong) AVCaptureVideoDataOutput *videoOutput;
 @property(strong) dispatch_queue_t captureQueue;
 @property void *userdata;
+
+@property(nonatomic, assign) VTCompressionSessionRef compressionSession;
+@property(nonatomic, assign) CMVideoCodecType selectedCodec;
 @end
 
 @implementation WebcamCaptureManager
@@ -37,7 +41,48 @@ void *webcamCaptureManagerInit() {
   manager.captureQueue =
       dispatch_queue_create("awebo.webcam.capture", DISPATCH_QUEUE_SERIAL);
 
+  printAvailableCodecs();
+
   return (__bridge_retained void *)manager;
+}
+
+#import <VideoToolbox/VideoToolbox.h>
+
+void printAvailableCodecs(void) {
+  // --- Encoder codecs ---
+  CFArrayRef encoders = NULL;
+  VTCopyVideoEncoderList(NULL, &encoders);
+
+  NSArray *encoderList = CFBridgingRelease(encoders);
+  NSLog(@"\n=== Available Video Encoders (%lu) ===", encoderList.count);
+
+  for (NSDictionary *encoder in encoderList) {
+    NSLog(@"  [%@] %@\n"
+          @"       CodecType : %@\n"
+          @"       ID        : %@\n"
+          @"       Hardware  : %@",
+          encoder[(id)kVTVideoEncoderList_CodecName],
+          encoder[(id)kVTVideoEncoderList_EncoderName],
+          encoder[(id)kVTVideoEncoderList_CodecType],
+          encoder[(id)kVTVideoEncoderList_EncoderID],
+          encoder[(id)kVTVideoEncoderList_IsHardwareAccelerated] ?: @NO);
+  }
+
+  // // --- Decoder codecs ---
+  // CFArrayRef decoders = NULL;
+  // VTCopyVideoDecoderList(NULL, &decoders);
+
+  // NSArray *decoderList = CFBridgingRelease(decoders);
+  // NSLog(@"\n=== Available Video Decoders (%lu) ===", decoderList.count);
+
+  // for (NSDictionary *decoder in decoderList) {
+  //   NSLog(@"  [%@]\n"
+  //         @"       CodecType : %@\n"
+  //         @"       ID        : %@",
+  //         decoder[(id)kVTDecoderList_DecoderName],
+  //         decoder[(id)kVTDecoderList_CodecType],
+  //         decoder[(id)kVTDecoderList_DecoderID]);
+  // }
 }
 
 void webcamCaptureManagerDeinit(void *ptr) {
@@ -112,6 +157,7 @@ void webcamDiscoverDevicesAndListen(void *ptr, void *userdata) {
 bool webcamStartCapture(void *manager, const char *deviceID, int width,
                         int height, int fps) {
   WebcamCaptureManager *self = (__bridge WebcamCaptureManager *)manager;
+  [self setupCompressionSession];
   return [self startCaptureWithDeviceID:deviceID
                                   width:width
                                  height:height
@@ -175,6 +221,14 @@ bool webcamStartCapture(void *manager, const char *deviceID, int width,
   self.videoOutput = [[AVCaptureVideoDataOutput alloc] init];
 
   // Set pixel format to BGRA (same as ScreenCaptureKit)
+  for (NSNumber *number in self.videoOutput.availableVideoCVPixelFormatTypes) {
+    int num = number.intValue;
+    if (num > 100) {
+      char *str = (char *)(&num);
+      NSLog(@"codec: [%.4s]", str);
+    }
+  }
+
   self.videoOutput.videoSettings =
       @{(id)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA)};
 
@@ -242,6 +296,13 @@ void webcamStopCapture(void *manager) {
     NSLog(@"Webcam capture session stopped");
   }
 
+  if (_compressionSession) {
+    VTCompressionSessionCompleteFrames(_compressionSession, kCMTimeIndefinite);
+    VTCompressionSessionInvalidate(_compressionSession);
+    CFRelease(_compressionSession);
+    _compressionSession = NULL;
+  }
+
   self.captureSession = nil;
   self.videoInput = nil;
   self.videoOutput = nil;
@@ -255,6 +316,19 @@ void webcamStopCapture(void *manager) {
 
   // Get the pixel buffer (same type as ScreenCaptureKit!)
   CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+  CMTime pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
+  CMTime duration = CMSampleBufferGetDuration(sampleBuffer);
+
+  VTEncodeInfoFlags flags;
+  OSStatus status = VTCompressionSessionEncodeFrame(
+      _compressionSession, pixelBuffer, pts, duration,
+      NULL, // frameProperties (nil = defaults)
+      NULL, // sourceFrameRefCon
+      &flags);
+
+  if (status != noErr) {
+    NSLog(@"VTCompressionSessionEncodeFrame failed: %d", (int)status);
+  }
 
   if (pixelBuffer) {
     [self processVideoFrame:pixelBuffer];
@@ -295,5 +369,115 @@ void webcamRequestPermission(void (*callback)(bool granted)) {
                              }
                            }];
 }
+// Encoding
 
+- (void)setupCompressionSession {
+  self.selectedCodec = [self bestAvailableCodec];
+  BOOL isHEVC = (self.selectedCodec == kCMVideoCodecType_HEVC);
+  NSLog(@"Using codec: %@", isHEVC ? @"H.265 (HEVC)" : @"H.264 (AVC)");
+
+  OSStatus status = VTCompressionSessionCreate(
+      kCFAllocatorDefault,
+      1920, // width
+      1080, // height
+      self.selectedCodec,
+      NULL,                  // encoderSpecification (nil = let VT choose)
+      NULL,                  // sourceImageBufferAttributes
+      NULL,                  // compressedDataAllocator
+      EncodedFrameCallback,  // output callback
+      (__bridge void *)self, // refcon
+      &_compressionSession);
+
+  if (status != noErr) {
+    NSLog(@"VTCompressionSessionCreate failed: %d", (int)status);
+    return;
+  }
+
+  // ── Common properties ──────────────────────────────────────────────────
+  // Real-time encoding priority
+  VTSessionSetProperty(_compressionSession, kVTCompressionPropertyKey_RealTime,
+                       kCFBooleanTrue);
+
+  // Constant bitrate ~8 Mbps
+  VTSessionSetProperty(_compressionSession,
+                       kVTCompressionPropertyKey_AverageBitRate,
+                       (__bridge CFTypeRef) @(8000000));
+
+  // Keyframe interval (2 seconds at 30fps)
+  VTSessionSetProperty(_compressionSession,
+                       kVTCompressionPropertyKey_MaxKeyFrameInterval,
+                       (__bridge CFTypeRef) @(60));
+
+  // Prefer hardware
+  VTSessionSetProperty(
+      _compressionSession,
+      kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
+      kCFBooleanTrue);
+
+  // ── Codec-specific properties ──────────────────────────────────────────
+  if (isHEVC) {
+    // Main profile for broad compatibility
+    VTSessionSetProperty(_compressionSession,
+                         kVTCompressionPropertyKey_ProfileLevel,
+                         kVTProfileLevel_HEVC_Main_AutoLevel);
+  } else {
+    // High profile for H.264
+    VTSessionSetProperty(_compressionSession,
+                         kVTCompressionPropertyKey_ProfileLevel,
+                         kVTProfileLevel_H264_High_AutoLevel);
+
+    // Enable B-frames for better compression
+    VTSessionSetProperty(_compressionSession,
+                         kVTCompressionPropertyKey_AllowFrameReordering,
+                         kCFBooleanTrue);
+  }
+
+  status = VTCompressionSessionPrepareToEncodeFrames(_compressionSession);
+
+  if (status != noErr) {
+    NSLog(@"CTCompressionsessionPrepareToEncodeFrames failed: %d", (int)status);
+    return;
+  }
+}
+
+- (CMVideoCodecType)bestAvailableCodec {
+  if (@available(macOS 10.13, *)) {
+    if (VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC)) {
+      return kCMVideoCodecType_HEVC;
+    }
+  }
+
+  NSLog(@"H.265 HW encoder unavailable, falling back to H.264");
+  return kCMVideoCodecType_H264;
+}
+
+static void EncodedFrameCallback(void *outputCallbackRefCon,
+                                 void *sourceFrameRefCon, OSStatus status,
+                                 VTEncodeInfoFlags infoFlags,
+                                 CMSampleBufferRef sampleBuffer) {
+  if (status != noErr || !sampleBuffer) {
+    NSLog(@"Encode error: %d", (int)status);
+    return;
+  }
+
+  BOOL isKeyFrame = NO;
+  CFArrayRef attachments =
+      CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, false);
+  if (attachments && CFArrayGetCount(attachments) > 0) {
+    CFDictionaryRef attachment = CFArrayGetValueAtIndex(attachments, 0);
+    CFBooleanRef notSync =
+        CFDictionaryGetValue(attachment, kCMSampleAttachmentKey_NotSync);
+    isKeyFrame = (notSync == NULL || !CFBooleanGetValue(notSync));
+  }
+
+  // ── Consume encoded data here ──────────────────────────────────────────
+  // e.g. write to file, send over network, mux into container, etc.
+  CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sampleBuffer);
+  size_t totalLength = 0;
+  char *dataPointer = NULL;
+  CMBlockBufferGetDataPointer(block, 0, NULL, &totalLength, &dataPointer);
+
+  NSLog(@"%@ frame encoded, size: %zu bytes", isKeyFrame ? @" Key" : @"  Delta",
+        totalLength);
+}
 @end

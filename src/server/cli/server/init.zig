@@ -65,7 +65,7 @@ fn seed(
         .created = 0,
         .update_uid = id.new(),
         .handle = cmd.owner.handle,
-        .invited_by = 1,
+        .invited_by = @enumFromInt(1),
         .power = .owner,
         .display_name = "Admin",
     });
@@ -79,7 +79,7 @@ fn seed(
         .created = 0,
         .update_uid = id.new(),
         .handle = "user",
-        .invited_by = 1,
+        .invited_by = @enumFromInt(1),
         .power = .user,
         .display_name = "Other User",
     });

@@ -86,8 +86,7 @@ pub const Date = enum(u32) {
 /// Set of utilities shared between client and server that mostly deal with
 /// networking / realtine OS fiddling.
 pub const network_utils = struct {
-    pub fn setCurrentThreadRealtime() void {
-        const period_ms = 20; // time equivalent to an opus packet
+    pub fn setCurrentThreadRealtime(period_ms: usize) void {
         switch (builtin.os.tag) {
             else => @compileError("TODO: add support for new OS"),
             .linux => {

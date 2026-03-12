@@ -167,7 +167,7 @@ select_users: Query(
 , .{
     .kind = .rows,
     .cols = struct {
-        id: u64,
+        id: awebo.User.Id,
         created: awebo.Date,
         update_uid: u64,
         handle: []const u8,

@@ -104,7 +104,7 @@ const Command = struct {
                 std.debug.print("error: missing USER_ID for edit\n", .{});
                 exitHelp(1);
             };
-            break :blk std.fmt.parseInt(awebo.User.Id, str, 10) catch {
+            break :blk std.fmt.parseInt(u32, str, 10) catch {
                 cli.fatal("unable to parse user id as a number", .{});
             };
         };
@@ -125,7 +125,7 @@ const Command = struct {
         }
 
         const cmd: Command = .{
-            .user_id = user_id,
+            .user_id = @enumFromInt(user_id),
             .handle = handle,
             .password = password,
             .display_name = display_name,

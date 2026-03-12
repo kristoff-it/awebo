@@ -19,9 +19,10 @@ const persistence = @import("Core/persistence.zig");
 pub const ScreenCapture = @import("media/ScreenCapture.zig");
 pub const WebcamCapture = @import("media/WebcamCapture.zig");
 pub const Audio = @import("media/Audio.zig");
+pub const VideoStream = @import("media/VideoStream.zig");
 
-gpa: Allocator,
 io: Io,
+gpa: Allocator,
 environ: *std.process.Environ.Map,
 /// Set to true once data has been loaded from disk.
 loaded: std.atomic.Value(bool) = .init(false),
@@ -158,7 +159,7 @@ pub fn run(core: *Core) void {
     defer core.audio.deinit();
 
     log.debug("starting screen capture support", .{});
-    core.screen_capture.init();
+    core.screen_capture.init(core.gpa);
 
     log.debug("discovering camera devices", .{});
     core.webcam_capture = .init();
@@ -206,7 +207,7 @@ pub fn run(core: *Core) void {
                         defer locked.unlock();
                         if (core.active_call) |*ac| {
                             const caller = ac.callers.get(cs.caller orelse ac.caller_id orelse continue) orelse continue;
-                            caller.speaking_last_ns = cs.time_ns;
+                            caller.audio.speaking_last_ns = cs.time_ns;
                         }
                     },
 
@@ -460,7 +461,7 @@ fn callersUpdate(core: *Core, host_id: HostId, cu: awebo.protocol.server.Callers
 
     if (core.active_call) |*ac| if (cu.caller.voice == ac.voice_id) {
         // if we see ourselves join, we know we're in
-        if (cu.action == .join and cu.caller.user == h.client.user_id) {
+        if (cu.action == .join and cu.caller.id == h.client.id) {
             ac.caller_id = cu.caller.id;
             _ = ac.status.updateCompare(core, @src(), .connecting, .connected);
         }
@@ -468,18 +469,21 @@ fn callersUpdate(core: *Core, host_id: HostId, cu: awebo.protocol.server.Callers
         switch (cu.action) {
             .join => {
                 const entry = ac.callers.getOrPut(core.gpa, cu.caller.id) catch oom();
-                log.debug("ACTIVE CALL JOIN cid = {} user = {} you = {}", .{
+                log.debug("ACTIVE CALL JOIN cid = {} you = {}", .{
                     cu.caller.id,
-                    cu.caller.user,
-                    cu.caller.user == h.client.user_id,
+                    cu.caller.id == h.client.id,
                 });
                 assert(!entry.found_existing);
-                entry.value_ptr.* = Audio.Caller.create(core.gpa, core) catch oom();
+                entry.value_ptr.* = .{
+                    .audio = Audio.Caller.create(core.gpa, core) catch oom(),
+                    .screen = null,
+                };
             },
             .update => {},
             .leave => {
                 if (ac.callers.fetchSwapRemove(cu.caller.id)) |entry| {
-                    entry.value.destroy(core.gpa, &core.audio);
+                    entry.value.audio.destroy(core.gpa, &core.audio);
+                    if (entry.value.screen) |s| s.destroy(core.gpa);
                 }
             },
         }
@@ -538,10 +542,16 @@ fn mediaConnectionDetails(
         for (callers) |c| {
             const gop = ac.callers.getOrPut(core.gpa, c) catch oom();
             if (!gop.found_existing) {
-                gop.value_ptr.* = Audio.Caller.create(core.gpa, core) catch oom();
+                gop.value_ptr.* = .{
+                    .audio = Audio.Caller.create(core.gpa, core) catch oom(),
+                    .screen = null,
+                };
             }
         }
     }
+
+    core.audio.capture_packets.reset();
+    core.screen_capture.packets.reset();
 
     // Activate audio streams, which we know will not fail for missing
     // microphone permissions because callJoin esures it.
@@ -550,7 +560,7 @@ fn mediaConnectionDetails(
         core,
         host_id,
         host.client.status.synced,
-        mcd.tcp_client,
+        host.client.id,
         mcd.nonce,
     }) catch @panic("no concurrency");
 }
@@ -591,7 +601,11 @@ pub const ActiveCall = struct {
     status: Status = .{},
     push_future: ?Io.Future(error{ Closed, Canceled }!void) = null,
     manager_future: ?Io.Future(void) = null,
-    callers: std.AutoArrayHashMapUnmanaged(awebo.Caller.Id, *Audio.Caller),
+    callers: std.AutoArrayHashMapUnmanaged(awebo.Caller.Id, struct {
+        audio: *Audio.Caller,
+        screen: ?*VideoStream, // created when the first frame is received
+        // camera: *Video.Caller,
+    }),
 
     /// The user has pressed the mute button and expressed the intent of
     /// staying muted. The server might apply server-side mute but, once
@@ -602,8 +616,10 @@ pub const ActiveCall = struct {
     /// represents the state of the audio device, not the user intent. For
     /// example when we are affected by server side mute the audio
     /// interface will be set to muted as well, but this variable will be
-    /// still set to `unmuted`.
+    /// still set to `unmuted`, which should result in the audio device
+    /// becoming unmuted once server mute ends.
     muted: Audio.DeviceMuteState = .unmuted,
+    screenshare: bool = false,
 
     pub const Status = ui.AtomicEnum(true, .intent, &.{
         .connecting,
@@ -613,6 +629,18 @@ pub const ActiveCall = struct {
 
     pub fn getVoice(ac: *const ActiveCall, core: *Core) *Voice {
         return core.hosts.get(ac.host_id).?.shared.voices.get(ac.voice_id).?;
+    }
+
+    pub fn screenshareBegin(ac: *ActiveCall, core: *Core) void {
+        assert(!ac.screenshare);
+        core.screen_capture.showOsPicker();
+        ac.screenshare = true;
+    }
+
+    pub fn screenshareEnd(ac: *ActiveCall, core: *Core) void {
+        assert(ac.screenshare);
+        core.screen_capture.stopCapture();
+        ac.screenshare = false;
     }
 
     pub fn disconnect(ac: *const ActiveCall, core: *Core) void {
@@ -626,8 +654,10 @@ pub const ActiveCall = struct {
         if (call.manager_future) |*manager_future| manager_future.cancel(io);
         log.debug("manager future done", .{});
         for (call.callers.values()) |caller| {
-            caller.destroy(core.gpa, &core.audio);
+            caller.audio.destroy(core.gpa, &core.audio);
+            if (caller.screen) |s| s.destroy(core.gpa);
         }
+
         core.active_call = null;
     }
 };
@@ -741,7 +771,13 @@ pub fn hostJoin(
 ) !Io.Future(error{Canceled}!void) {
     const io = core.io;
     if (core.hosts.identities.contains(identity)) return error.Duplicate;
-    return io.concurrent(network.runHostManager, .{ core, .{ .join = fcs }, identity, username, password });
+    return io.concurrent(network.runHostManager, .{
+        core,
+        .{ .join = fcs },
+        identity,
+        username,
+        password,
+    });
 }
 
 pub fn callJoin(
@@ -791,16 +827,6 @@ pub fn callJoin(
     return .granted;
 }
 
-pub fn callBeginScreenShare(core: *Core) !void {
-    core.screen_capture.share_intent = true;
-    core.screen_capture.showOsPicker();
-}
-
-pub fn callBeginWebcamShare(core: *Core) !void {
-    core.webcam_capture.share_intent = true;
-    _ = core.webcam_capture.startCapture();
-}
-
 pub fn callSetMute(core: *Core, new_state: Audio.DeviceMuteState) void {
     const ac = &(core.active_call orelse return);
     const transition = core.audio.setCaptureMute(new_state) catch {
@@ -813,6 +839,7 @@ pub fn callSetMute(core: *Core, new_state: Audio.DeviceMuteState) void {
         const msg: awebo.protocol.client.CallUpdate = .{
             .muted = new_state == .muted,
             .deafened = false,
+            .screenshare = ac.screenshare,
         };
         const bytes = msg.serializeAlloc(core.gpa) catch oom();
         host.client.status.synced.tcp.queue.putOne(core.io, bytes) catch {

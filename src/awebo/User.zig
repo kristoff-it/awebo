@@ -10,7 +10,15 @@ const awebo = @import("../awebo.zig");
 // - u4 max 16 clients connected
 // - u2 max 4 media streams (cam, voice, screenshare, screenshare audio)
 
-pub const Id = u64;
+pub const Id = enum(u26) {
+    invalid = 0,
+    _,
+
+    pub const protocol = struct {};
+    pub fn format(id: Id, w: *Io.Writer) !void {
+        try w.print("{d}", .{@intFromEnum(id)});
+    }
+};
 
 id: Id,
 created: awebo.Date,

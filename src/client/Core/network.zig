@@ -345,15 +345,16 @@ fn runHostSend(
     }
 }
 
+const udp_video_framing = @sizeOf(awebo.protocol.media.Header) + @sizeOf(awebo.protocol.media.Video);
+
 // There should be only one of these tasks active at a time
 pub fn runHostMediaManager(
     core: *Core,
     host_id: HostId,
     hc: *HostConnection,
-    tcp_client: i96,
+    client_id: awebo.protocol.client.Id,
     nonce: u64,
 ) void {
-    const gpa = core.gpa;
     const io = core.io;
 
     log.debug("{s} started", .{@src().fn_name});
@@ -373,23 +374,15 @@ pub fn runHostMediaManager(
         receive: @typeInfo(@TypeOf(runHostMediaReceiver)).@"fn".return_type.?,
         send: @typeInfo(@TypeOf(runHostMediaSender)).@"fn".return_type.?,
     });
-    var buf: [2]Select.Union = undefined;
-    var select: Select = .init(io, &buf);
+    var sbuf: [2]Select.Union = undefined;
+    var select: Select = .init(io, &sbuf);
     defer select.cancelDiscard();
 
     select.concurrent(.receive, runHostMediaReceiver, .{ core, sock, &server, host_id }) catch return;
     select.concurrent(.send, runHostMediaSender, .{ core, sock, &server, host_id }) catch return;
 
-    const open: awebo.protocol.media.OpenStream = .{
-        .tcp_client = tcp_client,
-        .nonce = nonce,
-    };
-
-    const bytes = open.serialize(gpa) catch oom();
-    defer gpa.free(bytes);
-
-    sock.send(io, &server, bytes) catch return;
-
+    const bytes = awebo.protocol.media.OpenPath.serialize(client_id, nonce);
+    sock.send(io, &server, &bytes) catch return;
     _ = select.await() catch return;
 }
 
@@ -407,24 +400,28 @@ pub fn runHostMediaReceiver(
 
     var imbuf: [64]Io.net.IncomingMessage = undefined;
     const dbuf = gpa.alloc(u8, imbuf.len * 1280) catch oom();
+    defer gpa.free(dbuf);
 
     while (true) {
         const m = try sock.receive(io, dbuf);
         if (!m.from.eql(server)) continue;
 
-        const data = m.data[@sizeOf(awebo.protocol.media.Header)..];
-        const message_header = std.mem.bytesAsValue(
-            awebo.protocol.media.Header,
-            m.data[0..@sizeOf(awebo.protocol.media.Header)],
-        );
-
-        const cid = message_header.id.client_id;
+        const header, const body = awebo.protocol.media.Header.parse(m.data) orelse continue;
+        const cid = header.stream_id.client_id;
         {
             var locked = Core.lockState(core);
             defer locked.unlock();
 
-            const active_call = &(core.active_call orelse return);
-            const caller = active_call.callers.get(cid) orelse return;
+            const active_call = &(core.active_call orelse {
+                log.debug("media receiver no active call, ignoring", .{});
+                continue;
+            });
+
+            const caller = active_call.callers.getPtr(cid) orelse {
+                log.debug("media receiver can't find caller {f}, ignoring", .{cid});
+                continue;
+            };
+
             if (debug != void) {
                 const update = debug.drop_next_media_packets.swap(0, .acq_rel);
 
@@ -438,20 +435,32 @@ pub fn runHostMediaReceiver(
                     continue;
                 }
             }
+            switch (header.stream_id.kind) {
+                .voice => {
+                    const voice, const data = awebo.protocol.media.Voice.parse(body) orelse continue;
+                    caller.audio.packets.writePacket(io, voice.restart, header.sequence, data);
 
-            caller.packets.writePacket(io, message_header.restart, message_header.sequence, data);
-        }
-
-        if (awebo.opus.packetHasLbrr(data) catch false) {
-            try core.putEvent(.{ .network = .{
-                .host_id = host_id,
-                .cmd = .{
-                    .caller_speaking = .{
-                        .time_ns = core.now(),
-                        .caller = cid,
-                    },
+                    if (awebo.opus.packetHasLbrr(data) catch false) {
+                        try core.putEvent(.{ .network = .{
+                            .host_id = host_id,
+                            .cmd = .{
+                                .caller_speaking = .{
+                                    .time_ns = core.now(),
+                                    .caller = cid,
+                                },
+                            },
+                        } });
+                    }
                 },
-            } });
+                .screen => {
+                    if (caller.screen) |screen| {
+                        screen.pushChunk(header.sequence, body);
+                    } else {
+                        caller.screen = try .create(core, header.sequence, body);
+                    }
+                },
+                else => @panic("TODO: implement support for other streams!"),
+            }
         }
     }
 }
@@ -467,7 +476,7 @@ pub fn runHostMediaSender(
     log.debug("{s} started", .{@src().fn_name});
     defer log.debug("{s} exited", .{@src().fn_name});
 
-    awebo.network_utils.setCurrentThreadRealtime();
+    awebo.network_utils.setCurrentThreadRealtime(20);
 
     if (debug != void) {
         debug.dred_decoder = try .create();
@@ -478,74 +487,112 @@ pub fn runHostMediaSender(
     var restart: u32 = 1;
     var was_muted = true;
     while (true) {
-        const read = core.audio.capture_packets.beginRead() orelse {
-            try io.sleep(.fromMilliseconds(2), .awake);
-            continue;
-        };
         const last = Io.Clock.awake.now(io);
+        var nothing_found = true;
 
-        if (debug != void) {
-            if (debug.send_bad_capture_packet.swap(false, .acq_rel)) {
-                const new_seq: u32 = 1 << 31;
-                log.debug("<<SETTING CAPTURE PACKET SEQ TO {}>>", .{new_seq});
-                sequence = new_seq;
+        while (core.audio.capture_packets.beginRead()) |read| {
+            nothing_found = false;
+            if (debug != void) {
+                if (debug.send_bad_capture_packet.swap(false, .acq_rel)) {
+                    const new_seq: u32 = 1 << 31;
+                    log.debug("<<SETTING CAPTURE PACKET SEQ TO {}>>", .{new_seq});
+                    sequence = new_seq;
+                }
+
+                // if (debug.dred_decoder.parse(debug.dred_state, read.data, .deferred)) |info| {
+                //     log.debug("outbound dred = {any}", .{info});
+                // } else |err| {
+                //     log.debug("outbound dred err = {t}", .{err});
+                // }
             }
 
-            // if (debug.dred_decoder.parse(debug.dred_state, read.data, .deferred)) |info| {
-            //     log.debug("outbound dred = {any}", .{info});
-            // } else |err| {
-            //     log.debug("outbound dred err = {t}", .{err});
-            // }
+            if (read.packet.len < 3) {
+                if (!was_muted) {
+                    sequence = 0;
+                    restart += 1;
+                    was_muted = true;
+                }
+                core.audio.capture_packets.commitRead(read);
+                continue;
+            }
+
+            sequence += 1;
+            was_muted = false;
+
+            var buf: [1280]u8 = undefined;
+            const packet = awebo.protocol.media.Voice.serialize(
+                &buf,
+                .voice,
+                sequence,
+                restart,
+                read.packet.data[0..read.packet.len],
+            ) catch unreachable;
+
+            core.audio.capture_packets.commitRead(read);
+            try sock.send(io, server, packet);
+            if (!read.packet.silence) try core.putEvent(.{ .network = .{
+                .host_id = host_id,
+                .cmd = .{
+                    .caller_speaking = .{
+                        .time_ns = core.now(),
+                        .caller = null,
+                    },
+                },
+            } });
         }
 
-        if (read.data.len < 3) {
-            if (!was_muted) {
-                sequence = 0;
-                restart += 1;
-                was_muted = true;
+        while (core.screen_capture.packets.beginRead()) |read| {
+            nothing_found = false;
+            var batch: [64]Io.net.OutgoingMessage = undefined;
+            var batch_idx: usize = 0;
+
+            for (0..read.packet.full_chunks) |chunk_id| {
+                batch[batch_idx] = .{
+                    .address = server,
+                    .data_ptr = read.packet.data.items[chunk_id * 1280 ..].ptr,
+                    .data_len = 1280,
+                };
+                batch_idx += 1;
+
+                if (batch_idx == batch.len) {
+                    sock.sendMany(io, &batch, .{}) catch |err| {
+                        log.debug("sendmany error: {t}", .{err});
+                        return;
+                    };
+                    batch_idx = 0;
+                }
             }
-            core.audio.capture_packets.commitRead(read);
+
+            assert(batch_idx < batch.len); // guaranteed we have space for one more message
+
+            if (read.packet.last_chunk_data > 0) {
+                batch[batch_idx] = .{
+                    .address = server,
+                    .data_ptr = read.packet.data.items[read.packet.data.items.len..].ptr - (read.packet.last_chunk_data + udp_video_framing),
+                    .data_len = read.packet.last_chunk_data + udp_video_framing,
+                };
+                batch_idx += 1;
+            }
+
+            if (batch_idx > 0) {
+                sock.sendMany(io, batch[0..batch_idx], .{}) catch |err| {
+                    log.debug("sendmany error: {t}", .{err});
+                    return;
+                };
+            }
+
+            core.screen_capture.packets.commitRead(read);
+        }
+
+        // nothing to read, sleep
+        if (nothing_found) {
+            try io.sleep(.fromMilliseconds(2), .awake);
+        } else {
             const timeout: Io.Timeout = .{
                 .deadline = last.addDuration(.fromMilliseconds(8)).withClock(.awake),
             };
             try timeout.sleep(io);
-            continue;
         }
-
-        sequence += 1;
-        was_muted = false;
-        const header: awebo.protocol.media.Header = .{
-            .id = .{
-                .client_id = 0,
-                .source = .mic,
-            },
-            .sequence = sequence,
-            .restart = restart,
-        };
-        const header_size = @sizeOf(awebo.protocol.media.Header);
-
-        var buf: [1280]u8 = undefined;
-        const buf_ptr: [*]u8 = &buf;
-        assert(read.data.len + @sizeOf(awebo.protocol.media.Header) <= buf.len);
-        @memcpy(buf_ptr, std.mem.asBytes(&header));
-        @memcpy(buf_ptr + header_size, read.data);
-        core.audio.capture_packets.commitRead(read);
-
-        try sock.send(io, server, buf[0 .. read.data.len + header_size]);
-        if (!read.silence) try core.putEvent(.{ .network = .{
-            .host_id = host_id,
-            .cmd = .{
-                .caller_speaking = .{
-                    .time_ns = core.now(),
-                    .caller = null,
-                },
-            },
-        } });
-
-        const timeout: Io.Timeout = .{
-            .deadline = last.addDuration(.fromMilliseconds(8)).withClock(.awake),
-        };
-        try timeout.sleep(io);
     }
 }
 

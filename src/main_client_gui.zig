@@ -19,7 +19,7 @@ pub const StringPool = @import("client/StringPool.zig");
 pub const dvui_app: dvui.App = .{
     .config = .{
         .options = .{
-            .size = .{ .w = 1240.0, .h = 720.0 },
+            .size = .{ .w = 1280.0, .h = 720.0 },
             .min_size = .{ .w = 250.0, .h = 350.0 },
             .title = "Awebo",
             .icon = @embedFile("appicon"),

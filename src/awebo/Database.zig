@@ -362,9 +362,27 @@ pub fn Query(sql_query: [:0]const u8, config: QueryConfig) type {
                         inline else => |v| stmt.bindValue(v, idx) catch db.fatal(@src()),
                     }
                 } else switch (@typeInfo(f.type)) {
+                    .@"struct" => |struct_info| {
+                        assert(struct_info.layout == .@"packed");
+                        const value: struct_info.backing_integer.? = @bitCast(@field(args, f.name));
+                        stmt.bindValue(@as(u64, value), idx);
+                    },
                     .@"enum" => {
                         const value: u64 = @intFromEnum(@field(args, f.name));
                         stmt.bindValue(value, idx) catch db.fatal(@src());
+                    },
+                    .optional => |opt| switch (@typeInfo(opt.child)) {
+                        .@"enum" => {
+                            if (@field(args, f.name)) |v| {
+                                const value: u64 = @intFromEnum(v);
+                                stmt.bindValue(value, idx) catch db.fatal(@src());
+                            } else {
+                                stmt.bindValue(null, idx) catch db.fatal(@src());
+                            }
+                        },
+                        else => {
+                            stmt.bindValue(@field(args, f.name), idx) catch db.fatal(@src());
+                        },
                     },
                     else => stmt.bindValue(@field(args, f.name), idx) catch db.fatal(@src()),
                 }
@@ -419,6 +437,12 @@ pub fn Rows(config: QueryConfig) type {
                     else => switch (@typeInfo(T)) {
                         .@"enum" => {
                             return @enumFromInt(r.row.int(idx));
+                        },
+                        .optional => |opt| switch (@typeInfo(opt.child)) {
+                            .@"enum" => {
+                                return @enumFromInt(r.row.nullableInt(idx) orelse return null);
+                            },
+                            else => @compileError("type " ++ @typeName(T) ++ " not supported"),
                         },
                         else => @compileError("type " ++ @typeName(T) ++ " not supported"),
                     },

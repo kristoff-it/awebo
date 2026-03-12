@@ -230,18 +230,23 @@ pub fn setupGui(
             gui.root_module.addSystemIncludePath(xcode_frameworks.path("include"));
             gui.root_module.addLibraryPath(xcode_frameworks.path("lib"));
             gui.root_module.linkFramework("AVFoundation", .{});
-            gui.root_module.linkFramework("CoreAudio", .{});
+            gui.root_module.linkFramework("VideoToolbox", .{});
             gui.root_module.linkFramework("ScreenCaptureKit", .{});
+            gui.root_module.linkFramework("CoreMedia", .{});
+            gui.root_module.linkFramework("CoreAudio", .{});
             gui.root_module.linkFramework("Security", .{});
             gui.root_module.addCSourceFiles(.{
                 .files = &.{
                     "src/client/media/macos/audio.m",
+                    "src/client/media/macos/video.m",
+                    "src/client/media/macos/video-format.m",
                     "src/client/media/macos/screen-capture.m",
                     "src/client/media/macos/webcam-capture.m",
                 },
                 .flags = &[_][]const u8{
                     "-pthread",
                     "-fobjc-arc",
+                    // "-DCOREVIDEO_USE_DERIVED_ENUMS_FOR_CONSTANTS",
                     "-Wno-undef",
                     "-Wno-deprecated-declarations",
                     "-Wno-availability",
@@ -354,6 +359,7 @@ pub fn setupTui(
             tui.root_module.addLibraryPath(xcode_frameworks.path("lib"));
             tui.root_module.linkFramework("AVFoundation", .{});
             tui.root_module.linkFramework("AudioToolbox", .{});
+            tui.root_module.linkFramework("VideoToolbox", .{});
             tui.root_module.linkFramework("CoreAudio", .{});
             tui.root_module.linkFramework("CoreMedia", .{});
             tui.root_module.linkFramework("CoreVideo", .{});
@@ -363,6 +369,8 @@ pub fn setupTui(
             tui.root_module.addCSourceFiles(.{
                 .files = &.{
                     "src/client/media/macos/audio.m",
+                    "src/client/media/macos/video.m",
+                    "src/client/media/macos/video-format.m",
                     "src/client/media/macos/screen-capture.m",
                     "src/client/media/macos/webcam-capture.m",
                 },

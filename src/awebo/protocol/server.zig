@@ -112,7 +112,7 @@ pub const ClientRequestReply = struct {
 };
 
 pub const HostSync = struct {
-    user_id: User.Id,
+    client_id: proto.client.Id,
     server_max_uid: u64,
     name: []const u8,
     epoch: i64,
@@ -174,10 +174,10 @@ pub const HostSync = struct {
 
     pub fn format(hs: *const HostSync, w: *Io.Writer) !void {
         try w.print(
-            "HostSync(user_id: {} server_max_uid: {} name: '{s}' users: ({} {s}) [",
+            "HostSync(client_id: {f} server_max_uid: {} name: '{s}' users: ({} {s}) [",
             .{
-                hs.user_id, hs.server_max_uid,
-                hs.name,    hs.users.delta.len,
+                hs.client_id, hs.server_max_uid,
+                hs.name,      hs.users.delta.len,
                 if (hs.users.full.len > 0)
                     "full"
                 else
@@ -236,7 +236,6 @@ pub const CallersUpdate = struct {
 
 pub const MediaConnectionDetails = struct {
     voice: Channel.Id,
-    tcp_client: i96,
     nonce: u64,
 
     pub const marker = 'm';

@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const server = @import("server.zig");
 const proto = @import("../protocol.zig");
 const User = @import("../User.zig");
@@ -6,6 +7,20 @@ const Host = @import("../Host.zig");
 const Message = @import("../Message.zig");
 const Channel = @import("../Channel.zig");
 const Caller = @import("../Caller.zig");
+
+/// A ClientId is a UserId + a client slot number.
+pub const Id = packed struct(u30) {
+    user_id: User.Id,
+    slot: u4,
+
+    pub const protocol = struct {};
+    pub fn toInt(id: Id) @Int(.unsigned, @bitSizeOf(Id)) {
+        return @bitCast(id);
+    }
+    pub fn format(id: Id, w: *Io.Writer) !void {
+        try w.print("{f}-{}", .{ id.user_id, id.slot });
+    }
+};
 
 pub const OriginId = u64;
 
@@ -142,6 +157,7 @@ pub const CallJoin = struct {
 pub const CallUpdate = struct {
     muted: bool,
     deafened: bool,
+    screenshare: bool,
 
     pub const marker = 'k';
     pub const serialize = proto.MakeSerializeFn(@This());
@@ -294,6 +310,7 @@ pub const Enum = blk: {
     var values: []const u8 = &.{};
     for (@typeInfo(@This()).@"struct".decls) |d| {
         if (std.mem.eql(u8, d.name, "Enum")) continue;
+        if (std.mem.eql(u8, d.name, "Id")) continue;
         if (@typeInfo(@field(@This(), d.name)) != .@"struct") continue;
         names = names ++ &[1][]const u8{d.name};
         values = values ++ &[1]u8{@field(@This(), d.name).marker};
