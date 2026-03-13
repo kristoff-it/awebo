@@ -246,11 +246,11 @@ pub fn setupGui(
                 .flags = &[_][]const u8{
                     "-pthread",
                     "-fobjc-arc",
-                    // "-DCOREVIDEO_USE_DERIVED_ENUMS_FOR_CONSTANTS",
                     "-Wno-undef",
                     "-Wno-deprecated-declarations",
                     "-Wno-availability",
                     "-Wno-unguarded-availability-new",
+                    if (optimize == .Debug) "-DDEBUG" else "-DNODEBUG",
                 },
             });
         },
@@ -381,6 +381,7 @@ pub fn setupTui(
                     "-Wno-deprecated-declarations",
                     "-Wno-availability",
                     "-Wno-unguarded-availability-new",
+                    if (optimize == .Debug) "-DDEBUG" else "-DNODEBUG",
                 },
             });
         },

@@ -83,6 +83,7 @@ pub fn showOsPicker(sc: *ScreenCapture) void {
 pub fn stopCapture(sc: *ScreenCapture) void {
     assert(sc.state == .on);
     sc.os.stopCapture();
+    if (sc.swapFrame(null)) |frame| frame.deinit();
     sc.state = .off;
 }
 

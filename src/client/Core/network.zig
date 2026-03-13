@@ -231,7 +231,7 @@ fn runHostManagerFallible(
         .connect => |c| c.host_id,
         .join => |fcs| blk: {
             const host_id = lock: {
-                var locked = core.lockState();
+                var locked = try core.lockStateCancelable();
                 defer locked.unlock();
                 const host = try core.hosts.add(core, identity, username, password, true);
                 try persistence.initHostDb(gpa, core.cache_path, host);
@@ -409,7 +409,7 @@ pub fn runHostMediaReceiver(
         const header, const body = awebo.protocol.media.Header.parse(m.data) orelse continue;
         const cid = header.stream_id.client_id;
         {
-            var locked = Core.lockState(core);
+            var locked = try Core.lockStateCancelable(core);
             defer locked.unlock();
 
             const active_call = &(core.active_call orelse {

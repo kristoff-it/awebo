@@ -28,6 +28,12 @@ pub const Image = extern struct {
     pixels: ?[*]u8,
 };
 
+pub const UiData = struct {
+    data: ?*anyopaque,
+    context: ?*anyopaque,
+    deinit: *const fn (gpa: Allocator, context: ?*anyopaque, data: ?*anyopaque) void,
+};
+
 pub const Format = struct {
     codec: Codec,
     width: u16,
@@ -51,7 +57,7 @@ frame_front: std.atomic.Value(?*Os.Frame) = .init(null),
 /// Convenience field that the UI can use to tie
 /// related artifacts to a video stream, e.g. the
 /// texture used to render the current frame.
-ui_data: ?*anyopaque = null,
+ui_data: ?UiData = null,
 os: Os,
 
 const Os = switch (builtin.target.os.tag) {
@@ -86,12 +92,18 @@ pub fn create(core: *Core, seq: u32, body: []const u8) !?*VideoStream {
     vs.video_thread = try core.io.concurrent(videoThread, .{vs});
     errdefer vs.video_thread.cancel(core.io) catch {};
 
+    vs.packets.packets.warmup(core.gpa) catch unreachable;
+
     vs.pushChunk(seq, body);
     return vs;
 }
 pub fn destroy(vs: *VideoStream, gpa: Allocator) void {
     vs.os.deinit();
     vs.video_thread.cancel(vs.core.io) catch {};
+    vs.packets.deinit(gpa);
+    if (vs.swapBackFrame(null)) |frame| frame.deinit();
+    if (vs.swapFrontFrame(null)) |frame| frame.deinit();
+    if (vs.ui_data) |ui| ui.deinit(gpa, ui.context, ui.data);
     gpa.destroy(vs);
 }
 
@@ -186,83 +198,6 @@ fn videoThread(vs: *VideoStream) anyerror!void {
     comptime unreachable;
 }
 
-const MacOs = struct {
-    comptime {
-        @export(&swapBackFrame, .{ .linkage = .strong, .name = "aweboVideoSwapFrame" });
-    }
-
-    pub const Frame = opaque {
-        extern fn frameDeinit(*Frame) void;
-        pub fn deinit(f: *Frame) void {
-            frameDeinit(f);
-        }
-
-        extern fn frameGetImage(*Frame) Image;
-        pub fn getImage(f: *Frame) Image {
-            return frameGetImage(f);
-        }
-    };
-
-    decoder: *Decoder,
-
-    const Decoder = opaque {};
-
-    extern fn videoDecoderInit(*VideoStream, Format.Codec, u32, u32, [*]const u8) *Decoder;
-    pub fn init(c: *VideoStream, format: Format, first_frame_data: []const u8) MacOs {
-        return .{
-            .decoder = videoDecoderInit(
-                c,
-                format.codec,
-                format.width,
-                format.height,
-                first_frame_data.ptr,
-            ),
-        };
-    }
-
-    pub fn deinit(mc: *MacOs) void {
-        _ = mc;
-    }
-
-    extern fn videoReceivedFrameBytes(*Decoder, data: [*]const u8, len: usize, keyframe: bool) u32;
-    pub fn decodeNewFrame(mc: *MacOs, data: []const u8, keyframe: bool) u32 {
-        return videoReceivedFrameBytes(mc.decoder, data.ptr, data.len, keyframe);
-    }
-};
-
-const Dummy = struct {
-    pub const Frame = opaque {
-        pub fn deinit(f: *Frame) void {
-            _ = f;
-        }
-
-        pub fn getImage(f: *Frame) Image {
-            _ = f;
-            return .{
-                .height = 0,
-                .width = 0,
-                .pixels = &.{},
-            };
-        }
-    };
-
-    pub fn init(c: *VideoStream, format: Format, first_frame_data: []const u8) Dummy {
-        _ = c;
-        _ = format;
-        _ = first_frame_data;
-        return .{};
-    }
-    pub fn deinit(d: *Dummy) void {
-        _ = d;
-    }
-    pub fn decodeNewFrame(d: *Dummy, data: []const u8, keyframe: bool) u32 {
-        _ = d;
-        _ = data;
-        _ = keyframe;
-        return 0;
-    }
-};
-
 const JitterBuffer = struct {
     /// Writer side
     stats: struct {
@@ -287,6 +222,10 @@ const JitterBuffer = struct {
     packets: PacketRing,
 
     pub const empty: JitterBuffer = .{ .packets = .init };
+
+    pub fn deinit(jb: *JitterBuffer, gpa: Allocator) void {
+        jb.packets.deinit(gpa);
+    }
 
     /// This function is meant to be called by the network thread.
     pub fn writeChunk(jb: *JitterBuffer, gpa: Allocator, seq: u32, body: []const u8) void {
@@ -444,6 +383,21 @@ const JitterBuffer = struct {
 
         pub const init: PacketRing = .{};
         pub const RingIndex = std.math.IntFittingRange(0, buffer_len);
+
+        pub fn warmup(pb: *PacketRing, gpa: Allocator) !void {
+            for (&pb.data) |*d| {
+                d.buffer = try gpa.alloc(u8, media.Video.data_per_chunk * 500);
+                d.seen_chunks = try .initEmpty(gpa, 500);
+            }
+        }
+
+        pub fn deinit(pb: *PacketRing, gpa: Allocator) void {
+            for (&pb.data) |*d| {
+                log.debug("packet ring freeing {}bytes @ {*}", .{ d.buffer.len, d.buffer.ptr });
+                gpa.free(d.buffer);
+                d.seen_chunks.deinit(gpa);
+            }
+        }
 
         pub fn write(pb: *PacketRing, gpa: Allocator, seq: u32, body: []const u8) !void {
             const max_data = media.Video.data_per_chunk;
@@ -624,4 +578,82 @@ const JitterBuffer = struct {
             return lhs.seq < rhs.seq;
         }
     };
+};
+
+const MacOs = struct {
+    comptime {
+        @export(&swapBackFrame, .{ .linkage = .strong, .name = "aweboVideoSwapFrame" });
+    }
+
+    pub const Frame = opaque {
+        extern fn frameDeinit(*Frame) void;
+        pub fn deinit(f: *Frame) void {
+            frameDeinit(f);
+        }
+
+        extern fn frameGetImage(*Frame) Image;
+        pub fn getImage(f: *Frame) Image {
+            return frameGetImage(f);
+        }
+    };
+
+    decoder: *Decoder,
+
+    const Decoder = opaque {};
+
+    extern fn videoDecoderInit(*VideoStream, Format.Codec, u32, u32, [*]const u8) *Decoder;
+    pub fn init(c: *VideoStream, format: Format, first_frame_data: []const u8) MacOs {
+        return .{
+            .decoder = videoDecoderInit(
+                c,
+                format.codec,
+                format.width,
+                format.height,
+                first_frame_data.ptr,
+            ),
+        };
+    }
+
+    extern fn videoDecoderDeinit(*Decoder) void;
+    pub fn deinit(mc: *MacOs) void {
+        videoDecoderDeinit(mc.decoder);
+    }
+
+    extern fn videoReceivedFrameBytes(*Decoder, data: [*]const u8, len: usize, keyframe: bool) u32;
+    pub fn decodeNewFrame(mc: *MacOs, data: []const u8, keyframe: bool) u32 {
+        return videoReceivedFrameBytes(mc.decoder, data.ptr, data.len, keyframe);
+    }
+};
+
+const Dummy = struct {
+    pub const Frame = opaque {
+        pub fn deinit(f: *Frame) void {
+            _ = f;
+        }
+
+        pub fn getImage(f: *Frame) Image {
+            _ = f;
+            return .{
+                .height = 0,
+                .width = 0,
+                .pixels = &.{},
+            };
+        }
+    };
+
+    pub fn init(c: *VideoStream, format: Format, first_frame_data: []const u8) Dummy {
+        _ = c;
+        _ = format;
+        _ = first_frame_data;
+        return .{};
+    }
+    pub fn deinit(d: *Dummy) void {
+        _ = d;
+    }
+    pub fn decodeNewFrame(d: *Dummy, data: []const u8, keyframe: bool) u32 {
+        _ = d;
+        _ = data;
+        _ = keyframe;
+        return 0;
+    }
 };

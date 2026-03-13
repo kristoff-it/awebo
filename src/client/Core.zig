@@ -576,6 +576,12 @@ pub const Locked = struct {
     }
 };
 
+pub fn lockStateCancelable(core: *Core) !Locked {
+    const io = core.io;
+    try core.mutex.lock(io);
+    return .{ .core = core };
+}
+
 pub fn lockState(core: *Core) Locked {
     const io = core.io;
     core.mutex.lockUncancelable(io);
@@ -644,10 +650,12 @@ pub const ActiveCall = struct {
     }
 
     pub fn disconnect(ac: *const ActiveCall, core: *Core) void {
-        _ = ac;
         const io = core.io;
         const call = &(core.active_call orelse return);
         core.audio.callEnd();
+
+        if (ac.screenshare) core.screen_capture.stopCapture();
+
         log.debug("stopped capturing, cleaning up futures", .{});
         if (call.push_future) |*push_future| push_future.cancel(io) catch {};
         log.debug("push future done", .{});

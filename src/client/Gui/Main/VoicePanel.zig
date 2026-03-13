@@ -1,18 +1,23 @@
 const VoicePanel = @This();
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const dvui = @import("dvui");
 const awebo = @import("../../../awebo.zig");
 const Channel = awebo.Channel;
 const Core = @import("../../Core.zig");
 const VideoPreviewBox = @import("ScreenshareBox.zig");
+const UiData = Core.VideoStream.UiData;
 
+textureBin: std.ArrayList(*dvui.Texture) = .empty,
 subviews: struct {
     screen_preview: VideoPreviewBox = .{},
 } = .{},
 
 pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
     _ = frozen;
+
+    while (vp.textureBin.pop()) |t| t.destroyLater();
 
     var box = dvui.box(
         @src(),
@@ -76,9 +81,13 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
                     .bgra_32,
                 );
 
-                screen.ui_data = tex;
+                screen.ui_data = .{
+                    .context = screen,
+                    .data = tex,
+                    .deinit = deinitTexture,
+                };
             } else {
-                const tex: *dvui.Texture = @ptrCast(@alignCast(screen.ui_data.?));
+                const tex: *dvui.Texture = @ptrCast(@alignCast(screen.ui_data.?.data.?));
                 try backend.textureUpdate(tex.*, pixels);
             }
         }
@@ -88,7 +97,7 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
 
     for (ac.callers.values(), 0..) |*caller, idx| {
         const screen = caller.screen orelse continue;
-        const tex: *dvui.Texture = @ptrCast(@alignCast(screen.ui_data orelse {
+        const tex: *dvui.Texture = @ptrCast(@alignCast(if (screen.ui_data) |ui| ui.data.? else {
             std.log.debug("no texture", .{});
             continue;
         }));
@@ -127,4 +136,14 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
     if (ac.screenshare) {
         try vp.subviews.screen_preview.draw(core, .screen);
     }
+}
+
+fn deinitTexture(gpa: Allocator, vp: ?*anyopaque, tex: ?*anyopaque) void {
+    const voice: *VoicePanel = @ptrCast(@alignCast(vp.?));
+    const texture: *dvui.Texture = @ptrCast(@alignCast(tex.?));
+
+    voice.textureBin.append(gpa, texture) catch {
+        std.log.warn("unable to collect texture for cleanup, leaking it!", .{});
+        gpa.destroy(texture);
+    };
 }

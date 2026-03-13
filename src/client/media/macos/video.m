@@ -1,3 +1,4 @@
+#import "utils.h"
 #import "video.h"
 #import <AVFoundation/AVFoundation.h>
 #import <VideoToolbox/VideoToolbox.h>
@@ -166,6 +167,11 @@ void *videoDecoderInit(void *userdata, UInt32 codec, UInt32 width,
   return (__bridge_retained void *)decoder;
 }
 
+void videoDecoderDeinit(void *ptr) {
+  VideoDecoder *decoder = (__bridge_transfer VideoDecoder *)ptr;
+  DDAssertLastRef(decoder);
+}
+
 // ─── Session Creation
 // ─────────────────────────────────────────────────────────
 
@@ -231,10 +237,7 @@ void *videoDecoderInit(void *userdata, UInt32 codec, UInt32 width,
     CFRelease(usingHW);
 }
 
-// ─── Decode
-// ───────────────────────────────────────────────────────────────────
-// ─── Call this when your UDP reassembly has a complete frame ─────────────────
-
+// Called by the JitterBuffer when a full video packet is reconstructed.
 UInt32 videoReceivedFrameBytes(void *ptr, const char *buffer, size_t len,
                                BOOL keyframe) {
 
@@ -294,7 +297,6 @@ UInt32 videoReceivedFrameBytes(void *ptr, const char *buffer, size_t len,
     return;
   }
 
-  // ── 3. Rebuild timing ─────────────────────────────────────────────────
   CMTime pts = CMTimeMake(1, 30);
 
   // CMTime pts = CMTimeMake((int64_t)header.pts_value, header.pts_timescale);
@@ -307,8 +309,6 @@ UInt32 videoReceivedFrameBytes(void *ptr, const char *buffer, size_t len,
       .decodeTimeStamp = kCMTimeInvalid, // let VT infer DTS
   };
 
-  // ── 4. Rebuild CMSampleBuffer ─────────────────────────────────────────
-  // _formatDescription was created once at session setup (same as before)
   CMSampleBufferRef sampleBuffer = NULL;
   status = CMSampleBufferCreateReady(
       kCFAllocatorDefault, blockBuffer,
@@ -325,7 +325,6 @@ UInt32 videoReceivedFrameBytes(void *ptr, const char *buffer, size_t len,
     return;
   }
 
-  // ── 5. Tag keyframes (VT needs this to manage reference frames) ───────
   if (isKeyFrame) {
     CFArrayRef attachments =
         CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, YES);
@@ -335,7 +334,6 @@ UInt32 videoReceivedFrameBytes(void *ptr, const char *buffer, size_t len,
                          kCFBooleanTrue);
   }
 
-  // ── 6. Decode ─────────────────────────────────────────────────────────
   [self decodeFrame:sampleBuffer];
   CFRelease(sampleBuffer);
 }
@@ -347,6 +345,12 @@ UInt32 videoReceivedFrameBytes(void *ptr, const char *buffer, size_t len,
   // Decode asynchronously; callback fires on an internal VT thread
   // VTDecodeFrameFlags flags = kVTDecodeFrame_EnableAsynchronousDecompression |
   //                            kVTDecodeFrame_1xRealTimePlayback;
+
+  // We do synchronous decoding because we are using memory that belongs
+  // to the jitter buffer that we want to "release" (make available again to
+  // the writer side) once we're done using it. We could delegate this job
+  // to the callback, but the video pump thread has nothing to do in the
+  // meantime anyway.
   VTDecodeFrameFlags flags = kVTDecodeFrame_1xRealTimePlayback;
   VTDecodeInfoFlags infoFlags;
 
@@ -363,9 +367,6 @@ UInt32 videoReceivedFrameBytes(void *ptr, const char *buffer, size_t len,
     NSLog(@"Frame dropped by decoder");
   }
 }
-
-// ─── Decoded Frame
-// ───────────────────────────────────────────────────
 
 static void DecodedFrameCallback(void *decompressionOutputRefCon,
                                  void *sourceFrameRefCon, OSStatus status,
@@ -395,14 +396,12 @@ static void DecodedFrameCallback(void *decompressionOutputRefCon,
       aweboVideoSwapFrame(decoder.userdata, imageBuffer);
 
   if (dropped_frame) {
-    NSLog(@"decoder found dropped frame, releasing");
+    NSLog(@"decode dropped the frame, releasing");
     CVPixelBufferRelease(dropped_frame);
   }
 }
 
-// ─── Session Management
-// ───────────────────────────────────────────────────────
-
+// Not used since we're doing synchronous decoding.
 - (void)flush {
   if (_decompressionSession) {
     // Block until all queued frames are delivered

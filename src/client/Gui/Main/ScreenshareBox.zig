@@ -29,7 +29,17 @@ pub fn draw(sb: *ScreenshareBox, core: *Core, source: enum { webcam, screen }) !
             };
 
             var backend = dvui.currentWindow().backend;
-            sb.texture = try backend.textureCreate(pixels, @intCast(img.width), @intCast(img.height), .nearest, .bgra_32);
+            if (sb.texture) |tex| {
+                try backend.textureUpdate(tex, pixels);
+            } else {
+                sb.texture = try backend.textureCreate(
+                    pixels,
+                    @intCast(img.width),
+                    @intCast(img.height),
+                    .nearest,
+                    .bgra_32,
+                );
+            }
         }
         const millis = @divFloor(dvui.frameTimeNS(), 1_000_000);
         const left = @as(i32, @intCast(@rem(millis, millis_per_frame)));

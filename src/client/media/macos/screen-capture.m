@@ -1,3 +1,4 @@
+#import "utils.h"
 #import "video-format.h"
 #import "video.h"
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
@@ -43,12 +44,14 @@ void *screenCaptureManagerInit(void *userdata) {
   NSLog(@"creating capture manager");
   ScreenCaptureManager *manager = [[ScreenCaptureManager alloc] init];
   manager.userdata = userdata;
+  manager.selectedCodec = [manager bestAvailableCodec];
 
   return (__bridge_retained void *)manager;
 }
 
 void screenCaptureManagerDeinit(void *ptr) {
   ScreenCaptureManager *scm = (__bridge_transfer ScreenCaptureManager *)ptr;
+  DDAssertLastRef(scm);
 }
 
 void screenCaptureManagerShowPicker(void *manager) {
@@ -288,7 +291,6 @@ void screenCaptureManagerStopCapture(void *manager) {
 
 - (void)setupCompressionSession {
   self.lastKeyframePts = CMTimeMake(0, 1);
-  self.selectedCodec = [self bestAvailableCodec];
   BOOL isHEVC = (self.selectedCodec == kCMVideoCodecType_HEVC);
   NSLog(@"Using codec: %@", isHEVC ? @"H.265 (HEVC)" : @"H.264 (AVC)");
 
@@ -459,6 +461,26 @@ static void EncodedFrameCallback(void *outputCallbackRefCon,
     aweboScreenCaptureEncodedVideoFrame(manager.userdata, out.bytes, out.length,
                                         isKeyFrame);
   }
+}
+
+- (void)invalidate {
+  if (_compressionSession) {
+    VTCompressionSessionInvalidate(_compressionSession);
+    CFRelease(_compressionSession);
+    _compressionSession = NULL;
+  }
+  if (_stream) {
+    [_stream stopCaptureWithCompletionHandler:^(NSError *error) {
+      if (error) {
+        NSLog(@"Error stopping: %@", error);
+      }
+    }];
+    _stream = NULL;
+  }
+}
+
+- (void)dealloc {
+  [self invalidate];
 }
 
 @end
