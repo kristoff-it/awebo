@@ -365,7 +365,7 @@ pub fn runHostMediaManager(
     const sock: Io.net.Socket = addr.bind(io, .{ .mode = .dgram, .protocol = .udp }) catch |err| {
         std.process.fatal("unable to bing socket: {t}", .{err});
     };
-    defer sock.close(io);
+    defer if (builtin.target.os.tag != .windows) sock.close(io);
 
     // set dscp to bump up priority of our packets.
     awebo.network_utils.setUdpDscp(sock);
@@ -377,6 +377,12 @@ pub fn runHostMediaManager(
     var sbuf: [2]Select.Union = undefined;
     var select: Select = .init(io, &sbuf);
     defer select.cancelDiscard();
+
+    // Temporary code because Io cancelation on windows is not implemented
+    // yet in Zig. By closing the socket early we unblock the media
+    // receiver. Maybe also cause UB. Oh well.
+    // When deleting make sure to remove the OS check a few lines above.
+    defer if (builtin.target.os.tag == .windows) sock.close(io);
 
     select.concurrent(.receive, runHostMediaReceiver, .{ core, sock, &server, host_id }) catch return;
     select.concurrent(.send, runHostMediaSender, .{ core, sock, &server, host_id }) catch return;
