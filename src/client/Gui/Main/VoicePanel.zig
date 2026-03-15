@@ -62,10 +62,6 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
         if (maybe_frame) |new| {
             defer new.deinit();
             const img = new.getImage();
-            const pixels = img.pixels orelse {
-                std.log.debug("null pixels", .{});
-                return;
-            };
 
             std.log.debug("swap!", .{});
 
@@ -73,13 +69,33 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
 
             if (screen.ui_data == null) {
                 const tex: *dvui.Texture = try core.gpa.create(dvui.Texture);
-                tex.* = try backend.textureCreate(
-                    pixels,
-                    @intCast(img.width),
-                    @intCast(img.height),
-                    .nearest,
-                    .bgra_32,
-                );
+                switch (img) {
+                    .bgra => |bgra| {
+                        tex.* = try backend.textureCreate(
+                            bgra.pixels.?,
+                            @intCast(bgra.width),
+                            @intCast(bgra.height),
+                            .nearest,
+                            .bgra_32,
+                        );
+                    },
+                    .yuv => |yuv| {
+                        const ww: usize = @intCast(yuv.width);
+                        const hh: usize = @intCast(yuv.height);
+                        const half: usize = ((hh + 1) / 2) * ((ww + 1) / 2);
+                        var planes = dvui.currentWindow().arena().alloc(u8, ww * hh + 2 * half) catch @panic("OOM");
+                        @memcpy(planes[0 .. ww * hh], yuv.planes[0]);
+                        @memcpy(planes[ww * hh ..][0..half], yuv.planes[2]);
+                        @memcpy(planes[ww * hh + half ..][0..half], yuv.planes[1]);
+                        tex.* = try backend.textureCreate(
+                            @ptrCast(planes),
+                            @intCast(yuv.width),
+                            @intCast(yuv.height),
+                            .nearest,
+                            .fourcc_yv12,
+                        );
+                    },
+                }
 
                 screen.ui_data = .{
                     .context = screen,
@@ -88,9 +104,26 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
                 };
             } else {
                 const tex: *dvui.Texture = @ptrCast(@alignCast(screen.ui_data.?.data.?));
-                try backend.textureUpdate(tex.*, pixels);
+                switch (img) {
+                    .bgra => |bgra| try backend.textureUpdate(tex.*, bgra.pixels.?),
+                    .yuv => |yuv| {
+                        const ww: usize = @intCast(yuv.width);
+                        const hh: usize = @intCast(yuv.height);
+                        const half: usize = ((hh + 1) / 2) * ((ww + 1) / 2);
+                        var planes = dvui.currentWindow().arena().alloc(u8, ww * hh + 2 * half) catch @panic("OOM");
+                        @memcpy(planes[0 .. ww * hh], yuv.planes[0]);
+                        @memcpy(planes[ww * hh ..][0..half], yuv.planes[2]);
+                        @memcpy(planes[ww * hh + half ..][0..half], yuv.planes[1]);
+                        try backend.textureUpdate(tex.*, @ptrCast(planes));
+                    },
+                }
             }
         }
+    }
+
+    if (ac.screenshare) {
+        std.log.debug("rendering screenshare preview", .{});
+        try vp.subviews.screen_preview.draw(core, .screen);
     }
 
     if (!any_stream) return;
@@ -131,10 +164,6 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
             screen.destroy(core.gpa);
             caller.screen = null;
         }
-    }
-
-    if (ac.screenshare) {
-        try vp.subviews.screen_preview.draw(core, .screen);
     }
 }
 

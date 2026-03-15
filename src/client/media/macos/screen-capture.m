@@ -107,8 +107,8 @@ void screenCaptureManagerShowPicker(void *manager) {
   config.width = 1920;
   config.height = 1080;
   config.minimumFrameInterval = CMTimeMake(1, 30); // 30 fps
-  // config.pixelFormat = kCVPixelFormatType_32RGBA;
   config.pixelFormat = kCVPixelFormatType_32BGRA;
+  // config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
   config.ignoreGlobalClipDisplay = true;
   config.ignoreGlobalClipSingleWindow = true;
   config.scalesToFit = true;
@@ -447,7 +447,8 @@ static void EncodedFrameCallback(void *outputCallbackRefCon,
                                                              delta:delta
                                                               data:dataPointer
                                                                len:totalLength];
-    NSLog(@"including codec header = %lu", out.length);
+    NSLog(@"including codec header = %lu (%lu) delta %d", out.length,
+          totalLength, delta);
     aweboScreenCaptureEncodedVideoFrame(
         manager.userdata, (const char *)out.bytes, out.length, isKeyFrame);
   } else {
