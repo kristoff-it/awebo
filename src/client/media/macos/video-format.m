@@ -94,6 +94,8 @@
       .pps_length = (uint16_t)ppsLen,
   };
 
+  NSLog(@"encoder header vps %ul sps %ul pps %ul", vpsLen, spsLen, ppsLen);
+
   NSMutableData *out =
       [NSMutableData dataWithCapacity:sizeof(header) + vpsLen + spsLen +
                                       ppsLen + sizeof(UInt32) + len];

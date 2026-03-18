@@ -9,8 +9,8 @@
             .hash = "miniaudio-0.11.25-LWmAG1UgAAABQoUxopYnG2xp1un2FWnSfdKiTLX2ix-i",
         },
         .dvui = .{
-            .url = "git+https://github.com/david-vanderson/dvui.git?ref=zig16-dev#90faef537a337249292add8393d4a2b1a77083ee",
-            .hash = "dvui-0.4.0-dev-AQFJmRBj2wAhrS3dRe3YtpXKBboC4Rpszy_e0TyfEFQz",
+            .url = "git+https://github.com/david-vanderson/dvui?ref=zig16-dev#17ce34643a54c7f1375fa28feb3a40d82cff57ca",
+            .hash = "dvui-0.4.0-dev-AQFJmS1j2wD9K9kqG0Xevlhzsk8MR9FBopByaR5KfROF",
         },
         .pulseaudio = .{
             .url = "https://github.com/andrewrk/pulseaudio/archive/909a2ceebcc4efe74418107c279ac239f28e0f61.tar.gz",

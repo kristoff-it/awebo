@@ -404,8 +404,7 @@ pub fn runHostMediaReceiver(
     log.debug("{s} started", .{@src().fn_name});
     defer log.debug("{s} exited", .{@src().fn_name});
 
-    var imbuf: [64]Io.net.IncomingMessage = undefined;
-    const dbuf = gpa.alloc(u8, imbuf.len * 1280) catch oom();
+    const dbuf = gpa.alloc(u8, 64 * 1280) catch oom();
     defer gpa.free(dbuf);
 
     while (true) {

@@ -234,7 +234,7 @@ pub const Video = packed struct {
         });
     }
 
-    pub fn parse(body: []const u8) ?struct { Video, []const u8 } {
+    pub fn parse(body: []u8) ?struct { Video, []u8 } {
         if (body.len < @sizeOf(Video)) return null;
         return .{
             std.mem.bytesToValue(Video, body[0..@sizeOf(Video)]),

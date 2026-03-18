@@ -1,6 +1,7 @@
 const VideoStream = @This();
 
 const builtin = @import("builtin");
+const options = @import("options");
 const std = @import("std");
 const assert = std.debug.assert;
 const Io = std.Io;
@@ -9,6 +10,7 @@ const awebo = @import("../../awebo.zig");
 const media = awebo.protocol.media;
 const Core = @import("../Core.zig");
 const log = std.log.scoped(.@"video-stream");
+const FfmpegDecoder = @import("ffmpeg/Decoder.zig");
 
 /// Space for buffered packets. Must be a power of 2.
 const buffer_len: usize = 32;
@@ -20,12 +22,31 @@ comptime {
     assert(start_count < buffer_len);
 }
 
-// This definition must be kept in sync with OS code.
-// - macos/video.h
-pub const Image = extern struct {
-    width: usize,
-    height: usize,
-    pixels: ?[*]u8,
+pub const Image = union(enum) {
+    bgra: Bgra,
+    yuv: Yuv,
+
+    // This definition must be kept in sync with OS code.
+    // - macos/video.h
+    pub const Bgra = extern struct {
+        width: usize,
+        height: usize,
+        pixels: ?[*]u8,
+    };
+
+    pub const Yuv = extern struct {
+        width: usize,
+        height: usize,
+        planes: *const [3][*]const u8,
+        color: enum(u32) {
+            bt601v,
+            bt601f,
+            bt709v,
+            bt709f,
+            bt2020v,
+            bt2020f,
+        },
+    };
 };
 
 pub const UiData = struct {
@@ -51,21 +72,21 @@ core: *Core,
 packets: JitterBuffer = .empty,
 video_thread: Io.Future(anyerror!void),
 
-frame_back: std.atomic.Value(?*Os.Frame) = .init(null),
-frame_front: std.atomic.Value(?*Os.Frame) = .init(null),
+frame_back: std.atomic.Value(?*Decoder.Frame) = .init(null),
+frame_front: std.atomic.Value(?*Decoder.Frame) = .init(null),
 
 /// Convenience field that the UI can use to tie
 /// related artifacts to a video stream, e.g. the
 /// texture used to render the current frame.
 ui_data: ?UiData = null,
-os: Os,
+decoder: Decoder,
 
-const Os = switch (builtin.target.os.tag) {
-    .macos => MacOs,
+const Decoder = if (options.dummy) Dummy else if (options.ffmpeg) FfmpegDecoder else switch (builtin.target.os.tag) {
+    .macos => MacOsNative,
     else => Dummy,
 };
 
-pub fn create(core: *Core, seq: u32, body: []const u8) !?*VideoStream {
+pub fn create(core: *Core, seq: u32, body: []u8) !?*VideoStream {
     const video_header, const video_data = media.Video.parse(body) orelse {
         log.debug("discarding malformed packet", .{});
         return null;
@@ -79,7 +100,7 @@ pub fn create(core: *Core, seq: u32, body: []const u8) !?*VideoStream {
     vs.* = .{
         .core = core,
         .video_thread = undefined,
-        .os = .init(vs, .{
+        .decoder = try .init(vs, core.gpa, .{
             .codec = .h265,
             .width = 1920,
             .height = 1080,
@@ -87,7 +108,7 @@ pub fn create(core: *Core, seq: u32, body: []const u8) !?*VideoStream {
         }, video_data),
     };
 
-    errdefer vs.os.deinit();
+    errdefer vs.decoder.deinit();
 
     vs.video_thread = try core.io.concurrent(videoThread, .{vs});
     errdefer vs.video_thread.cancel(core.io) catch {};
@@ -98,7 +119,7 @@ pub fn create(core: *Core, seq: u32, body: []const u8) !?*VideoStream {
     return vs;
 }
 pub fn destroy(vs: *VideoStream, gpa: Allocator) void {
-    vs.os.deinit();
+    vs.decoder.deinit();
     vs.video_thread.cancel(vs.core.io) catch {};
     vs.packets.deinit(gpa);
     if (vs.swapBackFrame(null)) |frame| frame.deinit();
@@ -107,19 +128,19 @@ pub fn destroy(vs: *VideoStream, gpa: Allocator) void {
     gpa.destroy(vs);
 }
 
-pub fn pushChunk(vs: *VideoStream, seq: u32, body: []const u8) void {
+pub fn pushChunk(vs: *VideoStream, seq: u32, body: []u8) void {
     // const video_header: *align(1) awebo.protocol.media.Video = @ptrCast(body.ptr);
     vs.packets.writeChunk(vs.core.gpa, seq, body);
 }
 
 /// Function with C callconv that the OS can invoke whenever
 /// a new video frame is ready.
-pub fn swapBackFrame(vs: *VideoStream, new: ?*Os.Frame) callconv(.c) ?*Os.Frame {
+pub fn swapBackFrame(vs: *VideoStream, new: ?*Decoder.Frame) callconv(.c) ?*Decoder.Frame {
     return vs.frame_back.swap(new, .acq_rel);
 }
 
 /// Called by the UI thread to update a texture with this frame.
-pub fn swapFrontFrame(vs: *VideoStream, new: ?*Os.Frame) ?*Os.Frame {
+pub fn swapFrontFrame(vs: *VideoStream, new: ?*Decoder.Frame) ?*Decoder.Frame {
     return vs.frame_front.swap(new, .acq_rel);
 }
 
@@ -165,13 +186,17 @@ fn videoThread(vs: *VideoStream) anyerror!void {
                 }
 
                 const front = vs.swapFrontFrame(vs.swapBackFrame(null));
+
                 if (front) |f| {
                     log.warn("UI did not consume front frame!", .{});
                     f.deinit();
                 }
                 vs.core.refresh(vs.core, @src(), null);
 
-                const delta = vs.os.decodeNewFrame(d.data.slice(), d.data.keyframe);
+                const delta = vs.decoder.decodeFrame(d.data.slice(), d.data.keyframe) catch |err| blk: {
+                    log.debug("error while decoding frame: {t}", .{err});
+                    break :blk 33;
+                };
 
                 d.meta.seq = 0;
                 vs.packets.nextPacketCommit(d);
@@ -228,7 +253,7 @@ const JitterBuffer = struct {
     }
 
     /// This function is meant to be called by the network thread.
-    pub fn writeChunk(jb: *JitterBuffer, gpa: Allocator, seq: u32, body: []const u8) void {
+    pub fn writeChunk(jb: *JitterBuffer, gpa: Allocator, seq: u32, body: []u8) void {
         if (jb.expected_next_seq == 0) {
             jb.expected_next_seq = seq;
         }
@@ -374,7 +399,7 @@ const JitterBuffer = struct {
             last_chunk_len: u32 = undefined,
             keyframe: bool = undefined,
 
-            pub fn slice(self: *const @This()) []const u8 {
+            pub fn slice(self: *const @This()) []u8 {
                 assert(self.last_chunk_len > 0);
                 const full_chunks_size = (self.total_chunks - 1) * media.Video.data_per_chunk;
                 return self.buffer[0 .. full_chunks_size + self.last_chunk_len];
@@ -399,7 +424,7 @@ const JitterBuffer = struct {
             }
         }
 
-        pub fn write(pb: *PacketRing, gpa: Allocator, seq: u32, body: []const u8) !void {
+        pub fn write(pb: *PacketRing, gpa: Allocator, seq: u32, body: []u8) !void {
             const max_data = media.Video.data_per_chunk;
             const video_header, const video_data = media.Video.parse(body) orelse {
                 log.debug("discarding malformed packet", .{});
@@ -580,7 +605,7 @@ const JitterBuffer = struct {
     };
 };
 
-const MacOs = struct {
+const MacOsNative = struct {
     comptime {
         @export(&swapBackFrame, .{ .linkage = .strong, .name = "aweboVideoSwapFrame" });
     }
@@ -591,18 +616,19 @@ const MacOs = struct {
             frameDeinit(f);
         }
 
-        extern fn frameGetImage(*Frame) Image;
+        extern fn frameGetImage(*Frame) Image.Bgra;
         pub fn getImage(f: *Frame) Image {
-            return frameGetImage(f);
+            return .{ .bgra = frameGetImage(f) };
         }
     };
 
-    decoder: *Decoder,
+    decoder: *NativeDecoder,
 
-    const Decoder = opaque {};
+    const NativeDecoder = opaque {};
 
-    extern fn videoDecoderInit(*VideoStream, Format.Codec, u32, u32, [*]const u8) *Decoder;
-    pub fn init(c: *VideoStream, format: Format, first_frame_data: []const u8) MacOs {
+    extern fn videoDecoderInit(*VideoStream, Format.Codec, u32, u32, [*]const u8) *NativeDecoder;
+    pub fn init(c: *VideoStream, gpa: Allocator, format: Format, first_frame_data: []const u8) !MacOsNative {
+        _ = gpa;
         return .{
             .decoder = videoDecoderInit(
                 c,
@@ -614,13 +640,13 @@ const MacOs = struct {
         };
     }
 
-    extern fn videoDecoderDeinit(*Decoder) void;
-    pub fn deinit(mc: *MacOs) void {
+    extern fn videoDecoderDeinit(*NativeDecoder) void;
+    pub fn deinit(mc: *MacOsNative) void {
         videoDecoderDeinit(mc.decoder);
     }
 
-    extern fn videoReceivedFrameBytes(*Decoder, data: [*]const u8, len: usize, keyframe: bool) u32;
-    pub fn decodeNewFrame(mc: *MacOs, data: []const u8, keyframe: bool) u32 {
+    extern fn videoReceivedFrameBytes(*NativeDecoder, data: [*]const u8, len: usize, keyframe: bool) u32;
+    pub fn decodeFrame(mc: *MacOsNative, data: []const u8, keyframe: bool) !u32 {
         return videoReceivedFrameBytes(mc.decoder, data.ptr, data.len, keyframe);
     }
 };
@@ -634,23 +660,26 @@ const Dummy = struct {
         pub fn getImage(f: *Frame) Image {
             _ = f;
             return .{
-                .height = 0,
-                .width = 0,
-                .pixels = &.{},
+                .bgra = .{
+                    .height = 0,
+                    .width = 0,
+                    .pixels = &.{},
+                },
             };
         }
     };
 
-    pub fn init(c: *VideoStream, format: Format, first_frame_data: []const u8) Dummy {
+    pub fn init(c: *VideoStream, gpa: Allocator, format: Format, first_frame_data: []const u8) !Dummy {
         _ = c;
         _ = format;
         _ = first_frame_data;
+        _ = gpa;
         return .{};
     }
     pub fn deinit(d: *Dummy) void {
         _ = d;
     }
-    pub fn decodeNewFrame(d: *Dummy, data: []const u8, keyframe: bool) u32 {
+    pub fn decodeFrame(d: *Dummy, data: []const u8, keyframe: bool) !u32 {
         _ = d;
         _ = data;
         _ = keyframe;

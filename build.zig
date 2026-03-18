@@ -57,16 +57,22 @@ pub fn build(b: *std.Build) void {
         "Use dummy OS interfaces for A/V in client",
     ) orelse false;
 
+    const client_ffmpeg = b.option(
+        bool,
+        "ffmpeg",
+        "Force usage of ffmpeg for encoding / decoding video",
+    ) orelse false;
+
     const server, const server_test = setupServer(b, target, optimize, dep_optimize, slow, echo, server_version);
     b.installArtifact(server);
 
-    const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, client_local_cache, client_dummy);
+    const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, client_local_cache, client_dummy, client_ffmpeg);
     b.installArtifact(gui);
 
     const mac_os_bundle = b.step("macos-bundle", "create a mac os bundle");
     setupMacOsBundle(b, mac_os_bundle, gui);
 
-    const tui, const tui_test = setupTui(b, target_tui, optimize, dep_optimize, client_version, client_local_cache, client_dummy);
+    const tui, const tui_test = setupTui(b, target_tui, optimize, dep_optimize, client_version, client_local_cache, client_dummy, client_ffmpeg);
     b.installArtifact(tui);
 
     const server_step = b.step("server", "Launch the server executable");
@@ -152,6 +158,7 @@ pub fn setupGui(
     dep_optimize: std.builtin.OptimizeMode,
     local_cache: bool,
     dummy: bool,
+    force_ffmpeg: bool,
 ) struct { *std.Build.Step.Compile, *std.Build.Step.Compile } {
     const appicon = b.createModule(.{
         .root_source_file = b.path("src/client/assets/AppIcon.png"),
@@ -209,10 +216,16 @@ pub fn setupGui(
         .optimize = dep_optimize,
     });
 
+    // const ffmpeg = b.dependency("ffmpeg", .{
+    //     .target = target,
+    //     .optimize = dep_optimize,
+    // });
+
     const options = b.addOptions();
     options.addOption(Context, "context", .client);
     options.addOption(bool, "local_cache", local_cache);
     options.addOption(bool, "dummy", dummy);
+    options.addOption(bool, "ffmpeg", force_ffmpeg);
     gui.root_module.addOptions("options", options);
     gui.root_module.addImport("appicon", appicon);
     gui.root_module.addImport("dvui", dvui.module("dvui_sdl3"));
@@ -221,6 +234,15 @@ pub fn setupGui(
     gui.root_module.addImport("opus", opus.module("opus"));
     gui.root_module.addImport("rnnoise", rnnoise.module("rnnoise"));
     gui.root_module.addImport("miniaudio", miniaudio.module("miniaudio"));
+
+    // Link against system ffmpeg
+    // gui.root_module.linkLibrary(ffmpeg.artifact("ffmpeg"));
+    if (force_ffmpeg) {
+        gui.root_module.linkSystemLibrary("avutil", .{ .needed = true });
+        gui.root_module.linkSystemLibrary("avcodec", .{ .needed = true });
+        // gui.root_module.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/opt/ffmpeg/lib" });
+        // gui.root_module.addSystemIncludePath(.{ .cwd_relative = "/opt/homebrew/opt/ffmpeg/include" });
+    }
     addSqlite(gui, zqlite, .client);
 
     switch (target.result.os.tag) {
@@ -250,7 +272,7 @@ pub fn setupGui(
                     "-Wno-deprecated-declarations",
                     "-Wno-availability",
                     "-Wno-unguarded-availability-new",
-                    if (optimize == .Debug) "-DDEBUG" else "-DNODEBUG",
+                    if (optimize == .Debug) "-DDEBUG" else "-DNDEBUG",
                 },
             });
         },
@@ -286,6 +308,7 @@ pub fn setupTui(
     version: []const u8,
     local_cache: bool,
     dummy: bool,
+    ffmpeg: bool,
 ) struct { *std.Build.Step.Compile, *std.Build.Step.Compile } {
     const tui = b.addExecutable(.{
         .name = "awebo-tui",
@@ -343,6 +366,7 @@ pub fn setupTui(
     options.addOption([]const u8, "version", version);
     options.addOption(bool, "local_cache", local_cache);
     options.addOption(bool, "dummy", dummy);
+    options.addOption(bool, "ffmpeg", ffmpeg);
     tui.root_module.addOptions("options", options);
     tui.root_module.addImport("vaxis", vaxis.module("vaxis"));
     tui.root_module.addImport("folders", folders.module("known-folders"));
@@ -424,10 +448,10 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.O
         const optimize = .Debug;
 
         const server, const server_test = setupServer(b, target, optimize, dep_optimize, false, false, zon.version);
-        const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, false, false);
-        const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false, false);
-        const dummy_gui, const dummy_gui_test = setupGui(b, target, optimize, dep_optimize, false, true);
-        const dummy_tui, const dummy_tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false, true);
+        const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, false, false, false);
+        const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false, false, false);
+        const dummy_gui, const dummy_gui_test = setupGui(b, target, optimize, dep_optimize, false, true, false);
+        const dummy_tui, const dummy_tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false, true, false);
 
         step.dependOn(&b.addInstallArtifact(server, .{}).step);
         step.dependOn(&b.addInstallArtifact(gui, .{}).step);
