@@ -25,10 +25,10 @@ A call with 3 screensharing sessions active at the same time (March 2026):
 ### Does Awebo use WebRTC?
 
 No, we are using state of the art codecs (Opus DRED, h264, HEVC, AV1, FFV1)
-and then writing everything above from scratch, including UDP packet
-framing and jitter buffers. WebRTC is a complicated protocol with bloated
-C++ implementations that needlessly bump up system requirements and
-increase resource consumption.
+and then write everything above from scratch, including UDP packet framing
+and jitter buffers. WebRTC is a complicated protocol with bloated C++
+implementations that needlessly bump up system requirements and increase
+resource consumption.
 
 We are currently focusing on native awebo clients but we plan to also
 create a web client, in which case we will most likely add to Awebo support
