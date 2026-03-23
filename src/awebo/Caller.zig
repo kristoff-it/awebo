@@ -1,6 +1,8 @@
 const Caller = @This();
 
 const context = @import("options").context;
+const std = @import("std");
+const Allocator = std.mem.Allocator;
 const proto = @import("protocol.zig");
 const TcpMessage = proto.TcpMessage;
 const User = @import("User.zig");
@@ -16,7 +18,19 @@ pub const State = struct {
     muted: bool = false,
     muted_server: bool = false,
     deafened: bool = false,
-    screenshare: bool = false,
+    watching: proto.AutoArrayHashMap(proto.media.StreamId, void) = .empty,
+    share: struct {
+        screen: ?struct {
+            format: proto.media.Format,
+            viewers: proto.AutoArrayHashMap(proto.client.Id, void) = .empty,
+            pub const protocol = struct {};
+            pub fn deinit(self: *@This(), gpa: Allocator) void {
+                self.viewers.deinit(gpa);
+            }
+        } = null,
+        camera: ?proto.media.Format = null,
+        pub const protocol = struct {};
+    } = .{},
 
     pub const protocol = struct {};
 };

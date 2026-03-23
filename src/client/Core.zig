@@ -9,6 +9,7 @@ const Allocator = std.mem.Allocator;
 const zeit = @import("zeit");
 const cli = @import("../cli.zig");
 const awebo = @import("../awebo.zig");
+const proto = awebo.protocol;
 const Host = awebo.Host;
 const HostId = awebo.Host.ClientOnly.Id;
 const Channel = awebo.Channel;
@@ -459,39 +460,44 @@ fn callersUpdate(core: *Core, host_id: HostId, cu: awebo.protocol.server.Callers
 
     const h = core.hosts.get(host_id).?;
 
-    if (core.active_call) |*ac| if (cu.caller.voice == ac.voice_id) {
-        // if we see ourselves join, we know we're in
-        if (cu.action == .join and cu.caller.id == h.client.id) {
-            ac.caller_id = cu.caller.id;
-            _ = ac.status.updateCompare(core, @src(), .connecting, .connected);
-        }
-
-        switch (cu.action) {
-            .join => {
-                const entry = ac.callers.getOrPut(core.gpa, cu.caller.id) catch oom();
-                log.debug("ACTIVE CALL JOIN cid = {} you = {}", .{
-                    cu.caller.id,
-                    cu.caller.id == h.client.id,
-                });
-                assert(!entry.found_existing);
-                entry.value_ptr.* = .{
-                    .audio = Audio.Caller.create(core.gpa, core) catch oom(),
-                    .screen = null,
-                };
-            },
-            .update => {},
-            .leave => {
-                if (ac.callers.fetchSwapRemove(cu.caller.id)) |entry| {
-                    entry.value.audio.destroy(core.gpa, &core.audio);
-                    if (entry.value.screen) |s| s.destroy(core.gpa);
-                }
-            },
-        }
-    };
+    if (core.active_call) |*ac| ac.callersUpdate(core, h, cu);
 
     switch (cu.action) {
-        .join, .update => h.client.callers.set(core.gpa, cu.caller) catch oom(),
-        .leave => h.client.callers.remove(cu.caller.id) catch oom(),
+        .join => |join| {
+            h.client.callers.set(core.gpa, .{
+                .id = cu.id,
+                .voice = join.voice,
+                .state = .{
+                    .muted = join.muted,
+                    .muted_server = join.muted_server,
+                    .deafened = join.deafened,
+                },
+            }) catch oom();
+        },
+        .channel_move => unreachable, //TODO
+        .audio => |audio| {
+            const caller = h.client.callers.get(cu.id) orelse return;
+            caller.state.deafened = audio.deafened;
+            caller.state.muted = audio.muted;
+            caller.state.muted_server = audio.muted_server;
+        },
+        .share_begin => |share| h.client.callers.addStream(
+            .{ .client_id = cu.id, .kind = .screen },
+            share.format,
+        ),
+        .share_watch_join => |swj| h.client.callers.addViewer(
+            core.gpa,
+            cu.id,
+            swj.stream,
+        ) catch oom(),
+        .share_watch_leave => |swl| h.client.callers.removeViewer(
+            cu.id,
+            swl.stream,
+        ),
+        .share_end => h.client.callers.removeStream(core.gpa, .{ .client_id = cu.id, .kind = .screen }),
+        .leave => {
+            h.client.callers.remove(core.gpa, cu.id) catch oom();
+        },
     }
 }
 
@@ -607,11 +613,7 @@ pub const ActiveCall = struct {
     status: Status = .{},
     push_future: ?Io.Future(error{ Closed, Canceled }!void) = null,
     manager_future: ?Io.Future(void) = null,
-    callers: std.AutoArrayHashMapUnmanaged(awebo.Caller.Id, struct {
-        audio: *Audio.Caller,
-        screen: ?*VideoStream, // created when the first frame is received
-        // camera: *Video.Caller,
-    }),
+    callers: std.AutoArrayHashMapUnmanaged(awebo.Caller.Id, ActiveCaller),
 
     /// The user has pressed the mute button and expressed the intent of
     /// staying muted. The server might apply server-side mute but, once
@@ -625,7 +627,20 @@ pub const ActiveCall = struct {
     /// still set to `unmuted`, which should result in the audio device
     /// becoming unmuted once server mute ends.
     muted: Audio.DeviceMuteState = .unmuted,
-    screenshare: bool = false,
+    screen: ShareStatus = .off,
+    camera: ShareStatus = .off,
+
+    pub const ActiveCaller = struct {
+        audio: *Audio.Caller,
+        screen: ?*VideoStream = null,
+        // camera: *Video.Caller,
+    };
+
+    pub const ShareStatus = enum {
+        off,
+        requesting_permission,
+        sharing,
+    };
 
     pub const Status = ui.AtomicEnum(true, .intent, &.{
         .connecting,
@@ -637,16 +652,138 @@ pub const ActiveCall = struct {
         return core.hosts.get(ac.host_id).?.shared.voices.get(ac.voice_id).?;
     }
 
-    pub fn screenshareBegin(ac: *ActiveCall, core: *Core) void {
-        assert(!ac.screenshare);
-        core.screen_capture.showOsPicker();
-        ac.screenshare = true;
+    pub fn screenshareBegin(ac: *ActiveCall, core: *Core, lossless: bool, config: awebo.protocol.media.Config) !void {
+        assert(ac.screen == .off);
+        const format = try core.screen_capture.startCapture(lossless, config);
+        core.screen_capture.send.store(true, .unordered);
+
+        const host = core.hosts.get(ac.host_id).?;
+        const msg: awebo.protocol.client.CallShareBegin = .{
+            .origin = now(core),
+            .format = format,
+            .kind = .screen,
+        };
+        const bytes = try msg.serializeAlloc(core.gpa);
+        try host.client.status.synced.tcp.queue.putOne(core.io, bytes);
+
+        ac.screen = .requesting_permission;
     }
 
-    pub fn screenshareEnd(ac: *ActiveCall, core: *Core) void {
-        assert(ac.screenshare);
+    pub fn screenCaptureServerReply(ac: *ActiveCall, core: *Core, ok: bool) void {
+        if (ac.screen != .requesting_permission) {
+            // We are not trying to start a screenshare, ignore.
+            return;
+        }
+
+        if (ok) {
+            ac.screen = .sharing;
+            core.screen_capture.send.store(true, .unordered);
+        } else {
+            @panic("TODO");
+        }
+    }
+
+    pub fn shareSessionJoin(
+        ac: *ActiveCall,
+        core: *Core,
+        id: proto.client.Id,
+        kind: proto.media.StreamKind,
+        format: awebo.protocol.media.Format,
+    ) !void {
+        assert(kind == .screen);
+        const streamer = ac.callers.getPtr(id).?;
+        assert(streamer.screen == null);
+
+        streamer.screen = try .create(core, format);
+
+        const host = core.hosts.get(ac.host_id).?;
+        const msg: awebo.protocol.client.CallShareWatch = .{
+            .origin = now(core),
+            .stream = .{ .client_id = id, .kind = kind },
+            .action = .join,
+        };
+        const bytes = try msg.serializeAlloc(core.gpa);
+        try host.client.status.synced.tcp.queue.putOne(core.io, bytes);
+    }
+
+    pub fn shareSessionLeave(
+        ac: *ActiveCall,
+        core: *Core,
+        caller: *ActiveCaller,
+        id: proto.client.Id,
+        kind: proto.media.StreamKind,
+    ) !void {
+        caller.screen.?.destroy(core.gpa);
+        caller.screen = null;
+
+        const host = core.hosts.get(ac.host_id).?;
+        const msg: awebo.protocol.client.CallShareWatch = .{
+            .origin = now(core),
+            .stream = .{ .client_id = id, .kind = kind },
+            .action = .leave,
+        };
+        const bytes = try msg.serializeAlloc(core.gpa);
+        try host.client.status.synced.tcp.queue.putOne(core.io, bytes);
+    }
+
+    pub fn screenshareEnd(ac: *ActiveCall, core: *Core) !void {
+        assert(ac.screen != .off);
         core.screen_capture.stopCapture();
-        ac.screenshare = false;
+        ac.screen = .off;
+
+        const host = core.hosts.get(ac.host_id).?;
+        const msg: awebo.protocol.client.CallShareEnd = .{
+            .kind = .screen,
+        };
+        const bytes = try msg.serializeAlloc(core.gpa);
+        try host.client.status.synced.tcp.queue.putOne(core.io, bytes);
+    }
+
+    pub fn callersUpdate(
+        ac: *ActiveCall,
+        core: *Core,
+        h: *Host,
+        cu: awebo.protocol.server.CallersUpdate,
+    ) void {
+        // We don't deinit CU because the transfer ownership of the only allocated field
+        // defer cu.deinit();
+
+        switch (cu.action) {
+            .join => {
+                // if we see ourselves join, we know we're in
+                if (cu.id == h.client.id) {
+                    ac.caller_id = cu.id;
+                    _ = ac.status.updateCompare(core, @src(), .connecting, .connected);
+                }
+
+                const entry = ac.callers.getOrPut(core.gpa, cu.id) catch oom();
+                assert(!entry.found_existing);
+                entry.value_ptr.* = .{
+                    .audio = Audio.Caller.create(core.gpa, core) catch oom(),
+                };
+            },
+            .channel_move => unreachable, // TODO
+            .share_begin => {},
+            .share_watch_join => {},
+            .share_watch_leave => {},
+            .share_end => |kind| {
+                log.debug("share end user: {f}", .{cu.id});
+                assert(kind == .screen); // TODO
+                if (ac.callers.getPtr(cu.id)) |caller| {
+                    if (caller.screen) |s| {
+                        s.destroy(core.gpa);
+                        caller.screen = null;
+                    }
+                }
+            },
+            .audio => {}, // TODO
+            .leave => {
+                if (ac.callers.fetchSwapRemove(cu.id)) |entry| {
+                    entry.value.audio.destroy(core.gpa, &core.audio);
+                    if (entry.value.screen) |s| s.destroy(core.gpa);
+                }
+            },
+        }
     }
 
     pub fn disconnect(ac: *const ActiveCall, core: *Core) void {
@@ -654,7 +791,7 @@ pub const ActiveCall = struct {
         const call = &(core.active_call orelse return);
         core.audio.callEnd();
 
-        if (ac.screenshare) core.screen_capture.stopCapture();
+        if (ac.screen != .off) core.screen_capture.stopCapture();
 
         log.debug("stopped capturing, cleaning up futures", .{});
         if (call.push_future) |*push_future| push_future.cancel(io) catch {};
@@ -847,7 +984,6 @@ pub fn callSetMute(core: *Core, new_state: Audio.DeviceMuteState) void {
         const msg: awebo.protocol.client.CallUpdate = .{
             .muted = new_state == .muted,
             .deafened = false,
-            .screenshare = ac.screenshare,
         };
         const bytes = msg.serializeAlloc(core.gpa) catch oom();
         host.client.status.synced.tcp.queue.putOne(core.io, bytes) catch {

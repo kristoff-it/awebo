@@ -274,6 +274,21 @@ fn runClientTcpRead(io: Io, gpa: Allocator, client: *Client) !void {
                     log.err("error processing CallUpdate: {t}", .{err});
                 };
             },
+            .CallShareBegin => {
+                client.callShareBeginRequest(io, gpa, reader) catch |err| {
+                    log.err("error processing CallShareBegin: {t}", .{err});
+                };
+            },
+            .CallShareWatch => {
+                client.callShareWatchRequest(io, gpa, reader) catch |err| {
+                    log.err("error processing CallShareWatch: {t}", .{err});
+                };
+            },
+            .CallShareEnd => {
+                client.callShareEndRequest(io, gpa, reader) catch |err| {
+                    log.err("error processing CallShareEnd: {t}", .{err});
+                };
+            },
             .CallLeave => {
                 client.callLeaveRequest(io, gpa, reader) catch |err| {
                     log.err("error processing CallLeave: {t}", .{err});
@@ -415,12 +430,15 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
             {
                 server_log.debug("CU JOIN = {}", .{client.authenticated.?});
                 const cu: awebo.protocol.server.CallersUpdate = .{
-                    .caller = .{
-                        .id = client.authenticated.?,
-                        .voice = client.voice.?.id,
-                        .state = .{},
+                    .id = client.authenticated.?,
+                    .action = .{
+                        .join = .{
+                            .voice = client.voice.?.id,
+                            .muted = false,
+                            .muted_server = false,
+                            .deafened = false,
+                        },
                     },
-                    .action = .join,
                 };
 
                 const msg = cu.serializeAlloc(gpa) catch unreachable;
@@ -432,11 +450,19 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
         }
 
         // Media packet
-
         const sender = state.clients.udp_index.get(packet.from) orelse {
             server_log.debug("received media udp packet from unknown source: {f}", .{packet.from});
+
+            var it = state.clients.udp_index.iterator();
+            while (it.next()) |entry| {
+                server_log.debug("[{f}] = {f}", .{ entry.key_ptr.*, entry.value_ptr.*.authenticated.? });
+            }
             continue;
         };
+
+        // Make sure the client doesn't spoof the sender id
+        // sender.udp.?.last_msg_ms = state.id.new();
+        header.stream_id.client_id = sender.authenticated.?;
 
         if ((header.sequence >> 31) > 0) {
             server_log.debug("client sent a sequence id > maxint/2, disconnecting", .{});
@@ -444,21 +470,28 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
             continue;
         }
 
-        // Make sure the client doesn't spoof the sender id
-        // sender.udp.?.last_msg_ms = state.id.new();
-        header.stream_id.client_id = sender.authenticated.?;
-
+        const room = state.clients.voice_index.get(sender.voice.?.id).?;
         switch (header.stream_id.kind) {
             else => unreachable,
             .voice => {
-                const voice, _ = awebo.protocol.media.Voice.parse(body) orelse continue;
-                server_log.debug("Voice({f} seq: {} restart: {})", .{
-                    header.stream_id.client_id,
-                    header.sequence,
-                    voice.restart,
-                });
+                // const voice, _ = awebo.protocol.media.Voice.parse(body) orelse continue;
+                // server_log.debug("Voice({f} seq: {} restart: {})", .{
+                //     header.stream_id.client_id,
+                //     header.sequence,
+                //     voice.restart,
+                // });
             },
             .screen => {
+                const sender_state = room.get(sender).?;
+                if (sender_state.share.screen == null) {
+                    server_log.debug(
+                        "client without screen sharing session is sending media packets, forcing disconnection",
+                        .{},
+                    );
+                    sender.deinit(io, gpa, state);
+                    continue;
+                }
+
                 const screen, _ = awebo.protocol.media.Video.parse(body) orelse continue;
                 server_log.debug("Screen({f} seq: {} chunk: [{}/{}]{s})", .{
                     header.stream_id.client_id,
@@ -470,15 +503,19 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
             },
         }
 
-        const room = state.clients.voice_index.get(sender.voice.?.id).?;
-        const receivers = room.keys();
         var batch: [64]Io.net.OutgoingMessage = undefined;
         var batch_idx: usize = 0;
-        for (receivers) |client| {
+        for (room.keys(), room.values()) |client, caller_state| {
             const receiver_udp = &(client.udp orelse {
                 server_log.debug("client {} has no udp yet, skipping", .{client.authenticated.?});
                 continue;
             });
+
+            // it might be better to use the streamer's 'wiewers' set, but
+            // that set contains client_ids not client pointers so with
+            // that approach it might be better to create a
+            // 'viewers_server' separate set that exists server-side only.
+            if (!caller_state.watching.map.contains(header.stream_id)) continue;
 
             if (!options.echo) {
                 if (client.authenticated.? == sender.authenticated.?) {
@@ -865,18 +902,292 @@ const Client = struct {
             caller_state.deafened = cmd.deafened;
 
             const cu: awebo.protocol.server.CallersUpdate = .{
-                .caller = .{
-                    .id = client.authenticated.?,
-                    .voice = voice.id,
-                    .state = caller_state.*,
+                .id = client.authenticated.?,
+                .action = .{
+                    .audio = .{
+                        .muted = cmd.muted,
+                        .muted_server = caller_state.muted_server,
+                        .deafened = cmd.deafened,
+                    },
                 },
-                .action = .update,
             };
 
             const bytes = cu.serializeAlloc(gpa) catch @panic("oom");
             state.tcpBroadcast(io, gpa, bytes);
         }
     }
+
+    fn callShareBeginRequest(client: *Client, io: Io, gpa: Allocator, reader: *Io.Reader) !void {
+        const log = client.scopedLog();
+
+        const cmd = try awebo.protocol.client.CallShareBegin.deserialize(reader);
+        log.debug("share begin request: {}", .{cmd});
+
+        {
+            const locked = lockState(io);
+            defer locked.unlock(io);
+            const state = locked.state;
+
+            {
+                const gop = try state.client_limits.getOrPut(gpa, client.authenticated.?);
+                if (!gop.found_existing) gop.value_ptr.* = .init(io, .user_action);
+
+                const limiter = gop.value_ptr;
+
+                limiter.takeToken(io, .user_action) catch {
+                    log.debug("user {} exceeded user action limit", .{client.authenticated.?});
+                    const fail: awebo.protocol.server.ClientRequestReply = .{
+                        .origin = cmd.origin,
+                        .reply_marker = awebo.protocol.client.CallShareBegin.marker,
+                        .result = .rate_limit,
+                    };
+
+                    const bytes = try fail.serializeAlloc(gpa);
+
+                    const msg: *TcpMessage = .create(gpa, bytes, 1);
+                    try client.tcp.queue.putOne(io, msg);
+                };
+            }
+
+            const voice = client.voice orelse {
+                log.debug("client sent a begin share request while not in a call", .{});
+                return;
+            };
+
+            const room = state.clients.voice_index.getPtr(voice.id) orelse {
+                log.debug("client sent a begin share request while in a call but the room didn't exist!", .{});
+                return;
+            };
+
+            const caller_state = room.getPtr(client) orelse {
+                log.debug("client sent a abegin share request while in a call but there was no corresponding awebo.Caller!", .{});
+                return;
+            };
+
+            assert(cmd.kind == .screen); // TODO
+            if (caller_state.share.screen != null) {
+                // Client is in a corrupted state.
+                client.deinit(io, gpa, state);
+                return;
+            }
+
+            caller_state.share.screen = .{ .format = cmd.format };
+
+            const cu: awebo.protocol.server.CallersUpdate = .{
+                .id = client.authenticated.?,
+                .action = .{
+                    .share_begin = .{
+                        .kind = .screen, // TODO
+                        .format = cmd.format,
+                    },
+                },
+            };
+
+            const bytes = cu.serializeAlloc(gpa) catch @panic("oom");
+            state.tcpBroadcast(io, gpa, bytes);
+        }
+    }
+
+    fn callShareWatchRequest(client: *Client, io: Io, gpa: Allocator, reader: *Io.Reader) !void {
+        const log = client.scopedLog();
+
+        const cmd = try awebo.protocol.client.CallShareWatch.deserialize(reader);
+
+        {
+            const locked = lockState(io);
+            defer locked.unlock(io);
+            const state = locked.state;
+
+            {
+                const gop = try state.client_limits.getOrPut(gpa, client.authenticated.?);
+                if (!gop.found_existing) gop.value_ptr.* = .init(io, .user_action);
+
+                const limiter = gop.value_ptr;
+
+                limiter.takeToken(io, .user_action) catch {
+                    log.debug("user {} exceeded user action limit", .{client.authenticated.?});
+                    const fail: awebo.protocol.server.ClientRequestReply = .{
+                        .origin = cmd.origin,
+                        .reply_marker = awebo.protocol.client.CallShareWatch.marker,
+                        .result = .rate_limit,
+                    };
+
+                    const bytes = try fail.serializeAlloc(gpa);
+
+                    const msg: *TcpMessage = .create(gpa, bytes, 1);
+                    try client.tcp.queue.putOne(io, msg);
+                };
+            }
+
+            const voice = client.voice orelse {
+                log.debug("client sent a share watch request while not in a call", .{});
+                return;
+            };
+
+            const room = state.clients.voice_index.getPtr(voice.id) orelse {
+                log.debug("client sent a share watch request while in a call but the room didn't exist!", .{});
+                return;
+            };
+
+            const caller_state = room.getPtr(client) orelse {
+                log.debug("client sent a share watch request while in a call but there was no corresponding awebo.Caller!", .{});
+                return;
+            };
+
+            switch (cmd.stream.kind) {
+                .voice, .reserved => {
+                    // Invalid values, client is in a corrupted state.
+                    client.deinit(io, gpa, state);
+                    return;
+                },
+                .camera => unreachable, // TODO
+                .screen => {
+                    switch (cmd.action) {
+                        .join => {
+                            if (caller_state.watching.map.contains(cmd.stream)) {
+                                log.debug("client trying to join a stream that it's already watching'", .{});
+                                client.deinit(io, gpa, state);
+                                return;
+                            }
+
+                            const streamer_client = state.clients.tcp_index.get(cmd.stream.client_id) orelse {
+                                log.debug("client trying to join a stream of a disconnected user", .{});
+                                return;
+                            };
+
+                            const streamer_state = room.getPtr(streamer_client) orelse {
+                                log.debug("client tried to watch a stream for a user that is not in the call", .{});
+                                return;
+                            };
+
+                            const screen = &(streamer_state.share.screen orelse {
+                                log.debug("client tried to watch a stream that doesn't exist'", .{});
+                                return;
+                            });
+
+                            try screen.viewers.map.put(gpa, client.authenticated.?, {});
+                            try caller_state.watching.map.put(gpa, cmd.stream, {});
+                        },
+                        .leave => {
+                            if (!caller_state.watching.map.contains(cmd.stream)) {
+                                log.debug("client trying to leave a stream that it's not watching'", .{});
+                                client.deinit(io, gpa, state);
+                                return;
+                            }
+
+                            const streamer_client = state.clients.tcp_index.get(cmd.stream.client_id) orelse {
+                                log.debug("client trying to leave a stream of a disconnected user", .{});
+                                return;
+                            };
+
+                            const streamer_state = room.getPtr(streamer_client) orelse {
+                                log.debug("client tried to leave a stream for a user that is not in the call", .{});
+                                return;
+                            };
+
+                            const screen = &(streamer_state.share.screen orelse {
+                                log.debug("client tried to leave a stream that doesn't exist'", .{});
+                                return;
+                            });
+
+                            assert(screen.viewers.map.swapRemove(client.authenticated.?));
+                            assert(caller_state.watching.map.swapRemove(cmd.stream));
+                        },
+                    }
+                },
+            }
+
+            const cu: awebo.protocol.server.CallersUpdate = .{
+                .id = client.authenticated.?,
+                .action = switch (cmd.action) {
+                    .join => .{
+                        .share_watch_join = .{
+                            .stream = cmd.stream,
+                        },
+                    },
+                    .leave => .{
+                        .share_watch_leave = .{
+                            .stream = cmd.stream,
+                        },
+                    },
+                },
+            };
+
+            const bytes = cu.serializeAlloc(gpa) catch @panic("oom");
+            state.tcpBroadcast(io, gpa, bytes);
+        }
+    }
+
+    fn callShareEndRequest(client: *Client, io: Io, gpa: Allocator, reader: *Io.Reader) !void {
+        const log = client.scopedLog();
+
+        const cmd = try awebo.protocol.client.CallShareEnd.deserialize(reader);
+
+        {
+            const locked = lockState(io);
+            defer locked.unlock(io);
+            const state = locked.state;
+
+            {
+                const gop = try state.client_limits.getOrPut(gpa, client.authenticated.?);
+                if (!gop.found_existing) gop.value_ptr.* = .init(io, .user_action);
+
+                const limiter = gop.value_ptr;
+
+                limiter.takeToken(io, .user_action) catch {
+                    log.debug("user {} exceeded user action limit", .{client.authenticated.?});
+                    const fail: awebo.protocol.server.ClientRequestReply = .{
+                        .origin = 0,
+                        .reply_marker = awebo.protocol.client.CallShareEnd.marker,
+                        .result = .rate_limit,
+                    };
+
+                    const bytes = try fail.serializeAlloc(gpa);
+
+                    const msg: *TcpMessage = .create(gpa, bytes, 1);
+                    try client.tcp.queue.putOne(io, msg);
+                };
+            }
+
+            const voice = client.voice orelse {
+                log.debug("client sent a begin share request while not in a call", .{});
+                return;
+            };
+
+            const room = state.clients.voice_index.getPtr(voice.id) orelse {
+                log.debug("client sent a begin share request while in a call but the room didn't exist!", .{});
+                return;
+            };
+
+            const caller_state = room.getPtr(client) orelse {
+                log.debug("client sent a abegin share request while in a call but there was no corresponding awebo.Caller!", .{});
+                return;
+            };
+
+            assert(cmd.kind == .screen); // TODO
+            if (caller_state.share.screen) |*screen| {
+                screen.deinit(gpa);
+                caller_state.share.screen = null;
+                for (room.values()) |*viewer_state| {
+                    _ = viewer_state.watching.map.swapRemove(.{
+                        .client_id = client.authenticated.?,
+                        .kind = .screen,
+                    });
+                }
+            } else return; // nooop
+
+            const cu: awebo.protocol.server.CallersUpdate = .{
+                .id = client.authenticated.?,
+                .action = .{
+                    .share_end = .screen, // TODO
+                },
+            };
+
+            const bytes = cu.serializeAlloc(gpa) catch @panic("oom");
+            state.tcpBroadcast(io, gpa, bytes);
+        }
+    }
+
     fn callLeaveRequest(client: *Client, io: Io, gpa: Allocator, reader: *Io.Reader) !void {
         const log = client.scopedLog();
 
@@ -1365,26 +1676,35 @@ var ___state: struct {
         client.voice = null;
 
         const room = state.clients.voice_index.getPtr(vid).?;
-        if (room.count() == 1) {
-            std.debug.assert(room.keys()[0] == client);
+        {
+            var kv = room.fetchSwapRemove(client).?;
+            kv.value.watching.deinit(gpa);
+            if (kv.value.share.screen) |*screen| {
+                screen.deinit(gpa);
+            }
+            for (room.values()) |*cs| {
+                _ = cs.watching.map.swapRemove(.{
+                    .client_id = client.authenticated.?,
+                    .kind = .screen,
+                });
+
+                if (cs.share.screen) |*screen| {
+                    _ = screen.viewers.map.swapRemove(client.authenticated.?);
+                }
+            }
+        }
+        if (room.count() == 0) {
             var kv = state.clients.voice_index.fetchRemove(vid).?;
             kv.value.deinit(gpa);
-        } else {
-            _ = room.swapRemove(client);
         }
 
         return true;
     }
 
     fn removeUdp(state: *State, io: Io, gpa: Allocator, client: *Client) bool {
-        const vid = client.voice.?.id;
         server_log.debug("CU LEAVE = {}", .{client.authenticated.?});
         const cu: awebo.protocol.server.CallersUpdate = .{
-            .caller = .{
-                .id = client.authenticated.?,
-                .voice = vid,
-                .state = .{},
-            },
+            .id = client.authenticated.?,
             .action = .leave,
         };
 

@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const server = @import("server.zig");
 const proto = @import("../protocol.zig");
@@ -61,7 +62,7 @@ pub const Authenticate = struct {
         login,
     };
 
-    pub fn deinit(auth: Authenticate, gpa: std.mem.Allocator) void {
+    pub fn deinit(auth: Authenticate, gpa: Allocator) void {
         switch (auth.method) {
             .login => |login| {
                 gpa.free(login.username);
@@ -99,7 +100,7 @@ pub const InviteInfo = struct {
         };
     }
 
-    pub fn deinit(ii: InviteInfo, gpa: std.mem.Allocator) void {
+    pub fn deinit(ii: InviteInfo, gpa: Allocator) void {
         gpa.free(ii.slug);
     }
 };
@@ -134,7 +135,7 @@ pub const SignUp = struct {
         };
     }
 
-    pub fn deinit(su: SignUp, gpa: std.mem.Allocator) void {
+    pub fn deinit(su: SignUp, gpa: Allocator) void {
         gpa.free(su.invite_slug);
         gpa.free(su.username);
         gpa.free(su.password);
@@ -148,16 +149,15 @@ pub const CallJoin = struct {
     deafened: bool,
 
     pub const marker = 'J';
-    pub const serialize = proto.MakeSerializeFn(CallJoin);
-    pub const serializeAlloc = proto.MakeSerializeAllocFn(CallJoin);
-    pub const deserialize = proto.MakeDeserializeFn(CallJoin);
+    pub const serialize = proto.MakeSerializeFn(@This());
+    pub const serializeAlloc = proto.MakeSerializeAllocFn(@This());
+    pub const deserialize = proto.MakeDeserializeFn(@This());
     pub const protocol = struct {};
 };
 
 pub const CallUpdate = struct {
     muted: bool,
     deafened: bool,
-    screenshare: bool,
 
     pub const marker = 'k';
     pub const serialize = proto.MakeSerializeFn(@This());
@@ -166,11 +166,45 @@ pub const CallUpdate = struct {
     pub const protocol = struct {};
 };
 
+pub const CallShareBegin = struct {
+    origin: OriginId,
+    kind: proto.media.StreamKind,
+    format: proto.media.Format,
+
+    pub const marker = 'K';
+    pub const serialize = proto.MakeSerializeFn(@This());
+    pub const serializeAlloc = proto.MakeSerializeAllocFn(@This());
+    pub const deserialize = proto.MakeDeserializeFn(@This());
+    pub const protocol = struct {};
+};
+
+pub const CallShareEnd = struct {
+    kind: enum(u8) { screen, camera },
+
+    pub const marker = 's';
+    pub const serialize = proto.MakeSerializeFn(@This());
+    pub const serializeAlloc = proto.MakeSerializeAllocFn(@This());
+    pub const deserialize = proto.MakeDeserializeFn(@This());
+    pub const protocol = struct {};
+};
+
+pub const CallShareWatch = struct {
+    origin: OriginId,
+    stream: proto.media.StreamId,
+    action: enum(u8) { join, leave },
+
+    pub const marker = 'q';
+    pub const serialize = proto.MakeSerializeFn(@This());
+    pub const serializeAlloc = proto.MakeSerializeAllocFn(@This());
+    pub const deserialize = proto.MakeDeserializeFn(@This());
+    pub const protocol = struct {};
+};
+
 pub const CallLeave = struct {
     pub const marker = 'j';
-    pub const serialize = proto.MakeSerializeFn(CallLeave);
-    pub const serializeAlloc = proto.MakeSerializeAllocFn(CallLeave);
-    pub const deserialize = proto.MakeDeserializeFn(CallLeave);
+    pub const serialize = proto.MakeSerializeFn(@This());
+    pub const serializeAlloc = proto.MakeSerializeAllocFn(@This());
+    pub const deserialize = proto.MakeDeserializeFn(@This());
     pub const protocol = struct {};
 };
 
@@ -236,7 +270,7 @@ pub const ChatMessageSend = struct {
         };
     }
 
-    pub fn deinit(cms: ChatMessageSend, gpa: std.mem.Allocator) void {
+    pub fn deinit(cms: ChatMessageSend, gpa: Allocator) void {
         gpa.free(cms.text);
     }
 };
@@ -255,7 +289,7 @@ pub const ChannelCreate = struct {
         };
     };
 
-    pub fn deinit(ca: ChannelCreate, gpa: std.mem.Allocator) void {
+    pub fn deinit(ca: ChannelCreate, gpa: Allocator) void {
         gpa.free(ca.name);
     }
 
@@ -290,7 +324,7 @@ pub const SearchMessages = struct {
         };
     };
 
-    pub fn deinit(sm: SearchMessages, gpa: std.mem.Allocator) void {
+    pub fn deinit(sm: SearchMessages, gpa: Allocator) void {
         gpa.free(sm.query);
     }
 

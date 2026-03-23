@@ -14,6 +14,45 @@ test {
     _ = media;
 }
 
+pub fn AutoArrayHashMap(K: type, V: type) type {
+    return struct {
+        map: std.AutoArrayHashMapUnmanaged(K, V),
+
+        const Self = @This();
+        pub const empty: Self = .{ .map = .empty };
+
+        pub fn deinit(self: *Self, gpa: Allocator) void {
+            self.map.deinit(gpa);
+        }
+        pub const protocol = struct {
+            pub const sizes = struct {
+                pub const map = u32;
+            };
+
+            pub inline fn serialize(self: Self, comptime serializeFn: anytype, w: *Io.Writer) !void {
+                try w.writeInt(sizes.map, @intCast(self.map.count()), .little);
+                for (self.map.keys(), self.map.values()) |k, v| {
+                    try serializeFn(k, w);
+                    try serializeFn(v, w);
+                }
+            }
+
+            pub fn deserializeAlloc(comptime deserializeFn: anytype, gpa: Allocator, r: *Io.Reader) !Self {
+                var self: Self = .empty;
+                errdefer self.deinit(gpa);
+
+                const len = try r.takeInt(sizes.map, .little);
+                for (0..len) |_| {
+                    const k = try deserializeFn(K, gpa, r);
+                    const v = try deserializeFn(V, gpa, r);
+                    try self.map.putNoClobber(gpa, k, v);
+                }
+                return self;
+            }
+        };
+    };
+}
+
 /// Generic function for serializing protocol messages.
 pub fn SerializeAllocFn(T: type) type {
     return fn (msg: T, gpa: Allocator) error{OutOfMemory}![]const u8;
@@ -55,6 +94,7 @@ pub fn MakeSerializeFn(T: type) SerializeFn(T) {
                 .@"enum" => |enum_info| {
                     const Int = switch (enum_info.tag_type) {
                         u26 => u32,
+                        u2 => u8,
                         else => enum_info.tag_type,
                     };
                     try w.writeInt(Int, @intFromEnum(elem), .little);
@@ -90,13 +130,14 @@ pub fn MakeSerializeFn(T: type) SerializeFn(T) {
                     },
                 },
                 .@"struct" => |struct_info| {
-                    comptime assert(@hasDecl(T, "protocol")); // all structs in a message must define a protocol decl
+                    comptime assert(@hasDecl(E, "protocol")); // all structs in a message must define a protocol decl
                     if (@hasDecl(E.protocol, "skip") and E.protocol.skip) return;
                     if (@hasDecl(E.protocol, "serialize")) return E.protocol.serialize(elem, serializeInner, w);
                     if (struct_info.layout == .@"packed") {
                         const RawInt = struct_info.backing_integer.?;
                         const Int = switch (RawInt) {
                             u30 => u32,
+                            u32 => u32,
                             else => |I| @compileError("add support for " ++ @typeName(I)),
                         };
                         return w.writeInt(Int, @as(RawInt, @bitCast(elem)), .little);
@@ -151,9 +192,18 @@ pub fn MakeDeserializeFn(T: type) DeserializeFn(T) {
                 .void => return {},
                 .bool => return (try r.takeByte()) == 1,
                 .int => return r.takeInt(E, .little),
+                .optional => |opt_info| {
+                    const present = try r.takeByte();
+                    switch (present) {
+                        0 => return null,
+                        1 => return try deserializeInner(opt_info.child, r),
+                        else => unreachable,
+                    }
+                },
                 .@"enum" => |enum_info| {
                     const Int = switch (enum_info.tag_type) {
                         u26 => u32,
+                        u2 => u8,
                         else => enum_info.tag_type,
                     };
                     return @enumFromInt(try r.takeInt(Int, .little));
@@ -181,6 +231,7 @@ pub fn MakeDeserializeFn(T: type) DeserializeFn(T) {
                         const RawInt = struct_info.backing_integer.?;
                         const Int = switch (RawInt) {
                             u30 => u32,
+                            u32 => u32,
                             else => |I| @compileError("add support for " ++ @typeName(I)),
                         };
                         return @bitCast(@as(RawInt, @truncate(try r.takeInt(Int, .little))));
@@ -222,6 +273,7 @@ pub fn MakeDeserializeAllocFn(T: type) DeserializeAllocFn(T) {
                 .@"enum" => |enum_info| {
                     const Int = switch (enum_info.tag_type) {
                         u26 => u32,
+                        u2 => u8,
                         else => enum_info.tag_type,
                     };
                     return @enumFromInt(try r.takeInt(Int, .little));
@@ -273,16 +325,17 @@ pub fn MakeDeserializeAllocFn(T: type) DeserializeAllocFn(T) {
                 },
                 .@"struct" => |struct_info| {
                     comptime assert(@hasDecl(T, "protocol")); // all structs in a message must define a protocol decl
-                    if (@hasDecl(E.protocol, "skip") and E.protocol.skip) return .{};
-                    if (@hasDecl(E.protocol, "deserializeAlloc")) return E.protocol.deserializeAlloc(deserializeAllocInner, gpa, r);
                     if (struct_info.layout == .@"packed") {
                         const RawInt = struct_info.backing_integer.?;
                         const Int = switch (RawInt) {
                             u30 => u32,
+                            u32 => u32,
                             else => |I| @compileError("add support for " ++ @typeName(I)),
                         };
                         return @bitCast(@as(RawInt, @truncate(try r.takeInt(Int, .little))));
                     }
+                    if (@hasDecl(E.protocol, "skip") and E.protocol.skip) return .{};
+                    if (@hasDecl(E.protocol, "deserializeAlloc")) return E.protocol.deserializeAlloc(deserializeAllocInner, gpa, r);
 
                     var s: E = undefined;
                     // TODO: errdefer :^)

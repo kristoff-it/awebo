@@ -302,7 +302,7 @@ fn runHostReceive(
                 try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .media_connection_details = mcd } } });
             },
             .CallersUpdate => {
-                const cu: awebo.protocol.server.CallersUpdate = try .deserialize(reader);
+                const cu: awebo.protocol.server.CallersUpdate = try .deserializeAlloc(gpa, reader);
                 try core.putEvent(.{ .network = .{ .host_id = id, .cmd = .{ .callers_update = cu } } });
             },
             .SearchMessagesReply => {
@@ -461,7 +461,8 @@ pub fn runHostMediaReceiver(
                     if (caller.screen) |screen| {
                         screen.pushChunk(header.sequence, body);
                     } else {
-                        caller.screen = try .create(core, header.sequence, body);
+                        // drop packet, the client must have left the session
+                        // and some udp packets were still in-flight.
                     }
                 },
                 else => @panic("TODO: implement support for other streams!"),
@@ -548,6 +549,7 @@ pub fn runHostMediaSender(
 
         while (core.screen_capture.packets.beginRead()) |read| {
             nothing_found = false;
+
             var batch: [64]Io.net.OutgoingMessage = undefined;
             var batch_idx: usize = 0;
 

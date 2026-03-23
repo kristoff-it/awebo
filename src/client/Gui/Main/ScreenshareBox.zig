@@ -16,28 +16,53 @@ pub fn draw(sb: *ScreenshareBox, core: *Core, source: enum { webcam, screen }) !
 
     if (dvui.timerDoneOrNone(id)) {
         const maybe_frame = switch (source) {
-            .screen => core.screen_capture.swapFrame(null),
+            .screen => core.screen_capture.framePull(),
             .webcam => core.webcam_capture.swapFrame(null),
         };
 
         if (maybe_frame) |new| {
             defer new.deinit();
             const img = new.getImage();
-            const pixels = img.pixels orelse {
-                std.log.debug("null pixels", .{});
-                return;
+            const width, const height, const planes = blk: switch (img) {
+                .videotoolbox => unreachable,
+                .yuv => |yuv| {
+                    const ww: usize = @intCast(yuv.width);
+                    const hh: usize = @intCast(yuv.height);
+                    const half: usize = ((hh + 1) / 2) * ((ww + 1) / 2);
+                    var planes = dvui.currentWindow().arena().alloc(u8, ww * hh + 2 * half) catch @panic("OOM");
+                    @memcpy(planes[0 .. ww * hh], yuv.y);
+                    @memcpy(planes[ww * hh ..][0..half], yuv.cr);
+                    @memcpy(planes[ww * hh + half ..][0..half], yuv.cb);
+                    break :blk .{ ww, hh, planes.ptr };
+                },
+                .nv12 => |nv12| {
+                    const ww: usize = @intCast(nv12.width);
+                    const hh: usize = @intCast(nv12.height);
+                    const half: usize = ((hh + 1) / 2) * ((ww + 1) / 2);
+                    var planes = dvui.currentWindow().arena().alloc(u8, ww * hh + 2 * half) catch @panic("OOM");
+                    @memcpy(planes[0 .. ww * hh], nv12.y);
+                    @memcpy(planes[ww * hh ..], nv12.cbcr);
+                    for (0..half) |idx| {
+                        planes[ww * hh ..][idx] = nv12.cbcr[idx * 2];
+                        planes[ww * hh ..][idx * 2] = nv12.cbcr[idx * 2 + 1];
+                    }
+                    break :blk .{ ww, hh, planes.ptr };
+                },
+                .bgra => |bgra| {
+                    break :blk .{ bgra.width, bgra.height, bgra.pixels };
+                },
             };
 
             var backend = dvui.currentWindow().backend;
             if (sb.texture) |tex| {
-                try backend.textureUpdate(tex, pixels);
+                try backend.textureUpdate(tex, @ptrCast(planes));
             } else {
                 sb.texture = try backend.textureCreate(
-                    pixels,
-                    @intCast(img.width),
-                    @intCast(img.height),
+                    @ptrCast(planes),
+                    @intCast(width),
+                    @intCast(height),
                     .nearest,
-                    .bgra_32,
+                    if (img == .bgra) .bgra_32 else .fourcc_yv12,
                 );
             }
         }
