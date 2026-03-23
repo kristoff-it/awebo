@@ -6,6 +6,7 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const awebo = @import("../../awebo.zig");
+const media = awebo.protocol.media;
 const Core = @import("../Core.zig");
 const PacketRing = @import("packet_ring.zig").PacketRing;
 const ffmpeg = @import("ffmpeg.zig");
@@ -16,7 +17,7 @@ pub const State = union(enum) {
     active: Active,
 
     pub const Active = struct {
-        config: awebo.protocol.media.Config,
+        config: media.Config,
         encoder: ffmpeg.Encoder,
     };
 };
@@ -80,7 +81,7 @@ pub fn deinit(sc: *ScreenCapture) void {
     sc.os.deinit();
 }
 
-pub fn startCapture(sc: *ScreenCapture, lossless: bool, config: awebo.protocol.media.Config) !awebo.protocol.media.Format {
+pub fn startCapture(sc: *ScreenCapture, lossless: bool, config: media.Config) !media.Format {
     assert(sc.state == .off);
     sc.reset();
     sc.state = .{
@@ -170,7 +171,6 @@ pub fn encodedVideoFramePush(
     sc.sequence += 1;
     pw.packet.data.clearRetainingCapacity();
 
-    const media = awebo.protocol.media;
     const header_size = @sizeOf(media.Header);
     const video_size = @sizeOf(media.Video);
     const framing_size: usize = header_size + video_size;
@@ -198,26 +198,15 @@ pub fn encodedVideoFramePush(
         .sequence = sc.sequence,
     };
 
-    const write = struct {
-        fn packedStruct(T: type, dest: [*]u8, value: T) void {
-            assert(@typeInfo(T).@"struct".layout == .@"packed");
-            std.mem.writeInt(@Int(.unsigned, @sizeOf(T) * 8), @ptrCast(dest), @bitCast(value), .little);
-        }
-
-        fn int(I: type, dest: [*]u8, value: I) void {
-            std.mem.writeInt(I, @ptrCast(dest), value, .little);
-        }
-    };
-
-    write.packedStruct(media.Header, pw.packet.data.items.ptr, header);
-    write.packedStruct(media.Video, pw.packet.data.items.ptr + header_size, .{
+    media.write.packedStruct(media.Header, pw.packet.data.items.ptr, header);
+    media.write.packedStruct(media.Video, pw.packet.data.items.ptr + header_size, .{
         .chunk_id = 0,
         .total_chunks = @intCast(total_chunks),
         .keyframe = keyframe,
     });
 
-    write.int(u32, pw.packet.data.items.ptr + framing_size, delta);
-    write.int(u32, pw.packet.data.items.ptr + framing_size + delta_size, @intCast(extradata.len));
+    media.write.int(u32, pw.packet.data.items.ptr + framing_size, delta);
+    media.write.int(u32, pw.packet.data.items.ptr + framing_size + delta_size, @intCast(extradata.len));
     @memcpy(pw.packet.data.items.ptr + framing_size + delta_size + extradata_size_size, extradata);
 
     const start = framing_size + delta_size + extradata_size_size + extradata.len;
@@ -229,8 +218,8 @@ pub fn encodedVideoFramePush(
     if (full_chunks > 1) {
         for (1..full_chunks) |chunk_id| {
             const chunk = pw.packet.data.items.ptr + (chunk_id * 1280);
-            write.packedStruct(media.Header, chunk, header);
-            write.packedStruct(media.Video, chunk + header_size, .{
+            media.write.packedStruct(media.Header, chunk, header);
+            media.write.packedStruct(media.Video, chunk + header_size, .{
                 .chunk_id = @intCast(chunk_id),
                 .total_chunks = @intCast(total_chunks),
                 .keyframe = keyframe,
@@ -245,8 +234,8 @@ pub fn encodedVideoFramePush(
 
     if (full_chunks > 0 and last_chunk_data > 0) {
         const chunk = pw.packet.data.items.ptr + (full_chunks * 1280);
-        write.packedStruct(media.Header, chunk, header);
-        write.packedStruct(media.Video, chunk + header_size, .{
+        media.write.packedStruct(media.Header, chunk, header);
+        media.write.packedStruct(media.Video, chunk + header_size, .{
             .chunk_id = @intCast(full_chunks),
             .total_chunks = @intCast(total_chunks),
             .keyframe = keyframe,
@@ -349,7 +338,7 @@ pub const MacOsInterface = opaque {
     }
 
     extern fn screenCaptureManagerShowPicker(*MacOsInterface, u32, u32, u8, u8) void;
-    pub fn showOsPicker(mi: *MacOsInterface, config: awebo.protocol.media.Config, img_kind: VideoStream.ImageKind) void {
+    pub fn showOsPicker(mi: *MacOsInterface, config: media.Config, img_kind: VideoStream.ImageKind) void {
         screenCaptureManagerShowPicker(mi, config.width, config.height, config.fps, @intFromEnum(img_kind));
     }
 
@@ -369,7 +358,7 @@ pub const DummyInterface = opaque {
         _ = di;
     }
 
-    pub fn showOsPicker(di: *DummyInterface, config: awebo.protocol.media.Config, kind: VideoStream.ImageKind) void {
+    pub fn showOsPicker(di: *DummyInterface, config: media.Config, kind: VideoStream.ImageKind) void {
         _ = di;
         _ = config;
         _ = kind;

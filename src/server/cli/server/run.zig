@@ -474,12 +474,12 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
         switch (header.stream_id.kind) {
             else => unreachable,
             .voice => {
-                // const voice, _ = awebo.protocol.media.Voice.parse(body) orelse continue;
-                // server_log.debug("Voice({f} seq: {} restart: {})", .{
-                //     header.stream_id.client_id,
-                //     header.sequence,
-                //     voice.restart,
-                // });
+                const voice, _ = awebo.protocol.media.Voice.parse(body) orelse continue;
+                server_log.debug("Voice({f} seq: {} restart: {})", .{
+                    header.stream_id.client_id,
+                    header.sequence,
+                    voice.restart,
+                });
             },
             .screen => {
                 const sender_state = room.get(sender).?;
@@ -515,7 +515,7 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
             // that set contains client_ids not client pointers so with
             // that approach it might be better to create a
             // 'viewers_server' separate set that exists server-side only.
-            if (!caller_state.watching.map.contains(header.stream_id)) continue;
+            if (header.stream_id.kind == .screen and !caller_state.watching.map.contains(header.stream_id)) continue;
 
             if (!options.echo) {
                 if (client.authenticated.? == sender.authenticated.?) {

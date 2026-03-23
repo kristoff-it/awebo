@@ -3,6 +3,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const awebo = @import("../../awebo.zig");
+const media = awebo.protocol.media;
 const log = std.log.scoped(.@"ffmpeg-decoder");
 const VideoStream = @import("VideoStream.zig");
 
@@ -52,7 +53,7 @@ pub const Codec = struct {
             };
         }
 
-        pub fn toMediaFormatCodec(kind: Kind) awebo.protocol.media.Format.Codec {
+        pub fn toMediaFormatCodec(kind: Kind) media.Format.Codec {
             return switch (kind) {
                 .h264, .h264_sw => .h264,
                 .hevc => .hevc,
@@ -136,7 +137,7 @@ pub const Encoder = struct {
     frame: *c.AVFrame,
     packet: *c.AVPacket,
 
-    pub fn init(lossless: bool, config: awebo.protocol.media.Config) !Encoder {
+    pub fn init(lossless: bool, config: media.Config) !Encoder {
         const list = if (lossless)
             candidates.lossless
         else
@@ -327,7 +328,7 @@ pub const Decoder = struct {
     };
 
     pub fn init(vs: *VideoStream, data: []const u8) !Decoder {
-        const extradata_size: usize = read.int(u16, data.ptr + @sizeOf(u32));
+        const extradata_size: usize = media.read.int(u16, data.ptr + @sizeOf(u32));
         const extradata = data[@sizeOf(u32) + @sizeOf(u16) ..][0..extradata_size];
 
         const codec_id: c_uint = switch (vs.format.codec) {
@@ -420,8 +421,8 @@ pub const Decoder = struct {
 
     pub fn decodeFrame(d: *Decoder, framed_data: []u8, keyframe: bool) !u32 {
         _ = keyframe;
-        const delta: u32 = read.int(u32, framed_data[0..@sizeOf(u32)]);
-        const extradata_size = read.int(u16, framed_data[@sizeOf(u32)..][0..@sizeOf(u16)]);
+        const delta: u32 = media.read.int(u32, framed_data[0..@sizeOf(u32)]);
+        const extradata_size = media.read.int(u16, framed_data[@sizeOf(u32)..][0..@sizeOf(u16)]);
         const encoded = framed_data[@sizeOf(u32) + @sizeOf(u16) + extradata_size ..];
 
         d.packet.data = @constCast(encoded.ptr);
@@ -470,106 +471,6 @@ pub const Decoder = struct {
         return delta;
     }
 };
-
-const read = struct {
-    fn int(I: type, src: [*]const u8) I {
-        return std.mem.readInt(I, @ptrCast(src), .little);
-    }
-};
-
-const HevcParamHeader = packed struct {
-    codec_id: u8,
-    vps_length: u16,
-    sps_length: u16,
-    pps_length: u16,
-};
-
-const start_code = [4]u8{ 0x00, 0x00, 0x00, 0x01 };
-
-pub const ParsedHevcPacket = struct {
-    /// Annex B extradata (VPS + SPS + PPS, each prefixed with start code).
-    /// Should only be allocated by setting `parse_extradata` to true when
-    /// initializing the decoder, which then takes ownership of this memory.
-    extradata: []u8,
-    /// The raw frame payload as received — still in AVCC length-prefix format.
-    encoded_frame: []u8,
-};
-
-/// Parse a packet produced by `_serializeHEVC:delta:data:len:`.
-pub fn parseHevcPacket(packet: []u8, parse_extradata: bool) !ParsedHevcPacket {
-    if (packet.len < @sizeOf(HevcParamHeader))
-        return error.PacketTooShort;
-
-    const header: *align(1) const HevcParamHeader = @ptrCast(packet.ptr);
-    const vps_len: usize = header.vps_length;
-    const sps_len: usize = header.sps_length;
-    const pps_len: usize = header.pps_length;
-
-    log.debug("decoder header: {}", .{header.*});
-
-    const header_end = @bitSizeOf(HevcParamHeader) / 8;
-    const param_end = header_end + vps_len + sps_len + pps_len;
-    if (packet.len < param_end)
-        return error.PacketTooShort;
-
-    const encoded_frame = packet[param_end..];
-
-    if (!parse_extradata) {
-        return .{
-            .encoded_frame = encoded_frame,
-            .extradata = &.{},
-        };
-    }
-
-    const vps = packet[header_end..][0..vps_len];
-    const sps = packet[header_end + vps_len ..][0..sps_len];
-    const pps = packet[header_end + vps_len + sps_len ..][0..pps_len];
-
-    // FFmpeg expects: [start_code | VPS] [start_code | SPS] [start_code | PPS]
-    // plus AV_INPUT_BUFFER_PADDING_SIZE (64) bytes of zero padding at the end
-    // so SIMD bitstream readers can safely over-read.
-    const av_padding = c.AV_INPUT_BUFFER_PADDING_SIZE;
-    const extradata_len = (start_code.len + vps_len) +
-        (start_code.len + sps_len) +
-        (start_code.len + pps_len);
-
-    const buf_raw: [*]u8 = @ptrCast(c.av_mallocz(extradata_len + av_padding) orelse return error.OutOfMemory);
-    const buf = buf_raw[0 .. extradata_len + av_padding];
-    var pos: usize = 0;
-    for (&[_][]const u8{ vps, sps, pps }) |nal| {
-        @memcpy(buf[pos..][0..4], &start_code);
-        pos += 4;
-        @memcpy(buf[pos..][0..nal.len], nal);
-        pos += nal.len;
-    }
-    @memset(buf[extradata_len..], 0);
-
-    return .{
-        .extradata = buf[0..extradata_len], // excludes the padding intentionally
-        .encoded_frame = encoded_frame,
-    };
-}
-
-/// Convert a VideoToolbox AVCC frame (4-byte big-endian length-prefixed NALs)
-/// to Annex B (start-code-prefixed NALs) in-place.
-///
-/// VideoToolbox produces frames where each NAL unit is preceded by a 4-byte
-/// big-endian length rather than a start code.  FFmpeg's HEVC parser expects
-/// Annex B.  Because both encodings use exactly 4 bytes as a prefix, we can
-/// do this in-place: just overwrite the length with 0x00 0x00 0x00 0x01.
-pub fn convertAvccToAnnexB(frame: []u8) !void {
-    var pos: usize = 0;
-    var idx: usize = 0;
-    log.debug("frame len = {}", .{frame.len});
-    while (pos + 4 <= frame.len) : (idx += 1) {
-        const nal_len = std.mem.readInt(u32, frame[pos..][0..4], .big);
-        log.debug("nal #{} len = {}", .{ idx, nal_len });
-        @memcpy(frame[pos..][0..4], &start_code);
-        pos += 4;
-        if (pos + nal_len > frame.len) return error.MalformedAvccFrame;
-        pos += nal_len;
-    }
-}
 
 // ffmpeg has a crappy untranslatable macro for this.
 inline fn err2str(errnum: c_int) [c.AV_ERROR_MAX_STRING_SIZE:0]u8 {

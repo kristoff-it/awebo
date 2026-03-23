@@ -1,8 +1,26 @@
 const context = @import("options").context;
 const std = @import("std");
+const assert = std.debug.assert;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const awebo = @import("../../awebo.zig");
+
+pub const read = struct {
+    pub fn int(I: type, src: [*]const u8) I {
+        return std.mem.readInt(I, @ptrCast(src), .little);
+    }
+};
+
+pub const write = struct {
+    pub fn packedStruct(T: type, dest: [*]u8, value: T) void {
+        assert(@typeInfo(T).@"struct".layout == .@"packed");
+        std.mem.writeInt(@Int(.unsigned, @sizeOf(T) * 8), @ptrCast(dest), @bitCast(value), .little);
+    }
+
+    pub fn int(I: type, dest: [*]u8, value: I) void {
+        std.mem.writeInt(I, @ptrCast(dest), value, .little);
+    }
+};
 
 pub const StreamId = packed struct(u32) {
     client_id: awebo.protocol.client.Id,
