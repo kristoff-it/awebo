@@ -10,8 +10,7 @@ const awebo = @import("../../../awebo.zig");
 const Database = awebo.Database;
 const Query = Database.Query;
 const Host = awebo.Host;
-const Header = awebo.protocol.media.Header;
-const OpenPath = awebo.protocol.media.OpenPath;
+const media = awebo.protocol.media;
 const cli = @import("../../../cli.zig");
 
 const server_log = std.log.scoped(.server);
@@ -383,7 +382,7 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
             continue;
         }
 
-        var header, const body = Header.parse(packet.data) orelse {
+        var header, const body = media.Header.parse(packet.data) orelse {
             server_log.debug("not enough bytes to parse Header, ignoring", .{});
             continue;
         };
@@ -399,7 +398,7 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
                 continue;
             }
 
-            const os = OpenPath.parse(body) orelse {
+            const os = media.OpenPath.parse(body) orelse {
                 server_log.debug("bad OpenStream packet, ignoring", .{});
                 continue;
             };
@@ -463,6 +462,7 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
         // Make sure the client doesn't spoof the sender id
         // sender.udp.?.last_msg_ms = state.id.new();
         header.stream_id.client_id = sender.authenticated.?;
+        media.write.packedStruct(media.Header, packet.data.ptr, header);
 
         if ((header.sequence >> 31) > 0) {
             server_log.debug("client sent a sequence id > maxint/2, disconnecting", .{});

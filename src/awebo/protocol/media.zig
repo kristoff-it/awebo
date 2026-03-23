@@ -5,23 +5,6 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const awebo = @import("../../awebo.zig");
 
-pub const read = struct {
-    pub fn int(I: type, src: [*]const u8) I {
-        return std.mem.readInt(I, @ptrCast(src), .little);
-    }
-};
-
-pub const write = struct {
-    pub fn packedStruct(T: type, dest: [*]u8, value: T) void {
-        assert(@typeInfo(T).@"struct".layout == .@"packed");
-        std.mem.writeInt(@Int(.unsigned, @sizeOf(T) * 8), @ptrCast(dest), @bitCast(value), .little);
-    }
-
-    pub fn int(I: type, dest: [*]u8, value: I) void {
-        std.mem.writeInt(I, @ptrCast(dest), value, .little);
-    }
-};
-
 pub const StreamId = packed struct(u32) {
     client_id: awebo.protocol.client.Id,
     kind: StreamKind,
@@ -93,21 +76,22 @@ pub const Header = packed struct {
     /// If there are not enough bytes to parse a Header,
     /// returns null, otherwise returns a header and a slice
     /// to the bytes after the header.
-    pub fn parse(udp_data: []u8) ?struct { *align(1) Header, []u8 } {
-        if (udp_data.len < @sizeOf(Header)) return null;
-        const header = std.mem.bytesAsValue(
-            Header,
-            udp_data[0..@sizeOf(Header)],
-        );
+    pub fn parse(data: []u8) ?struct { Header, []u8 } {
+        if (data.len < @sizeOf(Header)) return null;
+        const header = read.packedStruct(Header, data.ptr);
+        return .{ header, data[@sizeOf(Header)..] };
+    }
 
-        return .{ header, udp_data[@sizeOf(Header)..] };
+    pub fn serialize(h: Header, dest: []u8) void {
+        assert(dest.len > @sizeOf(Header));
+        write.packedStruct(Header, dest.ptr, h);
     }
 };
 
-/// A open path request sends to the server the same nonce we received
-/// when first asking to join a call over TCP. Confirmation will be sent
-/// by the server over TCP if the packet was received and the UDP stream
-/// has been opened successfully. If the client doesn't receive such
+/// A open path request sends to the server the same nonce the client
+/// received when first asking to join a call over TCP. Confirmation will
+/// be sent by the server over TCP if the packet was received and the UDP
+/// stream has been opened successfully. If the client doesn't receive such
 /// confirmation after a short timeout, it should assume that the packet
 /// was lost and send it again. The server should ignore duplicates and
 /// spurious requests.
@@ -116,7 +100,7 @@ pub const Header = packed struct {
 /// Additionally an OpenStream packet must:
 /// - have S (StreamType) set to 0 (2 lowest bits of StreamId)
 /// - not contain any other data
-pub const OpenPath = extern struct {
+pub const OpenPath = packed struct {
     nonce: u64,
 
     //  0                   1                   2                   3
@@ -135,6 +119,11 @@ pub const OpenPath = extern struct {
     // |                                                               |
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
+    pub fn parse(body: []const u8) ?OpenPath {
+        if (body.len != @sizeOf(OpenPath)) return null;
+        return read.packedStruct(OpenPath, body.ptr);
+    }
+
     pub inline fn serialize(
         client_id: awebo.protocol.client.Id,
         nonce: u64,
@@ -152,24 +141,17 @@ pub const OpenPath = extern struct {
         };
 
         var out: [@sizeOf(Header) + @sizeOf(OpenPath)]u8 = undefined;
-        _ = std.fmt.bufPrint(&out, "{s}{s}", .{
-            std.mem.asBytes(&header),
-            std.mem.asBytes(&open),
-        }) catch unreachable;
+        write.packedStruct(Header, &out, header);
+        write.packedStruct(OpenPath, out[@sizeOf(OpenPath)..].ptr, open);
 
         return out;
-    }
-
-    pub fn parse(body: []const u8) ?OpenPath {
-        if (body.len != @sizeOf(OpenPath)) return null;
-        return std.mem.bytesToValue(OpenPath, body);
     }
 };
 
 /// A packet containing voice data.
 /// Both Packet Sequence Number and Restart Sequence Number start at 1.
 /// Contains Opus encoded data, usually smaller than 200 bytes.
-pub const Voice = extern struct {
+pub const Voice = packed struct {
     restart: u32,
 
     //  0                   1                   2                   3
@@ -185,6 +167,14 @@ pub const Voice = extern struct {
     // |                            Data                               |  1256
     // |                                                               |
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+    pub fn parse(body: []const u8) ?struct { Voice, []const u8 } {
+        if (body.len < @sizeOf(Voice)) return null;
+        return .{
+            read.packedStruct(Voice, body.ptr),
+            body[@sizeOf(Voice)..],
+        };
+    }
 
     pub fn serialize(
         out: []u8,
@@ -205,19 +195,14 @@ pub const Voice = extern struct {
             .restart = restart,
         };
 
-        return std.fmt.bufPrint(out, "{s}{s}{s}", .{
-            std.mem.asBytes(&header),
-            std.mem.asBytes(&voice),
-            data,
-        });
-    }
+        const end = @sizeOf(Header) + @sizeOf(Voice) + data.len;
+        assert(out.len >= end);
 
-    pub fn parse(body: []const u8) ?struct { Voice, []const u8 } {
-        if (body.len < @sizeOf(Voice)) return null;
-        return .{
-            std.mem.bytesToValue(Voice, body[0..@sizeOf(Voice)]),
-            body[@sizeOf(Voice)..],
-        };
+        write.packedStruct(Header, out.ptr, header);
+        write.packedStruct(Voice, out.ptr + @sizeOf(Header), voice);
+        @memcpy(out.ptr + @sizeOf(Header) + @sizeOf(Voice), data);
+
+        return out[0..end];
     }
 };
 
@@ -251,6 +236,14 @@ pub const Video = packed struct {
     /// All chunks are full except the last one, which might be shorter.
     pub const data_per_chunk: usize = 1280 - (@sizeOf(Header) + @sizeOf(Video));
 
+    pub fn parse(body: []u8) ?struct { Video, []u8 } {
+        if (body.len < @sizeOf(Video)) return null;
+        return .{
+            read.packedStruct(Video, body.ptr),
+            body[@sizeOf(Video)..],
+        };
+    }
+
     pub fn serialize(
         out: []u8,
         stream: StreamId,
@@ -271,19 +264,14 @@ pub const Video = packed struct {
             .total_chunks = total_chunks,
         };
 
-        return std.fmt.bufPrint(out, "{s}{s}{s}", .{
-            std.mem.asBytes(&header),
-            std.mem.asBytes(&video),
-            data,
-        });
-    }
+        const end = @sizeOf(Header) + @sizeOf(Video) + data.len;
+        assert(out.len >= end);
 
-    pub fn parse(body: []u8) ?struct { Video, []u8 } {
-        if (body.len < @sizeOf(Video)) return null;
-        return .{
-            std.mem.bytesToValue(Video, body[0..@sizeOf(Video)]),
-            body[@sizeOf(Video)..],
-        };
+        write.packedStruct(Header, out.ptr, header);
+        write.packedStruct(Video, out.ptr + @sizeOf(Header), video);
+        @memcpy(out.ptr + @sizeOf(Header) + @sizeOf(Video), data);
+
+        return out[0..end];
     }
 };
 
@@ -300,6 +288,11 @@ pub const ResendVideoChunk = packed struct {
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     // |      Chunk ID Start       | U |       Chunk ID End        | U | 4
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+    pub fn parse(body: []const u8) ?@This() {
+        if (body.len < @sizeOf(@This())) return null;
+        return std.mem.bytesToValue(@This(), body[0..@sizeOf(@This())]);
+    }
 
     pub fn serialize(
         out: *[@sizeOf(ResendVideoChunk)]u8,
@@ -323,9 +316,26 @@ pub const ResendVideoChunk = packed struct {
             std.mem.asBytes(&video),
         });
     }
+};
 
-    pub fn parse(body: []const u8) ?@This() {
-        if (body.len < @sizeOf(@This())) return null;
-        return std.mem.bytesToValue(@This(), body[0..@sizeOf(@This())]);
+pub const read = struct {
+    pub fn int(I: type, src: [*]const u8) I {
+        return std.mem.readInt(I, @ptrCast(src), .little);
+    }
+
+    pub fn packedStruct(T: type, src: [*]const u8) T {
+        assert(@typeInfo(T).@"struct".layout == .@"packed");
+        return @bitCast(std.mem.readInt(@Int(.unsigned, @sizeOf(T) * 8), @ptrCast(src), .little));
+    }
+};
+
+pub const write = struct {
+    pub fn int(I: type, dest: [*]u8, value: I) void {
+        std.mem.writeInt(I, @ptrCast(dest), value, .little);
+    }
+
+    pub fn packedStruct(T: type, dest: [*]u8, value: T) void {
+        assert(@typeInfo(T).@"struct".layout == .@"packed");
+        std.mem.writeInt(@Int(.unsigned, @sizeOf(T) * 8), @ptrCast(dest), @bitCast(value), .little);
     }
 };
