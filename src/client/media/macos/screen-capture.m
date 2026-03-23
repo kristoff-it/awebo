@@ -1,22 +1,14 @@
 #import "utils.h"
-#import "video-format.h"
 #import "video.h"
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <VideoToolbox/VideoToolbox.h>
 
-CVPixelBufferRef aweboScreenCaptureSwapFrame(void *, CVPixelBufferRef);
-__attribute__((weak)) CVPixelBufferRef
-aweboScreenCaptureSwapFrame(void *userdata, CVPixelBufferRef ref) {
+void aweboScreenCapturePushFrame(void *, CVPixelBufferRef, UInt64);
+__attribute__((weak)) void
+aweboScreenCapturePushFrame(void *userdata, CVPixelBufferRef ref,
+                            UInt64 delta_from_start) {
   __builtin_unreachable();
 }
-
-void aweboScreenCaptureEncodedVideoFrame(void *, const char *, size_t, BOOL);
-__attribute__((weak)) void aweboScreenCaptureEncodedVideoFrame(void *userdata,
-                                                               const char *data,
-                                                               size_t len,
-                                                               BOOL keyframe) {
-  __builtin_unreachable();
-};
 
 void aweboScreenCaptureUpdate(void *, UInt32);
 __attribute__((weak)) void aweboScreenCaptureUpdate(void *userdata,
@@ -31,11 +23,11 @@ __attribute__((weak)) void aweboScreenCaptureUpdate(void *userdata,
 @property(strong) SCContentSharingPicker *picker;
 @property(strong) SCStream *stream;
 @property void *userdata;
-
-@property(nonatomic, assign) VTCompressionSessionRef compressionSession;
-@property(nonatomic, assign) CMVideoCodecType selectedCodec;
-@property(nonatomic, assign) CMTime lastKeyframePts;
-
+@property int32_t width;
+@property int32_t height;
+@property int32_t fps;
+@property OSType pixelFormat;
+@property CMTime startTime;
 @end
 
 @implementation ScreenCaptureManager
@@ -44,7 +36,6 @@ void *screenCaptureManagerInit(void *userdata) {
   NSLog(@"creating capture manager");
   ScreenCaptureManager *manager = [[ScreenCaptureManager alloc] init];
   manager.userdata = userdata;
-  manager.selectedCodec = [manager bestAvailableCodec];
 
   return (__bridge_retained void *)manager;
 }
@@ -54,8 +45,28 @@ void screenCaptureManagerDeinit(void *ptr) {
   DDAssertLastRef(scm);
 }
 
-void screenCaptureManagerShowPicker(void *manager) {
+void screenCaptureManagerShowPicker(void *manager, UInt32 width, UInt32 height,
+                                    UInt8 fps, AweboPixelFmtID imgKind) {
   ScreenCaptureManager *self = (__bridge ScreenCaptureManager *)manager;
+  self.width = width;
+  self.height = height;
+  self.fps = fps;
+
+  switch (imgKind) {
+  case AweboYUV:
+    // self.pixelFormat = kCVPixelFormatType_420YpCbCr8PlanarFullRange;
+    __builtin_unreachable(); // not supported by screencapturekit
+  case AweboNV12:
+  case AweboVideoToolbox:
+    self.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+    break;
+  case AweboBGRA:
+    self.pixelFormat = kCVPixelFormatType_32BGRA;
+    break;
+  default:
+    __builtin_unreachable();
+  }
+
   [self showPicker];
 }
 
@@ -101,14 +112,12 @@ void screenCaptureManagerShowPicker(void *manager) {
 
 - (void)startCaptureWithFilter:(SCContentFilter *)filter {
 
-  [self setupCompressionSession];
   // Configure the stream
   SCStreamConfiguration *config = [[SCStreamConfiguration alloc] init];
-  config.width = 1920;
-  config.height = 1080;
-  config.minimumFrameInterval = CMTimeMake(1, 30); // 30 fps
-  config.pixelFormat = kCVPixelFormatType_32BGRA;
-  // config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+  config.width = self.width;
+  config.height = self.height;
+  config.minimumFrameInterval = CMTimeMake(1, self.fps);
+  config.pixelFormat = self.pixelFormat;
   config.ignoreGlobalClipDisplay = true;
   config.ignoreGlobalClipSingleWindow = true;
   config.scalesToFit = true;
@@ -178,37 +187,26 @@ void screenCaptureManagerShowPicker(void *manager) {
     didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
                    ofType:(SCStreamOutputType)type {
   if (type == SCStreamOutputTypeScreen) {
-    // Get the frame
-    CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
-    CMTime pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
-    CMTime duration = CMSampleBufferGetDuration(sampleBuffer);
-
-    VTEncodeInfoFlags flags;
-    OSStatus status = VTCompressionSessionEncodeFrame(
-        _compressionSession, pixelBuffer, pts, duration,
-        NULL, // frameProperties (nil = defaults)
-        NULL, // sourceFrameRefCon
-        &flags);
-
-    if (status != noErr) {
-      NSLog(@"VTCompressionSessionEncodeFrame failed: %d", (int)status);
-    }
-    [self processVideoFrame:pixelBuffer];
-
+    [self processVideoFrame:sampleBuffer];
   } else if (type == SCStreamOutputTypeAudio) {
-    // Audio sample
     [self processAudioBuffer:sampleBuffer];
   }
 }
 
-- (void)processVideoFrame:(CVPixelBufferRef)pixelBuffer {
-  CVPixelBufferRetain(pixelBuffer);
-  CVPixelBufferRef dropped_frame =
-      aweboScreenCaptureSwapFrame(self.userdata, pixelBuffer);
-
-  if (dropped_frame) {
-    CVPixelBufferRelease(dropped_frame);
+- (void)processVideoFrame:(CMSampleBufferRef)sampleBuffer {
+  CMTime pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
+  UInt64 delta_from_start = 0;
+  if (self.startTime.value == 0) {
+    self.startTime = pts;
+  } else {
+    CMTime kf = self.startTime;
+    double d = (double)(pts.value - kf.value) * 1000 / pts.timescale;
+    delta_from_start += round(d);
   }
+
+  CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+  CVPixelBufferRetain(pixelBuffer);
+  aweboScreenCapturePushFrame(self.userdata, pixelBuffer, delta_from_start);
 }
 
 - (void)processAudioBuffer:(CMSampleBufferRef)audioBuffer {
@@ -245,19 +243,58 @@ void screenCaptureManagerShowPicker(void *manager) {
   }
 }
 
-Image frameGetImage(CVPixelBufferRef pixelBuffer) {
+RawImage frameGetImage(CVPixelBufferRef pixelBuffer) {
   // Lock the pixel buffer to get access to the memory
   CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
 
-  // Get buffer info
+  OSType pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer);
   size_t width = CVPixelBufferGetWidth(pixelBuffer);
   size_t height = CVPixelBufferGetHeight(pixelBuffer);
-  size_t bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer);
 
-  // Get pointer to the pixel data
-  void *baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer);
-  uint8_t *pixels = (uint8_t *)baseAddress;
-  return (Image){width, height, pixels};
+  switch (pixelFormat) {
+  case kCVPixelFormatType_420YpCbCr8PlanarFullRange: {
+    // --- Plane 0: Luma (Y) ---
+    size_t yStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0);
+    uint8_t *yPlane = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0);
+
+    // --- Plane 1: Cb ---
+    size_t cbStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1);
+    uint8_t *cbPlane = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 1);
+
+    // --- Plane 2: Cr ---
+    size_t crStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 2);
+    uint8_t *crPlane = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 2);
+
+    return (RawImage){width,   height,   yPlane,   cbPlane, crPlane,
+                      yStride, cbStride, crStride, 0};
+  }
+  case kCVPixelFormatType_420YpCbCr8BiPlanarFullRange: {
+    // --- Plane 0: Luma (Y) ---
+    size_t yStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0);
+    uint8_t *yPlane = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0);
+
+    // --- Plane 1: Chroma (CbCr, interleaved) ---
+    size_t cbcrStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1);
+    uint8_t *cbcrPlane = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 1);
+
+    return (RawImage){width,   height,     yPlane, cbcrPlane, 0,
+                      yStride, cbcrStride, 0,      1};
+  }
+
+  case kCVPixelFormatType_32BGRA: {
+    size_t bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer);
+    void *baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer);
+    uint8_t *pixels = (uint8_t *)baseAddress;
+
+    return (RawImage){width, height, pixels, 0, 0, bytesPerRow, 0, 0, 3};
+  }
+
+  default:
+    NSLog(@"requested unsupported pixel format: %c%c%c%c",
+          *((UInt8 *)&pixelFormat), *(((UInt8 *)&pixelFormat) + 1),
+          *(((UInt8 *)&pixelFormat) + 2), *(((UInt8 *)&pixelFormat) + 3));
+    __builtin_unreachable();
+  }
 }
 
 void frameDeinit(CVPixelBufferRef pixelBuffer) {
@@ -279,197 +316,43 @@ void screenCaptureManagerStopCapture(void *manager) {
     }
   }];
 
-  if (_compressionSession) {
-    VTCompressionSessionCompleteFrames(_compressionSession, kCMTimeIndefinite);
-    VTCompressionSessionInvalidate(_compressionSession);
-    CFRelease(_compressionSession);
-    _compressionSession = NULL;
-  }
-
   [self.picker removeObserver:self];
 }
 
-- (void)setupCompressionSession {
-  self.lastKeyframePts = CMTimeMake(0, 1);
-  BOOL isHEVC = (self.selectedCodec == kCMVideoCodecType_HEVC);
-  NSLog(@"Using codec: %@", isHEVC ? @"H.265 (HEVC)" : @"H.264 (AVC)");
+// VTSessionSetProperty(_compressionSession,
+//                      kVTCompressionPropertyKey_AllowFrameReordering,
+//                      kCFBooleanFalse);
 
-  OSStatus status = VTCompressionSessionCreate(
-      kCFAllocatorDefault,
-      1920, // width
-      1080, // height
-      self.selectedCodec,
-      NULL,                  // encoderSpecification (nil = let VT choose)
-      NULL,                  // sourceImageBufferAttributes
-      NULL,                  // compressedDataAllocator
-      EncodedFrameCallback,  // output callback
-      (__bridge void *)self, // refcon
-      &_compressionSession);
+// VTSessionSetProperty(_compressionSession,
+//                      kVTCompressionPropertyKey_ExpectedFrameRate,
+//                      (__bridge CFTypeRef) @(30));
 
-  if (status != noErr) {
-    NSLog(@"VTCompressionSessionCreate failed: %d", (int)status);
-    return;
-  }
+// VTSessionSetProperty(
+//     _compressionSession,
+//     kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality,
+//     kCFBooleanTrue);
 
-  // ── Common properties ──────────────────────────────────────────────────
+// // Real-time encoding priority
+// VTSessionSetProperty(_compressionSession, kVTCompressionPropertyKey_RealTime,
+//                      kCFBooleanTrue);
 
-  VTSessionSetProperty(_compressionSession,
-                       kVTCompressionPropertyKey_AllowFrameReordering,
-                       kCFBooleanFalse);
+// // Constant bitrate ~8 Mbps
+// VTSessionSetProperty(_compressionSession,
+//                      kVTCompressionPropertyKey_AverageBitRate,
+//                      (__bridge CFTypeRef) @(8000000));
 
-  VTSessionSetProperty(_compressionSession,
-                       kVTCompressionPropertyKey_ExpectedFrameRate,
-                       (__bridge CFTypeRef) @(30));
+// // Keyframe interval (2 seconds at 30fps)
+// VTSessionSetProperty(_compressionSession,
+//                      kVTCompressionPropertyKey_MaxKeyFrameInterval,
+//                      (__bridge CFTypeRef) @(60));
 
-  VTSessionSetProperty(
-      _compressionSession,
-      kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality,
-      kCFBooleanTrue);
-
-  // Real-time encoding priority
-  VTSessionSetProperty(_compressionSession, kVTCompressionPropertyKey_RealTime,
-                       kCFBooleanTrue);
-
-  // Constant bitrate ~8 Mbps
-  VTSessionSetProperty(_compressionSession,
-                       kVTCompressionPropertyKey_AverageBitRate,
-                       (__bridge CFTypeRef) @(8000000));
-
-  // Keyframe interval (2 seconds at 30fps)
-  VTSessionSetProperty(_compressionSession,
-                       kVTCompressionPropertyKey_MaxKeyFrameInterval,
-                       (__bridge CFTypeRef) @(60));
-
-  // Prefer hardware
-  VTSessionSetProperty(
-      _compressionSession,
-      kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
-      kCFBooleanTrue);
-
-  // ── Codec-specific properties ──────────────────────────────────────────
-  if (isHEVC) {
-    // Main profile for broad compatibility
-    VTSessionSetProperty(_compressionSession,
-                         kVTCompressionPropertyKey_ProfileLevel,
-                         kVTProfileLevel_HEVC_Main_AutoLevel);
-  } else {
-    // High profile for H.264
-    VTSessionSetProperty(_compressionSession,
-                         kVTCompressionPropertyKey_ProfileLevel,
-                         kVTProfileLevel_H264_High_AutoLevel);
-
-    // // Enable B-frames for better compression
-    // VTSessionSetProperty(_compressionSession,
-    //                      kVTCompressionPropertyKey_AllowFrameReordering,
-    //                      kCFBooleanTrue);
-  }
-
-  status = VTCompressionSessionPrepareToEncodeFrames(_compressionSession);
-
-  if (status != noErr) {
-    NSLog(@"CTCompressionsessionPrepareToEncodeFrames failed: %d", (int)status);
-    return;
-  }
-}
-
-- (CMVideoCodecType)bestAvailableCodec {
-  if (@available(macOS 10.13, *)) {
-    if (VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC)) {
-      return kCMVideoCodecType_HEVC;
-    }
-  }
-
-  NSLog(@"H.265 HW encoder unavailable, falling back to H.264");
-  return kCMVideoCodecType_H264;
-}
-
-static void EncodedFrameCallback(void *outputCallbackRefCon,
-                                 void *sourceFrameRefCon, OSStatus status,
-                                 VTEncodeInfoFlags infoFlags,
-                                 CMSampleBufferRef sampleBuffer) {
-  if (status != noErr || !sampleBuffer) {
-    NSLog(@"Encode error: %d", (int)status);
-    return;
-  }
-
-  BOOL isKeyFrame = NO;
-  CFArrayRef attachments =
-      CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, false);
-  if (attachments && CFArrayGetCount(attachments) > 0) {
-    CFDictionaryRef attachment = CFArrayGetValueAtIndex(attachments, 0);
-    CFBooleanRef notSync =
-        CFDictionaryGetValue(attachment, kCMSampleAttachmentKey_NotSync);
-    isKeyFrame = (notSync == NULL || !CFBooleanGetValue(notSync));
-  }
-
-  // ── Consume encoded data here ──────────────────────────────────────────
-  // e.g. write to file, send over network, mux into container, etc.
-  CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sampleBuffer);
-  size_t totalLength = 0;
-  char *dataPointer = NULL;
-  CMBlockBufferGetDataPointer(block, 0, NULL, &totalLength, &dataPointer);
-
-  CMTime pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
-  // CMTime duration = CMSampleBufferGetDuration(sampleBuffer);
-  CMFormatDescriptionRef fmt = CMSampleBufferGetFormatDescription(sampleBuffer);
-
-  // NSMutableString *hex = [NSMutableString string];
-  // const uint8_t *bytes = (const uint8_t *)header.bytes;
-
-  // for (NSUInteger i = 0; i < header.length; i++) {
-  //   [hex appendFormat:@"%0x02X, ", bytes[i]];
-  // }
-
-  // NSLog(@"Bytes: [%@]", hex);
-  // Output: Bytes: 01 FF AB 3C
-
-  // NSLog(@"%@ frame encoded, size: %zu bytes, pts: %lli, ptsts = %d, dur: % "
-  //       @"lli, durts: %d",
-  //       isKeyFrame ? @" Key" : @"  Delta", totalLength, pts.value,
-  //       pts.timescale, duration.value, duration.timescale);
-
-  ScreenCaptureManager *manager =
-      (__bridge ScreenCaptureManager *)outputCallbackRefCon;
-
-  UInt32 delta = 0;
-  if (manager.lastKeyframePts.value != 0) {
-    CMTime kf = manager.lastKeyframePts;
-    double d = (double)(pts.value - kf.value) * 1000 / pts.timescale;
-    delta += floor(d);
-
-    // NSLog(@"computed delta = %d", delta);
-  }
-
-  if (isKeyFrame) {
-    manager.lastKeyframePts = pts;
-
-    NSData *out = [VTParamSetSerializer serializeFormatDescription:fmt
-                                                             delta:delta
-                                                              data:dataPointer
-                                                               len:totalLength];
-    NSLog(@"including codec header = %lu (%lu) delta %d", out.length,
-          totalLength, delta);
-    aweboScreenCaptureEncodedVideoFrame(
-        manager.userdata, (const char *)out.bytes, out.length, isKeyFrame);
-  } else {
-
-    NSMutableData *out =
-        [NSMutableData dataWithCapacity:sizeof(UInt32) + totalLength];
-
-    [out appendBytes:&delta length:sizeof(UInt32)];
-    [out appendBytes:dataPointer length:totalLength];
-
-    aweboScreenCaptureEncodedVideoFrame(manager.userdata, out.bytes, out.length,
-                                        isKeyFrame);
-  }
-}
+// // Prefer hardware
+// VTSessionSetProperty(
+//     _compressionSession,
+//     kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
+//     kCFBooleanTrue);
 
 - (void)invalidate {
-  if (_compressionSession) {
-    VTCompressionSessionInvalidate(_compressionSession);
-    CFRelease(_compressionSession);
-    _compressionSession = NULL;
-  }
   if (_stream) {
     [_stream stopCaptureWithCompletionHandler:^(NSError *error) {
       if (error) {

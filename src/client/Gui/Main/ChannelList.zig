@@ -21,9 +21,7 @@ debug: Debug = if (builtin.mode != .Debug) {} else .{},
 const Debug = if (builtin.mode != .Debug) void else struct {
     window: bool = false,
     playback: bool = false,
-    screen: bool = false,
     webcam: bool = false,
-    screen_box: ScreenshareBox = .{},
     webcam_box: ScreenshareBox = .{},
 };
 
@@ -580,17 +578,6 @@ fn renderAVDebugWindow(cl: *ChannelList, core: *Core) void {
         }
     }
 
-    const screen_label = if (cl.debug.screen) "Screenshare OFF" else "Screenshare ON";
-    if (dvui.button(@src(), screen_label, .{}, .{})) {
-        if (cl.debug.screen) {
-            cl.debug.screen = false;
-            _ = core.screen_capture.stopCapture();
-        } else {
-            cl.debug.screen = true;
-            _ = core.screen_capture.showOsPicker();
-        }
-    }
-
     if (dvui.button(@src(), "Drop next incoming media packet", .{}, .{})) {
         @import("../../Core/network.zig").debug.drop_next_media_packets.store(1, .release);
     }
@@ -604,7 +591,6 @@ fn renderAVDebugWindow(cl: *ChannelList, core: *Core) void {
     }
 
     if (cl.debug.webcam) cl.debug.webcam_box.draw(core, .webcam) catch unreachable;
-    if (cl.debug.screen) cl.debug.screen_box.draw(core, .screen) catch unreachable;
 }
 
 fn denyPopup(cl: *ChannelList) void {

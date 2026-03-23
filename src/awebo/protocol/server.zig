@@ -223,14 +223,50 @@ pub const HostSync = struct {
 };
 
 pub const CallersUpdate = struct {
-    caller: Caller,
-    action: Action,
+    id: proto.client.Id,
+    action: union(enum(u8)) {
+        join: struct {
+            voice: Channel.Id,
+            muted: bool = false,
+            muted_server: bool = false,
+            deafened: bool = false,
+            pub const protocol = struct {};
+        },
+        leave,
+        channel_move: struct {
+            voice_old: Channel.Id,
+            voice_new: Channel.Id,
+            pub const protocol = struct {};
+        },
+        audio: struct {
+            muted: bool = false,
+            muted_server: bool = false,
+            deafened: bool = false,
+            pub const protocol = struct {};
+        },
+        share_begin: struct {
+            kind: SessionKind,
+            format: proto.media.Format,
+            pub const protocol = struct {};
+        },
+        share_watch_join: struct {
+            stream: proto.media.StreamId,
+            pub const protocol = struct {};
+        },
+        share_watch_leave: struct {
+            stream: proto.media.StreamId,
+            pub const protocol = struct {};
+        },
+        share_end: SessionKind,
 
-    const Action = enum(u8) { join, update, leave };
+        pub const protocol = struct {};
+    },
+
+    const SessionKind = enum(u8) { screen, camera };
 
     pub const marker = 'C';
-    pub const serializeAlloc = proto.MakeSerializeAllocFn(CallersUpdate);
-    pub const deserialize = proto.MakeDeserializeFn(CallersUpdate);
+    pub const serializeAlloc = proto.MakeSerializeAllocFn(@This());
+    pub const deserializeAlloc = proto.MakeDeserializeAllocFn(@This());
     pub const protocol = struct {};
 };
 

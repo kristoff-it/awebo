@@ -1,3 +1,4 @@
+const context = @import("options").context;
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -7,6 +8,7 @@ pub const StreamId = packed struct(u32) {
     client_id: awebo.protocol.client.Id,
     kind: StreamKind,
 
+    pub const protocol = struct {};
     pub fn format(sid: StreamId, w: *Io.Writer) !void {
         try w.print("Stream({f}, {t})", .{ sid.client_id, sid.kind });
     }
@@ -19,8 +21,32 @@ pub const StreamKind = enum(u2) {
     reserved = 3,
 };
 
+pub const Format = struct {
+    codec: Codec,
+    config: Config,
+
+    pub const Codec = enum(u8) {
+        h264 = 0,
+        hevc = 1,
+        av1 = 2,
+        ffv1 = 3,
+
+        pub const protocol = struct {};
+    };
+
+    pub const protocol = struct {};
+};
+
+pub const Config = struct {
+    width: u16,
+    height: u16,
+    fps: u8,
+
+    pub const protocol = struct {};
+};
+
 /// Header attached to all UDP messages.
-pub const Header = extern struct {
+pub const Header = packed struct {
     //  0                   1                   2                   3
     //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
