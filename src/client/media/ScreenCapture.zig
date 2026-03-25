@@ -93,7 +93,7 @@ pub fn startCapture(sc: *ScreenCapture, lossless: bool, config: media.Config) !m
     sc.os.showOsPicker(config, sc.state.active.encoder.codec.pixFmtToImageKind());
     return .{
         .config = config,
-        .codec = sc.state.active.encoder.codec.kind.toMediaFormatCodec(),
+        .codec = sc.state.active.encoder.codec.kind,
     };
 }
 

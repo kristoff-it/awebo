@@ -21,61 +21,55 @@ pub const c = @cImport({
     // }
 });
 
-/// Codecs used by awebo for camera / screen sharing in order of preference.
-/// All codecs presume usage of a hardware encoder except `h264_sw`,
-/// which is the fallback used when no HW encoder is available.
+/// Concrete codec implementation being used in a video stream.
+/// In contexts where it's not necessary to know the concrete implementation
+/// in use, `codec.kind` is used instead of the whole Codec struct.
 pub const Codec = struct {
     name: [:0]const u8,
-    kind: Kind,
+    /// the protocol-level codec tag which will be used by other clients to
+    /// decode the stream (likely using a different concrete implementation
+    /// of the same codec).
+    kind: media.Format.Codec,
 
-    /// Preferred pixel format
+    /// Whether we are currently using a software or a hardware encoder.
+    /// This information is statically known for some codec
+    /// implementations, while for hardware implementations (called
+    /// 'hybrid' by ffmpeg) , in some cases they might internally fallback
+    /// to software operation if the hardware unit is busy (e.g.
+    /// VideoToolbox). The encoder / decoder init function should take care
+    /// to probe hybrid codecs to learn what the operating mode is for the
+    /// current session.
+    software: bool = false,
+
+    /// Preferred pixel format by the codec which will then be used:
+    /// - as output from camera/screen capture in case of encoding
+    /// - as output to be rendered in case of decoding
+    /// This value is hardcoded manually and chosen by crossreferencing the
+    /// capabilities of each codec implementation (by reading ffmpeg source
+    /// code) and what other subsystems are capable of outputting and/or
+    /// rendering.
+    /// For example ScreenCaptureKit on macOS can only output NV12
+    /// (biplanar 4:2:0 YUV) so this pixel format will be preferred over,
+    /// say, 3-planar YUV even if this format is listed above NV12 in
+    /// ffmpeg.
     pix_fmt: c.AVPixelFormat,
 
-    pub const Kind = enum(u8) {
-        /// Lossless codecs (must be at top)
-        ffv1,
-        ffv1_sw,
+    fn kindToAvCodecId(mfc: media.Format.Codec) c.AVCodecID {
+        return switch (mfc) {
+            .h264 => c.AV_CODEC_ID_H264,
+            .hevc => c.AV_CODEC_ID_HEVC,
+            .av1 => c.AV_CODEC_ID_AV1,
+            .ffv1 => c.AV_CODEC_ID_FFV1,
+        };
+    }
 
-        /// Lossy codecs
-        av1,
-        hevc,
-        h264,
-
-        /// Software fallback
-        h264_sw,
-
-        fn toAvCodecId(kind: Kind) c.AVCodecID {
-            return switch (kind) {
-                .ffv1, .ffv1_sw => c.AV_CODEC_ID_FFV1,
-                .av1 => c.AV_CODEC_ID_AV1,
-                .hevc => c.AV_CODEC_ID_HEVC,
-                .h264, .h264_sw => c.AV_CODEC_ID_H264,
-            };
-        }
-
-        pub fn toMediaFormatCodec(kind: Kind) media.Format.Codec {
-            return switch (kind) {
-                .h264, .h264_sw => .h264,
-                .hevc => .hevc,
-                .av1 => .av1,
-                .ffv1, .ffv1_sw => .ffv1,
-            };
-        }
-
-        pub fn lossless(kind: Kind) bool {
-            return switch (kind) {
-                .ffv1, .ffv1_sw => true,
-                .av1, .hevc, .h264, .h264_sw => false,
-            };
-        }
-
-        pub fn software(kind: Kind) bool {
-            return switch (kind) {
-                .h264, .hevc, .av1, .ffv1 => false,
-                .h264_sw, .ffv1_sw => true,
-            };
-        }
-    };
+    pub fn lossless(mfc: media.format.Codec) bool {
+        return switch (mfc) {
+            .h264, .hevc, .av1 => false,
+            .ffv1,
+            => true,
+        };
+    }
 
     pub fn pixFmtToImageKind(codec: *const Codec) VideoStream.ImageKind {
         return switch (codec.pix_fmt) {
@@ -95,7 +89,7 @@ const candidates: struct {
     else => @compileError("TODO: define codec candidates for OS"),
     .macos => .{
         .lossless = &.{
-            .{ .name = "ffv1", .kind = .ffv1_sw, .pix_fmt = c.AV_PIX_FMT_BGRA },
+            .{ .name = "ffv1", .kind = .ffv1, .software = true, .pix_fmt = c.AV_PIX_FMT_BGRA },
         },
         .lossy = &.{
             .{ .name = "hevc_videotoolbox", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_NV12 },
@@ -109,7 +103,7 @@ const candidates: struct {
         .lossless = &.{
             //ffv1
             .{ .name = "ffv1_vulkan", .kind = .ffv1, .pix_fmt = c.AV_PIX_FMT_VULKAN },
-            .{ .name = "ffv1", .kind = .ffv1_sw, .pix_fmt = c.AV_PIX_FMT_YUV420P },
+            .{ .name = "ffv1", .kind = .ffv1, .pix_fmt = c.AV_PIX_FMT_YUV420P },
         },
         .lossy = &.{
             //av1
@@ -328,7 +322,7 @@ pub const Decoder = struct {
     };
 
     pub fn init(vs: *VideoStream, data: []const u8) !Decoder {
-        const extradata_size: usize = media.read.int(u16, data.ptr + @sizeOf(u32));
+        const extradata_size: usize = media.read.int(u16, data.ptr[@sizeOf(u32)..][0..@sizeOf(u16)]);
         const extradata = data[@sizeOf(u32) + @sizeOf(u16) ..][0..extradata_size];
 
         const codec_id: c_uint = switch (vs.format.codec) {
