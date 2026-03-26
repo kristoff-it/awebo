@@ -50,6 +50,10 @@
             .url = "git+https://github.com/allyourcodebase/rnnoise#41ef44875913c889a38e07564b524055c9b5cf95",
             .hash = "rnnoise-0.0.1-7NNaDHEZAAB5Cy2ztXkHQkqY1FOKzGTUrcNodvYPuU-0",
         },
+        .ffmpeg = .{
+            .url = "git+https://github.com/allyourcodebase/ffmpeg#75657d7a025f2aee02ae1b09355c967760a14c17",
+            .hash = "ffmpeg-7.0.1-9-zT7QAzOLCASeheWwG4aK6UjMCGtaJzArYnTFoVODye4D",
+        },
     },
     .paths = .{
         "build.zig",
