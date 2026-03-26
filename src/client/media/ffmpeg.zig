@@ -22,11 +22,9 @@ pub const c = @cImport({
 });
 
 /// Concrete codec implementation being used in a video stream.
-/// In contexts where it's not necessary to know the concrete implementation
-/// in use, `codec.kind` is used instead of the whole Codec struct.
 pub const Codec = struct {
     name: [:0]const u8,
-    /// the protocol-level codec tag which will be used by other clients to
+    /// The protocol-level codec tag which will be used by other clients to
     /// decode the stream (likely using a different concrete implementation
     /// of the same codec).
     kind: media.Format.Codec,
@@ -92,10 +90,10 @@ const candidates: struct {
             .{ .name = "ffv1", .kind = .ffv1, .software = true, .pix_fmt = c.AV_PIX_FMT_BGRA },
         },
         .lossy = &.{
-            .{ .name = "hevc_videotoolbox", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_NV12 },
-            .{ .name = "h264_videotoolbox", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
-            // .{ .name = "hevc_videotoolbox", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_VIDEOTOOLBOX },
-            // .{ .name = "h264_videotoolbox", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_VIDEOTOOLBOX },
+            // .{ .name = "hevc_videotoolbox", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_NV12 },
+            // .{ .name = "h264_videotoolbox", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
+            .{ .name = "hevc_videotoolbox", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_VIDEOTOOLBOX },
+            .{ .name = "h264_videotoolbox", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_VIDEOTOOLBOX },
             // No fallback, all supported macOS devices should have at least one of these available.
         },
     },
@@ -205,6 +203,8 @@ pub const Encoder = struct {
                 continue;
             }
 
+            log.debug("initialized encoder '{s}' ({t}, {t})", .{ candidate.name, candidate.kind, candidate.pixFmtToImageKind() });
+
             return .{
                 .codec = candidate,
                 .ctx = ctx,
@@ -222,7 +222,7 @@ pub const Encoder = struct {
         c.av_frame_free(@ptrCast(&e.frame));
     }
 
-    pub fn encode(e: *Encoder, img: VideoStream.Image) !struct { []const u8, []const u8 } {
+    pub fn encode(e: *Encoder, img: VideoStream.Image) !?struct { []const u8, []const u8 } {
         e.frame.pts = 0;
         switch (e.codec.pix_fmt) {
             c.AV_PIX_FMT_VIDEOTOOLBOX => {
@@ -231,6 +231,9 @@ pub const Encoder = struct {
                 e.frame.width = @intCast(i.width);
                 e.frame.height = @intCast(i.height);
                 e.frame.data[3] = @ptrCast(i.ptr);
+                e.frame.buf[0] = c.av_buffer_create(@ptrCast(i.ptr), 0, &struct {
+                    fn noop(_: ?*anyopaque, _: ?[*]u8) callconv(.c) void {}
+                }.noop, @ptrCast(i.ptr), c.AV_BUFFER_FLAG_READONLY);
                 e.frame.hw_frames_ctx = c.av_buffer_ref(e.ctx.hw_frames_ctx);
             },
             c.AV_PIX_FMT_NV12 => {
@@ -254,6 +257,7 @@ pub const Encoder = struct {
             else => unreachable,
         }
         {
+            // @breakpoint();
             const res = c.avcodec_send_frame(e.ctx, e.frame);
             if (res < 0) {
                 std.log.debug("error sending frame: {s}", .{err2str(res)});
@@ -263,8 +267,14 @@ pub const Encoder = struct {
         // c.av_frame_unref(e.frame);
 
         // c.av_packet_unref(e.packet);
-        if (c.avcodec_receive_packet(e.ctx, e.packet) < 0) {
-            return error.ReceivePacketFailed;
+        {
+            const res = c.avcodec_receive_packet(e.ctx, e.packet);
+            if (res < 0) {
+                const averror_eagain = -@as(c_int, c.EAGAIN);
+                if (res == averror_eagain) return null;
+                std.log.debug("error receiving packet: {s}", .{err2str(res)});
+                return error.ReceivePacketFailed;
+            }
         }
 
         const keyframe = e.packet.flags & c.AV_PKT_FLAG_KEY != 0;

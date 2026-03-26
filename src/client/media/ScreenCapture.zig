@@ -125,20 +125,22 @@ pub fn framePush(sc: *ScreenCapture, frame: *Frame, delta_from_start_ms: u64) ca
         return;
     }
     defer sc.stop_mutex.unlock(core.io);
-    const packet, const extradata = switch (sc.state.active.encoder.codec.pixFmtToImageKind()) {
-        .videotoolbox => sc.state.active.encoder.encode(.{
-            .videotoolbox = .{
-                .width = sc.state.active.config.width,
-                .height = sc.state.active.config.height,
-                .ptr = frame,
-            },
-        }) catch unreachable,
-        else => sc.state.active.encoder.encode(frame.getImage()) catch unreachable,
-    };
-    const delta: u32 = @intCast(delta_from_start_ms - sc.last_keyframe_ms);
-    const keyframe = extradata.len > 0;
-    if (keyframe) sc.last_keyframe_ms = delta_from_start_ms;
-    sc.encodedVideoFramePush(packet, extradata, delta);
+    blk: {
+        const packet, const extradata = switch (sc.state.active.encoder.codec.pixFmtToImageKind()) {
+            .videotoolbox => sc.state.active.encoder.encode(.{
+                .videotoolbox = .{
+                    .width = sc.state.active.config.width,
+                    .height = sc.state.active.config.height,
+                    .ptr = frame,
+                },
+            }) catch unreachable,
+            else => sc.state.active.encoder.encode(frame.getImage()) catch unreachable,
+        } orelse break :blk;
+        const delta: u32 = @intCast(delta_from_start_ms - sc.last_keyframe_ms);
+        const keyframe = extradata.len > 0;
+        if (keyframe) sc.last_keyframe_ms = delta_from_start_ms;
+        sc.encodedVideoFramePush(packet, extradata, delta);
+    }
     if (sc.frameSwap(frame)) |old| {
         std.log.debug("gui thread dropped a frame!", .{});
         old.deinit();

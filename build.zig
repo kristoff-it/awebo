@@ -209,10 +209,10 @@ pub fn setupGui(
         .optimize = dep_optimize,
     });
 
-    // const ffmpeg = b.dependency("ffmpeg", .{
-    //     .target = target,
-    //     .optimize = dep_optimize,
-    // });
+    const ffmpeg = b.dependency("ffmpeg", .{
+        .target = target,
+        .optimize = dep_optimize,
+    });
 
     const options = b.addOptions();
     options.addOption(Context, "context", .client);
@@ -228,9 +228,9 @@ pub fn setupGui(
     gui.root_module.addImport("miniaudio", miniaudio.module("miniaudio"));
 
     // Link against system ffmpeg
-    // gui.root_module.linkLibrary(ffmpeg.artifact("ffmpeg"));
-    gui.root_module.linkSystemLibrary("avutil", .{ .needed = true });
-    gui.root_module.linkSystemLibrary("avcodec", .{ .needed = true });
+    gui.root_module.linkLibrary(ffmpeg.artifact("ffmpeg"));
+    // gui.root_module.linkSystemLibrary("avutil", .{ .needed = true });
+    // gui.root_module.linkSystemLibrary("avcodec", .{ .needed = true });
     addSqlite(gui, zqlite, .client);
 
     switch (target.result.os.tag) {
@@ -348,6 +348,11 @@ pub fn setupTui(
         .optimize = dep_optimize,
     });
 
+    const ffmpeg = b.dependency("ffmpeg", .{
+        .target = target,
+        .optimize = dep_optimize,
+    });
+
     const options = b.addOptions();
     options.addOption(Context, "context", .client);
     options.addOption([]const u8, "version", version);
@@ -360,8 +365,10 @@ pub fn setupTui(
     tui.root_module.addImport("opus", opus.module("opus"));
     tui.root_module.addImport("rnnoise", rnnoise.module("rnnoise"));
     tui.root_module.addImport("miniaudio", miniaudio.module("miniaudio"));
-    tui.root_module.linkSystemLibrary("avutil", .{ .needed = true });
-    tui.root_module.linkSystemLibrary("avcodec", .{ .needed = true });
+
+    tui.root_module.linkLibrary(ffmpeg.artifact("ffmpeg"));
+    // tui.root_module.linkSystemLibrary("avutil", .{ .needed = true });
+    // tui.root_module.linkSystemLibrary("avcodec", .{ .needed = true });
     addSqlite(tui, zqlite, .client);
     switch (target.result.os.tag) {
         .macos => {
