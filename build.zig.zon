@@ -2,15 +2,15 @@
     .name = .awebo,
     .version = "0.0.1",
     .fingerprint = 0x50424de2ba07ebcc,
-    .minimum_zig_version = "0.16.0-dev.2821+3edaef9e0",
+    .minimum_zig_version = "0.16.0-dev.3061+9b1eaad13",
     .dependencies = .{
         .miniaudio = .{
             .url = "git+https://github.com/allyourcodebase/miniaudio#21bc669859ef3f6aabd0a2de0931b80cff8837c5",
             .hash = "miniaudio-0.11.25-LWmAG1UgAAABQoUxopYnG2xp1un2FWnSfdKiTLX2ix-i",
         },
         .dvui = .{
-            .url = "git+https://github.com/david-vanderson/dvui?ref=zig16-dev#17ce34643a54c7f1375fa28feb3a40d82cff57ca",
-            .hash = "dvui-0.4.0-dev-AQFJmS1j2wD9K9kqG0Xevlhzsk8MR9FBopByaR5KfROF",
+            .url = "git+https://github.com/david-vanderson/dvui?ref=zig16-dev#4098f724ee70ae67053dd9fc91921654443984aa",
+            .hash = "dvui-0.4.0-dev-AQFJmaxm2wCU9WVPxqXoIDL9bvaoIiJCEgbFmuFADXZT",
         },
         .pulseaudio = .{
             .url = "https://github.com/andrewrk/pulseaudio/archive/909a2ceebcc4efe74418107c279ac239f28e0f61.tar.gz",
