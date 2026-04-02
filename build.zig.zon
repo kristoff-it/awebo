@@ -51,8 +51,8 @@
             .hash = "rnnoise-0.0.1-7NNaDHEZAAB5Cy2ztXkHQkqY1FOKzGTUrcNodvYPuU-0",
         },
         .ffmpeg = .{
-            .url = "git+https://github.com/allyourcodebase/ffmpeg#75657d7a025f2aee02ae1b09355c967760a14c17",
-            .hash = "ffmpeg-7.0.1-9-zT7QAzOLCASeheWwG4aK6UjMCGtaJzArYnTFoVODye4D",
+            .url = "git+https://github.com/allyourcodebase/ffmpeg#b896c2c6eb8c39286c0ec516d67c2524a90c9efd",
+            .hash = "ffmpeg-7.0.1-10-zT7QAyaLCAQsc93Y8RSff4USPYdy4Q6ycPvKUyd0V-O7",
         },
     },
     .paths = .{
