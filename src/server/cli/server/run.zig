@@ -59,14 +59,14 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
                     switch (crtl_type) {
                         CTRL_C_EVENT => {
                             shutdown_event.set(shutdown_event_io);
-                            return win.TRUE;
+                            return .TRUE;
                         },
-                        else => return win.FALSE,
+                        else => return .FALSE,
                     }
                 }
             };
 
-            if (Impl.SetConsoleCtrlHandler(&Impl.handler, std.os.windows.TRUE) == 0) {
+            if (Impl.SetConsoleCtrlHandler(&Impl.handler, .TRUE).toBool()) {
                 server_log.err("unable to setup ctrl+c handler, continuing anyway", .{});
             }
         },
