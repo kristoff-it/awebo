@@ -9,8 +9,8 @@
             .hash = "miniaudio-0.11.25-LWmAG1UgAAABQoUxopYnG2xp1un2FWnSfdKiTLX2ix-i",
         },
         .dvui = .{
-            .url = "git+https://github.com/david-vanderson/dvui?ref=zig16-dev#4098f724ee70ae67053dd9fc91921654443984aa",
-            .hash = "dvui-0.4.0-dev-AQFJmaxm2wCU9WVPxqXoIDL9bvaoIiJCEgbFmuFADXZT",
+            .url = "git+https://github.com/david-vanderson/dvui.git?ref=zig16-dev#49e8443c038cc5a82dbf57305322132c0a61d4b6",
+            .hash = "dvui-0.5.0-dev-AQFJmTgB3QCriBRzSQGPpw44zDiTaQ8hNnrxsrSxSQti",
         },
         .pulseaudio = .{
             .url = "https://github.com/andrewrk/pulseaudio/archive/909a2ceebcc4efe74418107c279ac239f28e0f61.tar.gz",
@@ -47,8 +47,8 @@
             .hash = "xcode_frameworks-0.0.0-VCh8ghQdbgdbo3YAORsgC-OkhpmcEFsgSbx_XqoFR_G0",
         },
         .rnnoise = .{
-            .url = "git+https://github.com/allyourcodebase/rnnoise#41ef44875913c889a38e07564b524055c9b5cf95",
-            .hash = "rnnoise-0.0.1-7NNaDHEZAAB5Cy2ztXkHQkqY1FOKzGTUrcNodvYPuU-0",
+            .url = "git+https://github.com/allyourcodebase/rnnoise.git#80986ae254b1ac60a222edd94e0f44efd541d33e",
+            .hash = "rnnoise-0.0.1-7NNaDM0ZAADfSsZGIDOivUsJ9D3ZTVUAKhEeKA5rkyeU",
         },
         .ffmpeg = .{
             .url = "git+https://github.com/allyourcodebase/ffmpeg#b896c2c6eb8c39286c0ec516d67c2524a90c9efd",
