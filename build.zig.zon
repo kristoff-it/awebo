@@ -18,8 +18,8 @@
             .lazy = true,
         },
         .opus = .{
-            .url = "git+https://github.com/allyourcodebase/opus#21f900838ede6b5fa42b359cd80bf9dfd74698af",
-            .hash = "opus-0.0.2-vuF-cD2QAACnx20-rta3-xz0Xy7hq2aCrSTqcYrB0Azj",
+            .url = "git+https://github.com/allyourcodebase/opus.git#bf3035fccc0864b70b6692a7e04555766dda3d60",
+            .hash = "opus-0.0.2-vuF-cFOQAABTWWMmx9jCwILGibts9ZOg_bCGGIHSXKKL",
         },
         .zqlite = .{
             .url = "git+https://github.com/andrewrk/zqlite.zig.git#205dcc49a212b27e5a78868cda09135d0945fc7a",
@@ -43,8 +43,8 @@
             .hash = "zeit-0.6.0-5I6bk2i6AgDYOczMsuuKcM7NYuOoTtxWEsZDsg8kSTiv",
         },
         .xcode_frameworks = .{
-            .url = "git+https://codeberg.org/brodo/xcode-frameworks.git#b59ab39b4f1b761b8e619575bb1258159b5022da",
-            .hash = "xcode_frameworks-0.0.0-VCh8ghQdbgdbo3YAORsgC-OkhpmcEFsgSbx_XqoFR_G0",
+            .url = "git+https://codeberg.org/brodo/xcode-frameworks.git#82eab3c21a3dcdda650f7efa5fc20443b60025d3",
+            .hash = "xcode_frameworks-0.0.0-VCh8gjFEqxH5LL-77V2VU4w314bCOzPE65_-WVNyD-52",
         },
         .rnnoise = .{
             .url = "git+https://github.com/allyourcodebase/rnnoise.git#80986ae254b1ac60a222edd94e0f44efd541d33e",
