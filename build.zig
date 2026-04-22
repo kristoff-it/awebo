@@ -157,12 +157,6 @@ pub fn setupGui(
         .root_source_file = b.path("src/client/assets/AppIcon.png"),
     });
 
-    const dvui = b.dependency("dvui", .{
-        .target = target,
-        .optimize = optimize,
-        .backend = .sdl3,
-    });
-
     const gui = b.addExecutable(.{
         .name = "awebo-gui",
         .root_module = b.createModule(.{
@@ -220,7 +214,6 @@ pub fn setupGui(
     options.addOption(bool, "dummy", dummy);
     gui.root_module.addOptions("options", options);
     gui.root_module.addImport("appicon", appicon);
-    gui.root_module.addImport("dvui", dvui.module("dvui_sdl3"));
     gui.root_module.addImport("folders", folders.module("known-folders"));
     gui.root_module.addImport("zeit", zeit.module("zeit"));
     gui.root_module.addImport("opus", opus.module("opus"));
@@ -236,6 +229,15 @@ pub fn setupGui(
     switch (target.result.os.tag) {
         .macos => {
             const xcode_frameworks = b.dependency("xcode_frameworks", .{});
+            const dvui = b.dependency("dvui", .{
+                .target = target,
+                .optimize = optimize,
+                .backend = .sdl3,
+                .system_include_path = xcode_frameworks.path("include"),
+                .system_framework_path = xcode_frameworks.path("Frameworks"),
+                .library_path = xcode_frameworks.path("lib"),
+            });
+            gui.root_module.addImport("dvui", dvui.module("dvui_sdl3"));
             gui.root_module.addFrameworkPath(xcode_frameworks.path("Frameworks"));
             gui.root_module.addSystemIncludePath(xcode_frameworks.path("include"));
             gui.root_module.addLibraryPath(xcode_frameworks.path("lib"));
@@ -265,11 +267,23 @@ pub fn setupGui(
             });
         },
         .windows => {
+            const dvui = b.dependency("dvui", .{
+                .target = target,
+                .optimize = optimize,
+                .backend = .sdl3,
+            });
+            gui.root_module.addImport("dvui", dvui.module("dvui_sdl3"));
             if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
                 gui.root_module.addImport("win32", win32_dep.module("win32"));
             }
         },
         .linux => {
+            const dvui = b.dependency("dvui", .{
+                .target = target,
+                .optimize = optimize,
+                .backend = .sdl3,
+            });
+            gui.root_module.addImport("dvui", dvui.module("dvui_sdl3"));
             if (b.lazyDependency("pulseaudio", .{
                 .target = target,
                 .optimize = dep_optimize,
