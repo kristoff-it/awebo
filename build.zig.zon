@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.16.0-dev.3061+9b1eaad13",
     .dependencies = .{
         .miniaudio = .{
-            .url = "git+https://github.com/allyourcodebase/miniaudio#21bc669859ef3f6aabd0a2de0931b80cff8837c5",
-            .hash = "miniaudio-0.11.25-LWmAG1UgAAABQoUxopYnG2xp1un2FWnSfdKiTLX2ix-i",
+            .url = "git+https://codeberg.org/allyourcodebase/miniaudio.git#9907be968cf9f31bdcd4c0dcdd8e91ffdf585441",
+            .hash = "miniaudio-0.11.25-LWmAGwwgAAAdQQ-kMRYz0yW-p-KQkFKDSZI3RlC1YWN8",
         },
         .dvui = .{
             .url = "git+https://github.com/david-vanderson/dvui.git?ref=zig16-dev#49e8443c038cc5a82dbf57305322132c0a61d4b6",
