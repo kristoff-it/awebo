@@ -2,15 +2,15 @@
     .name = .awebo,
     .version = "0.0.1",
     .fingerprint = 0x50424de2ba07ebcc,
-    .minimum_zig_version = "0.16.0-dev.3061+9b1eaad13",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .miniaudio = .{
             .url = "git+https://codeberg.org/allyourcodebase/miniaudio.git#9907be968cf9f31bdcd4c0dcdd8e91ffdf585441",
             .hash = "miniaudio-0.11.25-LWmAGwwgAAAdQQ-kMRYz0yW-p-KQkFKDSZI3RlC1YWN8",
         },
         .dvui = .{
-            .url = "git+https://github.com/david-vanderson/dvui.git?ref=zig16-dev#7bb8d064de8f6df9cbdda3e2c60fa5945c5f9ffd",
-            .hash = "dvui-0.5.0-dev-AQFJmXoG3QAIyCfsyqDWWRoOJ1atUMwwwlUmvf_vB7L3",
+            .url = "git+https://github.com/david-vanderson/dvui.git?ref=zig16-dev#bae985c9204425b522ca9cefeabe419b2583d6b4",
+            .hash = "dvui-0.5.0-dev-AQFJmU8H3QD876M89wLtO5VlbiryNRbs8UqKLtUs5vzN",
         },
         .pulseaudio = .{
             .url = "https://github.com/andrewrk/pulseaudio/archive/909a2ceebcc4efe74418107c279ac239f28e0f61.tar.gz",
@@ -22,8 +22,8 @@
             .hash = "opus-0.0.2-vuF-cFOQAABTWWMmx9jCwILGibts9ZOg_bCGGIHSXKKL",
         },
         .zqlite = .{
-            .url = "git+https://github.com/andrewrk/zqlite.zig.git#205dcc49a212b27e5a78868cda09135d0945fc7a",
-            .hash = "zqlite-0.0.1-RWLaY36cmAC0Sznz0iy75CjxMjGCkUjZzIa-Si2pitGe",
+            .url = "git+https://github.com/karlseguin/zqlite.zig.git#974fff239ad62700f11f6d8be0f6a6712f71a2d8",
+            .hash = "zqlite-0.0.1-RWLaY54wnADXf3IHDF7M9IuypBzUHjYO9tOGU8xnogTg",
         },
         .zigwin32 = .{
             .url = "git+https://github.com/kristoff-it/zigwin32.git?ref=fix/zig16#1102e9b82e8bd50913b6a78035bfb399ebd8cf97",
