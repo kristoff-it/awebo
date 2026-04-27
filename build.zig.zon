@@ -22,8 +22,8 @@
             .hash = "opus-0.0.2-vuF-cFOQAABTWWMmx9jCwILGibts9ZOg_bCGGIHSXKKL",
         },
         .zqlite = .{
-            .url = "git+https://github.com/karlseguin/zqlite.zig.git#974fff239ad62700f11f6d8be0f6a6712f71a2d8",
-            .hash = "zqlite-0.0.1-RWLaY54wnADXf3IHDF7M9IuypBzUHjYO9tOGU8xnogTg",
+            .url = "git+https://github.com/karlseguin/zqlite.zig.git#5ac4cabe95a6d7faa7baf0da8057a8e6e8a227a1",
+            .hash = "zqlite-0.0.1-RWLaY64xnAAxsD2YNT8QqPMJUuaFv2GOzFRR4aGypJv3",
         },
         .zigwin32 = .{
             .url = "git+https://github.com/kristoff-it/zigwin32.git?ref=fix/zig16#1102e9b82e8bd50913b6a78035bfb399ebd8cf97",
