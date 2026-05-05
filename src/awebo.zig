@@ -249,7 +249,7 @@ pub const network_utils = struct {
             .linux => std.os.linux,
             .windows => {
                 const windows = std.os.windows;
-                const rc = windows.ws2_32.setsockopt(fd, level, @intCast(optname), opt.ptr, @intCast(opt.len));
+                const rc = std.Io.setsockopt(fd, level, @intCast(optname), opt.ptr, @intCast(opt.len));
                 if (rc == windows.ws2_32.SOCKET_ERROR) {
                     switch (windows.ws2_32.WSAGetLastError()) {
                         .NOTINITIALISED => unreachable,
