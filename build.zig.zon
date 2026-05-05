@@ -9,8 +9,8 @@
             .hash = "miniaudio-0.11.25-LWmAGwwgAAAdQQ-kMRYz0yW-p-KQkFKDSZI3RlC1YWN8",
         },
         .dvui = .{
-            .url = "git+https://github.com/david-vanderson/dvui.git?ref=zig16-dev#bae985c9204425b522ca9cefeabe419b2583d6b4",
-            .hash = "dvui-0.5.0-dev-AQFJmU8H3QD876M89wLtO5VlbiryNRbs8UqKLtUs5vzN",
+            .url = "git+https://github.com/david-vanderson/dvui.git#b5ea62896c973daa2c88fc9253706cb14c5165df",
+            .hash = "dvui-0.5.0-dev-AQFJmawN3wBxRm7gkeXDz2ujtz-groENWKb6OI4_nXR8",
         },
         .pulseaudio = .{
             .url = "https://github.com/andrewrk/pulseaudio/archive/909a2ceebcc4efe74418107c279ac239f28e0f61.tar.gz",
@@ -35,8 +35,8 @@
             .hash = "known_folders-0.0.0-Fy-PJiXKAACLbIUjxVqJRTSLc6HNnMkCSBnC5LW0Lx_v",
         },
         .vaxis = .{
-            .url = "git+https://github.com/andrewrk/libvaxis?ref=awebo#c0d9aaa40db960124275b865fba28c6674e237e1",
-            .hash = "vaxis-0.5.1-BWNV_CBGCQBsWrTf5tTIyT9QfAlP9-icjn3jMaEbkLMf",
+            .url = "git+https://github.com/rockorager/libvaxis.git#f3b69d1dad36bb644972a6a08639ab2eb2b98178",
+            .hash = "vaxis-0.6.0-BWNV_PXUCQA7KBuY_oWB6Tsm4rcbr4NsfG9p5PledmOJ",
         },
         .zeit = .{
             .url = "git+https://github.com/andrewrk/zeit?ref=0.16#ec2953277276acd1d938490a8000782482142d12",
