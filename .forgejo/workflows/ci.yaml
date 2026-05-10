@@ -7,7 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  test:
+    name: Tests
     runs-on: x86_64-linux
     steps:
       - uses: actions/checkout@v2
@@ -17,5 +18,31 @@ jobs:
       - name: Setup Zig
         uses: https://codeberg.org/mlugg/setup-zig@v2
 
-      - name: Build for all targets and run tests
-        run: zig build ci --summary new
+      - name: Run native tests
+        run: zig build test --summary new
+
+  build:
+    name: Build ${{ matrix.target }} (dummy=${{ matrix.dummy }})
+    runs-on: x86_64-linux
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-macos
+          - x86_64-macos
+          - aarch64-linux
+          - x86_64-linux
+          - x86_64-windows
+        dummy:
+          - false
+          - true
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      - name: Setup Zig
+        uses: https://codeberg.org/mlugg/setup-zig@v2
+
+      - name: Build target
+        run: zig build -Dtarget=${{ matrix.target }} -Ddummy=${{ matrix.dummy }} --summary new
