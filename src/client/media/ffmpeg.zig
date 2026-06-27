@@ -7,19 +7,7 @@ const media = awebo.protocol.media;
 const log = std.log.scoped(.@"ffmpeg-decoder");
 const VideoStream = @import("VideoStream.zig");
 
-pub const c = @cImport({
-    @cInclude("libavcodec/avcodec.h");
-    @cInclude("libavutil/avutil.h");
-    // @cInclude("libavutil/frame.h");
-    // @cInclude("libavutil/mem.h");
-    // @cInclude("libavutil/error.h");
-    @cInclude("libavutil/pixdesc.h");
-    @cInclude("errno.h");
-
-    // if (builtin.os.tag == .macos) {
-    //     @cInclude("VideoToolbox/VideoToolbox.h");
-    // }
-});
+pub const ffmprg = @import("ffmpeg");
 
 /// Concrete codec implementation being used in a video stream.
 pub const Codec = struct {

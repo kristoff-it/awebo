@@ -1,6 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const zon = @import("build.zig.zon");
+const Translator = @import("translate_c").Translator;
 
 const Context = enum { client, server };
 
@@ -137,6 +138,12 @@ pub fn setupServer(
     server.root_module.addImport("zeit", zeit.module("zeit"));
     addSqlite(server, zqlite, .server);
 
+    if (target.result.os.tag == .macos) {
+        const translate_c = b.dependency("translate_c", .{});
+        const xcode_frameworks = b.dependency("xcode_frameworks", .{});
+        addMachThread(b, server.root_module, target, optimize, translate_c, xcode_frameworks);
+    }
+
     const server_test = b.addTest(.{
         .name = "server-test",
         .root_module = server.root_module,
@@ -203,6 +210,21 @@ pub fn setupGui(
         .optimize = dep_optimize,
     });
 
+    // const ffmpeg_c = b.addWriteFiles().add("ffmpeg.h",
+    //     \\#include <libavcodec/avcodec.h>
+    //     \\#include <libavutil/avutil.h>
+    //     \\#include <libavutil/pixdesc.h>
+    //     \\#include <errno.h">
+    //     \\
+    // );
+    // const translate_c_dep = b.dependency("translate_c", .{});
+    // const t: Translator = .init(translate_c_dep, .{
+    //     .name = "ffmpeg_c",
+    //     .c_source_file = ffmpeg_c,
+    //     .target = target,
+    //     .optimize = optimize,
+    // });
+
     const ffmpeg = b.dependency("ffmpeg", .{
         .target = target,
         .optimize = dep_optimize,
@@ -222,8 +244,8 @@ pub fn setupGui(
 
     // Link against system ffmpeg
     gui.root_module.linkLibrary(ffmpeg.artifact("ffmpeg"));
-    // gui.root_module.linkSystemLibrary("avutil", .{ .needed = true });
-    // gui.root_module.linkSystemLibrary("avcodec", .{ .needed = true });
+    // gui.root_module.addImport("ffmpeg_c", t.mod);
+    // gui.root_module.linkSystemLibrary("avutil", .{ .needed = t    gui.root_module.addImport("ffmpeg_c", ffmpeg.module("ffmpeg_c"));  , .{ .needed = true });
     addSqlite(gui, zqlite, .client);
 
     switch (target.result.os.tag) {
@@ -265,6 +287,7 @@ pub fn setupGui(
                     if (optimize == .Debug) "-DDEBUG" else "-DNDEBUG",
                 },
             });
+            addMachThread(b, gui.root_module, target, optimize, b.dependency("translate_c", .{}), xcode_frameworks);
         },
         .windows => {
             const dvui = b.dependency("dvui", .{
@@ -417,6 +440,7 @@ pub fn setupTui(
                     if (optimize == .Debug) "-DDEBUG" else "-DNODEBUG",
                 },
             });
+            addMachThread(b, tui.root_module, target, optimize, b.dependency("translate_c", .{}), xcode_frameworks);
         },
         .windows => {
             if (b.lazyDependency("zigwin32", .{})) |win32_dep| {
@@ -474,6 +498,35 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.O
         step.dependOn(&dummy_gui_test.step);
         step.dependOn(&dummy_tui_test.step);
     }
+}
+
+fn addMachThread(
+    b: *std.Build,
+    module: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    translate_c_dep: *std.Build.Dependency,
+    xcode_frameworks_dep: ?*std.Build.Dependency,
+) void {
+    const stub = b.addWriteFiles().add("mach_thread.h",
+        \\#include <mach/kern_return.h>
+        \\#include <mach/boolean.h>
+        \\#include <mach/thread_policy.h>
+        \\#include <mach/thread_act.h>
+        \\#include <mach/mach_time.h>
+        \\#include <pthread.h>
+        \\
+    );
+    const t: Translator = .init(translate_c_dep, .{
+        .name = "mach_thread",
+        .c_source_file = stub,
+        .target = target,
+        .optimize = optimize,
+    });
+    if (xcode_frameworks_dep) |xcf| {
+        t.addSystemIncludePath(xcf.path("include"));
+    }
+    module.addImport("mach_thread", t.mod);
 }
 
 fn addSqlite(

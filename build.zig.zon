@@ -2,15 +2,15 @@
     .name = .awebo,
     .version = "0.0.1",
     .fingerprint = 0x50424de2ba07ebcc,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0-dev.978+a078d55a2",
     .dependencies = .{
         .miniaudio = .{
             .url = "git+https://codeberg.org/allyourcodebase/miniaudio.git#9907be968cf9f31bdcd4c0dcdd8e91ffdf585441",
             .hash = "miniaudio-0.11.25-LWmAGwwgAAAdQQ-kMRYz0yW-p-KQkFKDSZI3RlC1YWN8",
         },
         .dvui = .{
-            .url = "git+https://github.com/david-vanderson/dvui.git#b5ea62896c973daa2c88fc9253706cb14c5165df",
-            .hash = "dvui-0.5.0-dev-AQFJmawN3wBxRm7gkeXDz2ujtz-groENWKb6OI4_nXR8",
+            .url = "git+https://github.com/david-vanderson/dvui.git#7e2505c894812bb986f0c0460ad6320db07d68c4",
+            .hash = "dvui-0.5.0-dev-AQFJme9C9wBsNo_TxYcFuE7Ri1aXdet8-sjLmAxgcFq_",
         },
         .pulseaudio = .{
             .url = "https://github.com/andrewrk/pulseaudio/archive/909a2ceebcc4efe74418107c279ac239f28e0f61.tar.gz",
@@ -39,8 +39,8 @@
             .hash = "vaxis-0.6.0-BWNV_PXUCQA7KBuY_oWB6Tsm4rcbr4NsfG9p5PledmOJ",
         },
         .zeit = .{
-            .url = "git+https://github.com/andrewrk/zeit?ref=0.16#ec2953277276acd1d938490a8000782482142d12",
-            .hash = "zeit-0.6.0-5I6bk2i6AgDYOczMsuuKcM7NYuOoTtxWEsZDsg8kSTiv",
+            .url = "git+https://github.com/rockorager/zeit#ed64c36035fe44d6372c20cbcd447b0090687167",
+            .hash = "zeit-0.10.0-dev-5I6bk4i0AgANIwpoMN_iBL-OGEpyDuInvQLfrPe_FVb1",
         },
         .xcode_frameworks = .{
             .url = "git+https://codeberg.org/brodo/xcode-frameworks.git#82eab3c21a3dcdda650f7efa5fc20443b60025d3",
@@ -51,8 +51,12 @@
             .hash = "rnnoise-0.0.1-7NNaDM0ZAADfSsZGIDOivUsJ9D3ZTVUAKhEeKA5rkyeU",
         },
         .ffmpeg = .{
-            .url = "git+https://github.com/allyourcodebase/ffmpeg#b896c2c6eb8c39286c0ec516d67c2524a90c9efd",
-            .hash = "ffmpeg-7.0.1-10-zT7QAyaLCAQsc93Y8RSff4USPYdy4Q6ycPvKUyd0V-O7",
+            .url = "git+https://github.com/allyourcodebase/ffmpeg.git#bbff850a470cc083b29e148b603020a7c07eb31e",
+            .hash = "ffmpeg-8.1.1-1-zT7QA5XfUQTZ7q5v9HCDQCGdXMMKuPAB-6Mp7n8Tj3Js",
+        },
+        .translate_c = .{
+            .url = "git+https://codeberg.org/ziglang/translate-c?ref=zig-0.16.x#42f630117deffd5318b4a6ceffbd366dd0af8cee",
+            .hash = "translate_c-1.0.0-Q_BUWo75BgBmrtWsRz9QVUZlzvsSUUe_IIXD9vmWguhX",
         },
     },
     .paths = .{

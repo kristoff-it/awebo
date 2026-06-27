@@ -96,17 +96,12 @@ pub const network_utils = struct {
                 std.log.err("TODO: implement thread realtime scheduling for windows", .{});
             },
             .macos => {
-                const c = @cImport({
-                    @cInclude("mach/mach.h");
-                    @cInclude("mach/thread_policy.h");
-                    @cInclude("mach/mach_time.h");
-                    @cInclude("pthread.h");
-                });
+                const mach = @import("mach_thread");
 
-                const thread = c.pthread_self();
+                const thread = mach.pthread_self();
 
-                var timebase: c.mach_timebase_info_data_t = undefined;
-                if (c.mach_timebase_info(&timebase) != c.KERN_SUCCESS) {
+                var timebase: mach.mach_timebase_info_data_t = undefined;
+                if (mach.mach_timebase_info(&timebase) != mach.KERN_SUCCESS) {
                     std.log.err("unable to read mach timebase", .{});
                     return;
                 }
@@ -121,23 +116,23 @@ pub const network_utils = struct {
                 const computation_ns = period_ns * 2 / 10; // estimate: 20% of period needed
                 const constraint_ns = period_ns * 3 / 10; // must finish within 30% of period
 
-                var policy = c.thread_time_constraint_policy_data_t{
+                var policy = mach.thread_time_constraint_policy_data_t{
                     .period = ns_to_abs(period_ns, timebase.denom, timebase.numer),
                     .computation = ns_to_abs(computation_ns, timebase.denom, timebase.numer),
                     .constraint = ns_to_abs(constraint_ns, timebase.denom, timebase.numer),
-                    .preemptible = c.TRUE,
+                    .preemptible = mach.TRUE,
                 };
 
-                const mach_thread = c.pthread_mach_thread_np(thread);
+                const mach_thread = mach.pthread_mach_thread_np(thread);
 
-                const kr = c.thread_policy_set(
+                const kr = mach.thread_policy_set(
                     mach_thread,
-                    c.THREAD_TIME_CONSTRAINT_POLICY,
+                    mach.THREAD_TIME_CONSTRAINT_POLICY,
                     @ptrCast(&policy),
-                    c.THREAD_TIME_CONSTRAINT_POLICY_COUNT,
+                    mach.THREAD_TIME_CONSTRAINT_POLICY_COUNT,
                 );
 
-                if (kr != c.KERN_SUCCESS) {
+                if (kr != mach.KERN_SUCCESS) {
                     std.log.err("unable to set realtime policy for the network thread", .{});
                     return;
                 }
