@@ -46,7 +46,7 @@ pub fn sidebar(s: *Settings) void {
     );
     defer menu.deinit();
 
-    inline for (comptime std.meta.fields(Pages), 0..) |p, idx| {
+    inline for (comptime std.meta.fieldNames(Pages), 0..) |p_name, idx| {
         const item = dvui.menuItem(@src(), .{}, .{
             .gravity_x = 0,
             .id_extra = idx,
@@ -54,7 +54,7 @@ pub fn sidebar(s: *Settings) void {
         });
         defer item.deinit();
 
-        const pp: std.meta.FieldEnum(Pages) = @enumFromInt(idx);
+        const pp: std.meta.FieldEnum(Pages) = @fromBackingInt(@intCast(idx));
 
         if (item.activated) {
             if (s.active_page != pp) {
@@ -69,7 +69,7 @@ pub fn sidebar(s: *Settings) void {
             // try item.drawBackground(.{});
         }
 
-        dvui.labelNoFmt(@src(), @FieldType(Pages, p.name).menu_name, .{}, .{
+        dvui.labelNoFmt(@src(), @FieldType(Pages, p_name).menu_name, .{}, .{
             .font = dvui.Font.theme(.title).larger(2),
             .id_extra = idx,
         });

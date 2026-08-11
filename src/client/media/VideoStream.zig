@@ -431,7 +431,7 @@ const JitterBuffer = struct {
             };
 
             // log.debug("video chunk: {} len: {}", .{ video_header, video_data.len });
-            errdefer |err| log.debug("video stream packet ring returning with error: {t}", .{err});
+            // errdefer |err| log.debug("video stream packet ring returning with error: {t}", .{err});
 
             const empty_slices = pb.emptySlices();
 

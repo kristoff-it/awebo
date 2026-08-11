@@ -58,7 +58,7 @@ pub fn init() WebcamCapture {
 }
 
 pub fn deinit(wc: *WebcamCapture) void {
-    if (builtin.mode != .Debug) return;
+    if (builtin.mode != .debug) return;
 
     // Must be done first to ensure objc stops messing with our data
     wc.os.deinit();

@@ -59,7 +59,7 @@ export fn errLog(_: *anyopaque, error_code: c_int, msg: [*:0]const u8) void {
 }
 
 pub fn init(db_path: [:0]const u8, mode: Mode) Database {
-    if (builtin.mode == .Debug) {
+    if (builtin.mode == .debug) {
         _ = zqlite.c.sqlite3_config(zqlite.c.SQLITE_CONFIG_LOG, &errLog, &errLog);
     }
 
@@ -69,7 +69,7 @@ pub fn init(db_path: [:0]const u8, mode: Mode) Database {
     //     std.debug.print(@TypeOf(q.select_latest_id).sql, .{});
     // }
 
-    var conn = zqlite.open(db_path, @intFromEnum(mode) | zqlite.OpenFlags.EXResCode) catch |err| {
+    var conn = zqlite.open(db_path, @backingInt(mode) | zqlite.OpenFlags.EXResCode) catch |err| {
         switch (mode) {
             .create => std.debug.print("error while creating database file: {s}\n", .{@errorName(err)}),
             else => std.debug.print("error while loading database file: {s}\n", .{@errorName(err)}),
@@ -111,11 +111,12 @@ pub fn initTables(db: Database) void {
 /// Queries should be deinited when disconnecting from the database.
 pub fn initQueries(db: Database, Queries: type) Queries {
     var qs: Queries = undefined;
-    inline for (@typeInfo(Queries).@"struct".fields) |f| {
-        @field(qs, f.name) = f.type.init(db) catch {
+    const struct_info = @typeInfo(Queries).@"struct";
+    inline for (struct_info.field_names, struct_info.field_types) |f_name, f_type| {
+        @field(qs, f_name) = f_type.init(db) catch {
             log.err("Error caused by {s}, query name: {s}", .{
                 @typeName(Queries),
-                f.name,
+                f_name,
             });
             db.fatal(@src());
         };
@@ -125,8 +126,8 @@ pub fn initQueries(db: Database, Queries: type) Queries {
 
 pub inline fn deinitQueries(db: Database, Queries: type, qs: *const Queries) void {
     _ = db;
-    inline for (@typeInfo(Queries).@"struct".fields) |f| {
-        @field(qs, f.name).deinit();
+    inline for (@typeInfo(Queries).@"struct".field_names) |f_name| {
+        @field(qs, f_name).deinit();
     }
 }
 
@@ -239,7 +240,7 @@ pub fn fatal(db: Database, src: std.builtin.SourceLocation) noreturn {
 
 fn fatalErr(err: anyerror) noreturn {
     log.err("fatal error: {t}", .{err});
-    if (builtin.mode == .Debug) @breakpoint();
+    if (builtin.mode == .debug) @breakpoint();
     std.process.exit(1);
 }
 
@@ -322,7 +323,7 @@ pub fn Query(sql_query: [:0]const u8, config: QueryConfig) type {
 
             const C = ColType(col);
             if (C == void) @compileError("unsupported");
-            return r.coerce(C, @intFromEnum(col));
+            return r.coerce(C, @backingInt(col));
         }
 
         pub fn run(
@@ -356,35 +357,36 @@ pub fn Query(sql_query: [:0]const u8, config: QueryConfig) type {
 
         fn bind(stmt: zqlite.Stmt, db: Database, args: config.args) void {
             stmt.reset() catch db.fatal(@src());
-            inline for (@typeInfo(config.args).@"struct".fields, 0..) |f, idx| {
-                if (f.type == AnyArg) {
-                    switch (@field(args, f.name)) {
+            const info = @typeInfo(config.args).@"struct";
+            inline for (info.field_names, info.field_types, 0..) |f_name, f_type, idx| {
+                if (f_type == AnyArg) {
+                    switch (@field(args, f_name)) {
                         inline else => |v| stmt.bindValue(v, idx) catch db.fatal(@src()),
                     }
-                } else switch (@typeInfo(f.type)) {
+                } else switch (@typeInfo(f_type)) {
                     .@"struct" => |struct_info| {
                         assert(struct_info.layout == .@"packed");
-                        const value: struct_info.backing_integer.? = @bitCast(@field(args, f.name));
+                        const value: struct_info.backing_integer.? = @bitCast(@field(args, f_name));
                         stmt.bindValue(@as(u64, value), idx);
                     },
                     .@"enum" => {
-                        const value: u64 = @intFromEnum(@field(args, f.name));
+                        const value: u64 = @backingInt(@field(args, f_name));
                         stmt.bindValue(value, idx) catch db.fatal(@src());
                     },
                     .optional => |opt| switch (@typeInfo(opt.child)) {
                         .@"enum" => {
-                            if (@field(args, f.name)) |v| {
-                                const value: u64 = @intFromEnum(v);
+                            if (@field(args, f_name)) |v| {
+                                const value: u64 = @backingInt(v);
                                 stmt.bindValue(value, idx) catch db.fatal(@src());
                             } else {
                                 stmt.bindValue(null, idx) catch db.fatal(@src());
                             }
                         },
                         else => {
-                            stmt.bindValue(@field(args, f.name), idx) catch db.fatal(@src());
+                            stmt.bindValue(@field(args, f_name), idx) catch db.fatal(@src());
                         },
                     },
-                    else => stmt.bindValue(@field(args, f.name), idx) catch db.fatal(@src()),
+                    else => stmt.bindValue(@field(args, f_name), idx) catch db.fatal(@src()),
                 }
             }
         }
@@ -412,7 +414,7 @@ pub fn Rows(config: QueryConfig) type {
                 if (C == void) {
                     @compileError("column doesn't specify type, use .getAs()");
                 }
-                return r.coerce(C, @intFromEnum(col));
+                return r.coerce(C, @backingInt(col));
             }
 
             pub fn getAs(r: Row, T: type, comptime col: std.meta.FieldEnum(config.cols)) T {
@@ -420,7 +422,7 @@ pub fn Rows(config: QueryConfig) type {
                 if (C != void) {
                     @compileError("column has a specified type, use .get()");
                 }
-                return r.coerce(T, @intFromEnum(col));
+                return r.coerce(T, @backingInt(col));
             }
 
             fn coerce(r: Row, T: type, idx: usize) T {
@@ -436,11 +438,11 @@ pub fn Rows(config: QueryConfig) type {
                     ?bool => return r.row.nullableBoolean(idx),
                     else => switch (@typeInfo(T)) {
                         .@"enum" => {
-                            return @enumFromInt(r.row.int(idx));
+                            return @fromBackingInt(@intCast(r.row.int(idx)));
                         },
                         .optional => |opt| switch (@typeInfo(opt.child)) {
                             .@"enum" => {
-                                return @enumFromInt(r.row.nullableInt(idx) orelse return null);
+                                return @fromBackingInt(@intCast(r.row.nullableInt(idx) orelse return null));
                             },
                             else => @compileError("type " ++ @typeName(T) ++ " not supported"),
                         },
@@ -451,11 +453,11 @@ pub fn Rows(config: QueryConfig) type {
 
             /// Dupes the resulting value, use `textNoDupe` to avoid duping.
             pub fn text(r: Row, gpa: Allocator, col: std.meta.FieldEnum(config.cols)) ![]const u8 {
-                return gpa.dupe(u8, r.row.text(@intFromEnum(col)));
+                return gpa.dupe(u8, r.row.text(@backingInt(col)));
             }
 
             pub fn textNoDupe(r: Row, col: std.meta.FieldEnum(config.cols)) []const u8 {
-                return r.row.text(@intFromEnum(col));
+                return r.row.text(@backingInt(col));
             }
 
             fn ColType(col: std.meta.FieldEnum(config.cols)) type {

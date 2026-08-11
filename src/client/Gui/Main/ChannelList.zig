@@ -16,9 +16,9 @@ show_new_chat: bool = false,
 pending_new_chat: ?*Core.ui.ChannelCreate = null,
 show_deny_popup: bool = false,
 show_requesting_popup: bool = false,
-debug: Debug = if (builtin.mode != .Debug) {} else .{},
+debug: Debug = if (builtin.mode != .debug) {} else .{},
 
-const Debug = if (builtin.mode != .Debug) void else struct {
+const Debug = if (builtin.mode != .debug) void else struct {
     window: bool = false,
     playback: bool = false,
     webcam: bool = false,
@@ -158,7 +158,7 @@ pub fn newChatFloatingWindow(cl: *ChannelList, core: *Core, h: *awebo.Host) !voi
     const clicked = dvui.button(@src(), "Create", .{}, .{
         .gravity_x = 1,
         .margin = .{ .x = 0, .y = 4, .w = 4, .h = 4 },
-        .corner_radius = .{ .x = 0, .y = 5, .w = 5, .h = 0 },
+        // .corner_radius = .{ .x = 0, .y = 5, .w = 5, .h = 0 },
         .background = true,
         .border = dvui.Rect.all(1),
         .expand = .vertical,
@@ -167,7 +167,7 @@ pub fn newChatFloatingWindow(cl: *ChannelList, core: *Core, h: *awebo.Host) !voi
     var in = dvui.textEntry(@src(), .{}, .{
         .expand = .horizontal,
         .margin = .{ .x = 4, .y = 4, .w = 0, .h = 4 },
-        .corner_radius = .{ .x = 5, .y = 0, .w = 0, .h = 5 },
+        // .corner_radius = .{ .x = 5, .y = 0, .w = 0, .h = 5 },
         // .color_fill = .{ .name = .fill_window },
     });
     defer in.deinit();

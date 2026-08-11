@@ -9,7 +9,7 @@ const Core = @import("../../Core.zig");
 texture: ?dvui.Texture = null,
 
 pub fn draw(sb: *ScreenshareBox, core: *Core, source: enum { webcam, screen }) !void {
-    const extra = @intFromEnum(source);
+    const extra = @backingInt(source);
 
     const id = dvui.Id.extendId(null, @src(), extra);
     const millis_per_frame = std.time.ms_per_s / 60;
@@ -59,10 +59,12 @@ pub fn draw(sb: *ScreenshareBox, core: *Core, source: enum { webcam, screen }) !
             } else {
                 sb.texture = try backend.textureCreate(
                     @ptrCast(planes),
-                    @intCast(width),
-                    @intCast(height),
-                    .nearest,
-                    if (img == .bgra) .bgra_32 else .fourcc_yv12,
+                    .{
+                        .width = @intCast(width),
+                        .height = @intCast(height),
+                        .interpolation = .nearest,
+                        .format = if (img == .bgra) .bgra_32 else .fourcc_yv12,
+                    },
                 );
             }
         }

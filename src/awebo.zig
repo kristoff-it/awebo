@@ -34,7 +34,7 @@ pub const Date = enum(u32) {
     _,
 
     pub fn init(ts: Io.Timestamp, server_epoch: i64) Date {
-        return @enumFromInt(ts.toSeconds() - server_epoch);
+        return @fromBackingInt(@intCast(ts.toSeconds() - server_epoch));
     }
 
     pub fn now(io: Io, server_epoch: i64) Date {
@@ -59,7 +59,7 @@ pub const Date = enum(u32) {
 
     /// For debugging, see Date.fmt() for pretty printing.
     pub fn format(d: Date, w: *Io.Writer) !void {
-        try w.print("Date({})", .{@intFromEnum(d)});
+        try w.print("Date({})", .{@backingInt(d)});
     }
 
     pub const Formatter = struct {
@@ -69,12 +69,9 @@ pub const Date = enum(u32) {
         gofmt: []const u8 = "Jan 2 15:04:05 2006",
 
         pub fn format(f: Formatter, w: *Io.Writer) !void {
-            const instant = zeit.instant(undefined, .{
-                .source = .{
-                    .unix_timestamp = f.server_epoch + @intFromEnum(f.date),
-                },
-                .timezone = f.tz,
-            }) catch unreachable;
+            const instant = zeit.instant(.{
+                .unix_timestamp = f.server_epoch + @backingInt(f.date),
+            }, f.tz);
             const time = instant.time();
             time.gofmt(w, f.gofmt) catch return error.WriteFailed;
         }
@@ -96,12 +93,7 @@ pub const network_utils = struct {
                 std.log.err("TODO: implement thread realtime scheduling for windows", .{});
             },
             .macos => {
-                const c = @cImport({
-                    @cInclude("mach/mach.h");
-                    @cInclude("mach/thread_policy.h");
-                    @cInclude("mach/mach_time.h");
-                    @cInclude("pthread.h");
-                });
+                const c = @import("c");
 
                 const thread = c.pthread_self();
 
@@ -278,8 +270,8 @@ pub const network_utils = struct {
             .NODEV => return error.NoDevice,
             .OPNOTSUPP => return error.OperationUnsupported,
             else => |err| {
-                if (builtin.mode == .Debug) {
-                    std.debug.print("unexpected errno: {d}\n", .{@intFromEnum(err)});
+                if (builtin.mode == .debug) {
+                    std.debug.print("unexpected errno: {d}\n", .{@backingInt(err)});
                     std.debug.dumpCurrentStackTrace(.{});
                 }
                 return error.Unexpected;

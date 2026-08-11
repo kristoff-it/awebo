@@ -2,15 +2,15 @@
     .name = .awebo,
     .version = "0.0.1",
     .fingerprint = 0x50424de2ba07ebcc,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0-dev.1640+2597da025",
     .dependencies = .{
         .miniaudio = .{
             .url = "git+https://codeberg.org/allyourcodebase/miniaudio.git#9907be968cf9f31bdcd4c0dcdd8e91ffdf585441",
             .hash = "miniaudio-0.11.25-LWmAGwwgAAAdQQ-kMRYz0yW-p-KQkFKDSZI3RlC1YWN8",
         },
         .dvui = .{
-            .url = "git+https://github.com/david-vanderson/dvui.git#b5ea62896c973daa2c88fc9253706cb14c5165df",
-            .hash = "dvui-0.5.0-dev-AQFJmawN3wBxRm7gkeXDz2ujtz-groENWKb6OI4_nXR8",
+            .url = "git+https://github.com/Yinameah/dvui?ref=0.17-compat#121aded41a517f3bb59bbd9d910d7194840f1e9c",
+            .hash = "dvui-0.6.0-dev-AQFJmV__AAGRspuPRs9ujPWhOnMjPFqca00l51JRJIRn",
         },
         .pulseaudio = .{
             .url = "https://github.com/andrewrk/pulseaudio/archive/909a2ceebcc4efe74418107c279ac239f28e0f61.tar.gz",
@@ -18,12 +18,12 @@
             .lazy = true,
         },
         .opus = .{
-            .url = "git+https://github.com/allyourcodebase/opus.git#bf3035fccc0864b70b6692a7e04555766dda3d60",
-            .hash = "opus-0.0.2-vuF-cFOQAABTWWMmx9jCwILGibts9ZOg_bCGGIHSXKKL",
+            .url = "git+https://github.com/allyourcodebase/opus?ref=0.17-dev#c9353d73660a87791070522002eb93800f4ebf00",
+            .hash = "opus-0.0.2-vuF-cNCSAABZ7Qzji7OBdm9wMu47lITqjUdTgBnzUCdK",
         },
         .zqlite = .{
-            .url = "git+https://github.com/karlseguin/zqlite.zig.git#5ac4cabe95a6d7faa7baf0da8057a8e6e8a227a1",
-            .hash = "zqlite-0.0.1-RWLaY64xnAAxsD2YNT8QqPMJUuaFv2GOzFRR4aGypJv3",
+            .url = "git+https://github.com/kristoff-it/zqlite.zig.git?ref=0.17.x#4ca08b74ea8b8ba38dc5eb67abec469badd5b6dc",
+            .hash = "zqlite-0.0.1-RWLaYwc9nAAYogXJ0nTDWMdl3uSsqHG6w0_XHUtB9HV0",
         },
         .zigwin32 = .{
             .url = "git+https://github.com/kristoff-it/zigwin32.git?ref=fix/zig16#1102e9b82e8bd50913b6a78035bfb399ebd8cf97",
@@ -31,28 +31,32 @@
             .lazy = true,
         },
         .known_folders = .{
-            .url = "git+https://github.com/andrewrk/known-folders#060fedb7a1253098ca39ed6cb929924c6a2528b1",
-            .hash = "known_folders-0.0.0-Fy-PJiXKAACLbIUjxVqJRTSLc6HNnMkCSBnC5LW0Lx_v",
+            .url = "git+https://github.com/ziglibs/known-folders#6da0d0c41b78b9ed2d34fa364fcb81b5ebece6c4",
+            .hash = "known_folders-0.0.0-Fy-PJiDLAAB98m3uYUzatrTb2mO2fpvwx2zpSroEtfbO",
         },
-        .vaxis = .{
-            .url = "git+https://github.com/rockorager/libvaxis.git#f3b69d1dad36bb644972a6a08639ab2eb2b98178",
-            .hash = "vaxis-0.6.0-BWNV_PXUCQA7KBuY_oWB6Tsm4rcbr4NsfG9p5PledmOJ",
-        },
+        // .vaxis = .{
+        //     .url = "git+https://github.com/rockorager/libvaxis#82cec0db8fc57c32f2ce4c1c3fc377052f4c86ba",
+        //     .hash = "vaxis-0.6.0-BWNV_KwYCgB-L5MNRY8I8HGbKDE6KOxDPAVSaZ8-3lJ8",
+        // },
         .zeit = .{
-            .url = "git+https://github.com/andrewrk/zeit?ref=0.16#ec2953277276acd1d938490a8000782482142d12",
-            .hash = "zeit-0.6.0-5I6bk2i6AgDYOczMsuuKcM7NYuOoTtxWEsZDsg8kSTiv",
+            .url = "git+https://github.com/rockorager/zeit#ed64c36035fe44d6372c20cbcd447b0090687167",
+            .hash = "zeit-0.10.0-dev-5I6bk4i0AgANIwpoMN_iBL-OGEpyDuInvQLfrPe_FVb1",
         },
         .xcode_frameworks = .{
             .url = "git+https://codeberg.org/brodo/xcode-frameworks.git#82eab3c21a3dcdda650f7efa5fc20443b60025d3",
             .hash = "xcode_frameworks-0.0.0-VCh8gjFEqxH5LL-77V2VU4w314bCOzPE65_-WVNyD-52",
         },
         .rnnoise = .{
-            .url = "git+https://github.com/allyourcodebase/rnnoise.git#80986ae254b1ac60a222edd94e0f44efd541d33e",
-            .hash = "rnnoise-0.0.1-7NNaDM0ZAADfSsZGIDOivUsJ9D3ZTVUAKhEeKA5rkyeU",
+            .url = "git+https://github.com/allyourcodebase/rnnoise#47db9c212d7e9e7b4d5f0329569ed7fcc4eb9085",
+            .hash = "rnnoise-0.0.1-7NNaDOAZAACgbO86yoLlnsJvt5r-kgZYbyJFiYyGoxKs",
         },
         .ffmpeg = .{
-            .url = "git+https://github.com/allyourcodebase/ffmpeg#b896c2c6eb8c39286c0ec516d67c2524a90c9efd",
-            .hash = "ffmpeg-7.0.1-10-zT7QAyaLCAQsc93Y8RSff4USPYdy4Q6ycPvKUyd0V-O7",
+            .url = "git+https://github.com/allyourcodebase/ffmpeg#9ea6a594390380900f46fa89628934194f979a9a",
+            .hash = "ffmpeg-8.1.1-5-zT7QA_DkUQRwO2hxIQpPizeSEup1zwQcuKVEIH2WlUEX",
+        },
+        .translate_c = .{
+            .url = "git+https://codeberg.org/ziglang/translate-c#32dde9bff199152a6cc4ddc77e0e79cc9a3e57fc",
+            .hash = "translate_c-0.0.0-Q_BUWhc9BwBtLC-dx8AuZH4hp4edEh90v2mqRBxjr3gW",
         },
     },
     .paths = .{

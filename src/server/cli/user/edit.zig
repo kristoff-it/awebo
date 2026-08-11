@@ -125,7 +125,7 @@ const Command = struct {
         }
 
         const cmd: Command = .{
-            .user_id = @enumFromInt(user_id),
+            .user_id = @fromBackingInt(@intCast(user_id)),
             .handle = handle,
             .password = password,
             .display_name = display_name,
@@ -133,8 +133,8 @@ const Command = struct {
         };
 
         // at least one user editing argument must be specified
-        inline for (@typeInfo(Command).@"struct".fields[2..]) |f| {
-            if (@field(cmd, f.name) != null) return cmd;
+        inline for (@typeInfo(Command).@"struct".field_names[2..]) |f_name| {
+            if (@field(cmd, f_name) != null) return cmd;
         }
 
         cli.fatal("at least one user editing argument must be specified", .{});

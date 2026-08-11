@@ -26,7 +26,7 @@ pub const Queries = struct {
         \\  (?2, NULL, 0, 'Second Chat Channel', 0, {0}),
         \\  (?3, NULL, 0, 'Default Voice Channel', 1, {0})
         \\;
-    , .{@intFromEnum(awebo.Channel.Privacy.private)}), .{
+    , .{@backingInt(awebo.Channel.Privacy.private)}), .{
         .kind = .exec,
         .args = struct { u64, u64, u64 },
     }),
@@ -65,7 +65,7 @@ fn seed(
         .created = 0,
         .update_uid = id.new(),
         .handle = cmd.owner.handle,
-        .invited_by = @enumFromInt(1),
+        .invited_by = @fromBackingInt(@intCast(1)),
         .power = .owner,
         .display_name = "Admin",
     });
@@ -79,7 +79,7 @@ fn seed(
         .created = 0,
         .update_uid = id.new(),
         .handle = "user",
-        .invited_by = @enumFromInt(1),
+        .invited_by = @fromBackingInt(@intCast(1)),
         .power = .user,
         .display_name = "Other User",
     });
@@ -120,10 +120,10 @@ fn seed(
         .epoch = epoch.toSeconds(),
     };
 
-    inline for (std.meta.fields(Settings)) |f| {
+    inline for (comptime std.meta.fieldNames(Settings)) |f_name| {
         qs.insert_host_kv.run(@src(), db, .{
-            .key = f.name,
-            .value = .init(@field(settings, f.name)),
+            .key = f_name,
+            .value = .init(@field(settings, f_name)),
         });
     }
 
@@ -333,7 +333,7 @@ pub fn migrateSchema(gpa: Allocator, conn: zqlite.Conn) !void {
     log.debug("creating pristine", .{});
     const pristine: awebo.Database = try .init(
         ":memory:",
-        @intFromEnum(Database.Mode.create) | zqlite.OpenFlags.EXResCode,
+        @backingInt(Database.Mode.create) | zqlite.OpenFlags.EXResCode,
     );
     defer pristine.close();
 
@@ -576,7 +576,7 @@ fn exitHelp(status: u8) noreturn {
 
 pub fn fatalDb(conn: zqlite.Conn, src: std.builtin.SourceLocation) noreturn {
     log.err("{s}:{}: fatal db error: {s}", .{ src.file, src.line, conn.lastError() });
-    if (builtin.mode == .Debug) @breakpoint();
+    if (builtin.mode == .debug) @breakpoint();
     std.process.exit(1);
 }
 

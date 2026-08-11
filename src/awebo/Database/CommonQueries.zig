@@ -36,8 +36,9 @@ select_max_uid: Query(blk: {
     var query: [:0]const u8 = "SELECT MAX(value) as max_uid \nFROM (\n";
 
     var first = true;
-    for (@typeInfo(awebo.Database.tables).@"struct".decls) |decl| {
-        const table = @field(awebo.Database.tables, decl.name);
+    const struct_info = @typeInfo(awebo.Database.tables).@"struct";
+    for (struct_info.decl_names) |decl_name| {
+        const table = @field(awebo.Database.tables, decl_name);
         if (@TypeOf(table) != awebo.Database.tables.Table) continue;
         if (table.context) |ctx| if (context != ctx) continue;
 
@@ -56,7 +57,7 @@ select_max_uid: Query(blk: {
                     "    UNION ALL\n") ++
                     \\    SELECT MAX({s}) as value FROM {s}
                     \\
-                , .{ col_name, decl.name });
+                , .{ col_name, decl_name });
                 first = false;
             }
         }

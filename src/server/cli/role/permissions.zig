@@ -16,9 +16,10 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
     }
 
     std.debug.print("-- server-level permissions --\n\n", .{});
-    inline for (@typeInfo(awebo.permissions.Server).@"struct".fields) |f| {
-        std.debug.print("- {s}, default: {any} ({s})\n", .{ f.name, f.defaultValue().?, @typeName(f.type) });
-        const desc = @field(awebo.permissions.Server.descriptions, f.name);
+    const info = @typeInfo(awebo.permissions.Server).@"struct";
+    inline for (info.field_names) |f_name| {
+        // std.debug.print("- {s}, default: {any} ({s})\n", .{ f_name, f_meta.defaultValue().?, @typeName(f_type) });
+        const desc = @field(awebo.permissions.Server.descriptions, f_name);
         var line_it = std.mem.tokenizeScalar(u8, desc, '\n');
         while (line_it.next()) |line| {
             std.debug.print("\t{s}\n", .{line});

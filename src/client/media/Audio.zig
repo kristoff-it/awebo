@@ -63,7 +63,7 @@ pub const Packet = struct {
 
 /// Os interface
 const OsInterface = if (options.dummy) DummyInterface else switch (builtin.target.os.tag) {
-    .macos => MacOsInterface,
+    // .macos => MacOsInterface,
     else => MiniAudioInterface,
 };
 
@@ -283,7 +283,7 @@ pub fn init(audio: *Audio, capture_buf: []f32, playback_bufs: [2][]f32) void {
 }
 
 pub fn deinit(audio: *Audio) void {
-    if (builtin.mode != .Debug) return;
+    if (builtin.mode != .debug) return;
 
     audio.os.deinit(audio);
 

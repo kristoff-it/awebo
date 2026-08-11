@@ -111,12 +111,12 @@ const Command = struct {
         };
 
         // at least one invite editing argument must be specified
-        inline for (@typeInfo(Command).@"struct".fields[2..]) |f| {
-            if (@FieldType(Command, f.name) == bool) {
-                if (@field(cmd, f.name)) return cmd;
+        inline for (@typeInfo(Command).@"struct".field_names[2..]) |f_name| {
+            if (@FieldType(Command, f_name) == bool) {
+                if (@field(cmd, f_name)) return cmd;
                 continue;
             }
-            if (@field(cmd, f.name) != null) return cmd;
+            if (@field(cmd, f_name) != null) return cmd;
         }
 
         cli.fatal("at least one invite editing argument must be specified", .{});

@@ -19,12 +19,12 @@ pub const Table = struct {
 pub fn init(db: awebo.Database) !void {
     try db.conn.transaction();
 
-    inline for (comptime std.meta.declarations(@This())) |d| {
-        const table = @field(@This(), d.name);
+    inline for (comptime std.meta.declarations(@This())) |d_name| {
+        const table = @field(@This(), d_name);
         if (@TypeOf(table) != @This().Table) continue;
         if (table.context) |ctx| if (ctx != context) continue;
 
-        errdefer log.err("error creating table {s}", .{d.name});
+        errdefer log.err("error creating table {s}", .{d_name});
 
         try db.conn.execNoArgs(table.schema);
 
@@ -181,7 +181,7 @@ pub const sections: Table = .{
                 \\  DELETE FROM user_permissions WHERE kind = {0} AND resource = old.id; 
                 \\  DELETE FROM role_permissions WHERE kind = {0} AND resource = old.id; 
                 \\END;
-            , .{@intFromEnum(awebo.permissions.Kind.section)}),
+            , .{@backingInt(awebo.permissions.Kind.section)}),
         },
     },
 };
@@ -213,7 +213,7 @@ pub const channels: Table = .{
                 \\  DELETE FROM user_permissions WHERE kind = {0} AND resource = old.id; 
                 \\  DELETE FROM role_permissions WHERE kind = {0} AND resource = old.id; 
                 \\END;
-            , .{@intFromEnum(awebo.permissions.Kind.channel)}),
+            , .{@backingInt(awebo.permissions.Kind.channel)}),
         },
     },
 };

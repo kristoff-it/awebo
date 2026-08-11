@@ -87,6 +87,6 @@ pub const Args = struct {
 /// Prints an error message an exits with a non-zero status code
 pub fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.print("error: " ++ fmt ++ "\n", args);
-    if (@import("builtin").mode == .Debug) @breakpoint();
+    if (@import("builtin").mode == .debug) @breakpoint();
     std.process.exit(1);
 }

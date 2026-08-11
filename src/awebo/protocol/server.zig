@@ -368,11 +368,11 @@ pub const SearchMessagesReply = struct {
 pub const Enum = blk: {
     var names: []const []const u8 = &.{};
     var values: []const u8 = &.{};
-    for (@typeInfo(@This()).@"struct".decls) |d| {
-        if (std.mem.eql(u8, d.name, "Enum")) continue;
-        if (@typeInfo(@field(@This(), d.name)) != .@"struct") continue;
-        names = names ++ &[1][]const u8{d.name};
-        values = values ++ &[1]u8{@field(@This(), d.name).marker};
+    for (@typeInfo(@This()).@"struct".decl_names) |d_name| {
+        if (std.mem.eql(u8, d_name, "Enum")) continue;
+        if (@typeInfo(@field(@This(), d_name)) != .@"struct") continue;
+        names = names ++ &[1][]const u8{d_name};
+        values = values ++ &[1]u8{@field(@This(), d_name).marker};
     }
     break :blk @Enum(u8, .exhaustive, names, @ptrCast(values.ptr)); // on error we have a tag collision
 };

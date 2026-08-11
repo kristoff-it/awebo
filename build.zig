@@ -9,17 +9,17 @@ pub fn build(b: *std.Build) void {
     const target = b.resolveTargetQuery(target_query);
     const optimize = b.standardOptimizeOption(.{});
 
-    const target_tui = if (builtin.os.tag == .linux and target_query.abi == null) blk: {
-        var query = target_query;
-        query.abi = .musl;
-        break :blk b.resolveTargetQuery(query);
-    } else target;
+    // const target_tui = if (builtin.os.tag == .linux and target_query.abi == null) blk: {
+    //     var query = target_query;
+    //     query.abi = .musl;
+    //     break :blk b.resolveTargetQuery(query);
+    // } else target;
 
     const dep_optimize = b.option(
         std.builtin.OptimizeMode,
         "dep-optimize",
         "optimization mode of most dependencies",
-    ) orelse .ReleaseFast;
+    ) orelse .fast;
 
     const slow = b.option(
         bool,
@@ -39,11 +39,11 @@ pub fn build(b: *std.Build) void {
         "Overrides the version of awebo",
     ) orelse zon.version;
 
-    const client_version = b.option(
-        []const u8,
-        "override-client-version",
-        "Overrides the client version of awebo",
-    ) orelse zon.version;
+    // const client_version = b.option(
+    //     []const u8,
+    //     "override-client-version",
+    //     "Overrides the client version of awebo",
+    // ) orelse zon.version;
 
     const client_local_cache = b.option(
         bool,
@@ -63,11 +63,11 @@ pub fn build(b: *std.Build) void {
     const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, client_local_cache, client_dummy);
     b.installArtifact(gui);
 
-    const mac_os_bundle = b.step("macos-bundle", "create a mac os bundle");
-    setupMacOsBundle(b, mac_os_bundle, gui);
+    // const mac_os_bundle = b.step("macos-bundle", "create a mac os bundle");
+    // setupMacOsBundle(b, mac_os_bundle, gui);
 
-    const tui, const tui_test = setupTui(b, target_tui, optimize, dep_optimize, client_version, client_local_cache, client_dummy);
-    b.installArtifact(tui);
+    // const tui, const tui_test = setupTui(b, target_tui, optimize, dep_optimize, client_version, client_local_cache, client_dummy);
+    // b.installArtifact(tui);
 
     const server_step = b.step("server", "Launch the server executable");
     runArtifact(b, target, server_step, server);
@@ -75,21 +75,21 @@ pub fn build(b: *std.Build) void {
     const gui_step = b.step("gui", "Launch the GUI client");
     runArtifact(b, target, gui_step, gui);
 
-    const tui_step = b.step("tui", "Launch the TUI client");
-    runArtifact(b, target, tui_step, tui);
+    // const tui_step = b.step("tui", "Launch the TUI client");
+    // runArtifact(b, target, tui_step, tui);
 
     const test_step = b.step("test", "run tests");
     runArtifact(b, target, test_step, server_test);
     runArtifact(b, target, test_step, gui_test);
-    runArtifact(b, target, test_step, tui_test);
+    // runArtifact(b, target, test_step, tui_test);
 
-    const ci_step = b.step("ci", "build for all platforms and then run all tests");
-    setupCi(b, ci_step, dep_optimize);
-    ci_step.dependOn(test_step);
+    // const ci_step = b.step("ci", "build for all platforms and then run all tests");
+    // setupCi(b, ci_step, dep_optimize);
+    // ci_step.dependOn(test_step);
 
-    const check = b.step("check", "check everything");
-    check.dependOn(&server.step);
-    check.dependOn(&gui.step);
+    // const check = b.step("check", "check everything");
+    // check.dependOn(&server.step);
+    // check.dependOn(&gui.step);
     // check.dependOn(&tui.step);
 }
 
@@ -126,6 +126,15 @@ pub fn setupServer(
         .optimize = dep_optimize,
     });
 
+    const translate_c = b.dependency("translate_c", .{ .optimize = .fast });
+    const Translator = @import("translate_c").Translator;
+    const t: Translator = .init(translate_c, .{
+        .c_source_file = b.path("src/server/c.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    t.addIncludePath(b.path("src"));
+
     const options = b.addOptions();
     options.addOption(Context, "context", .server);
     options.addOption(bool, "slow", slow);
@@ -135,6 +144,8 @@ pub fn setupServer(
     server.root_module.addOptions("options", options);
     server.root_module.addImport("folders", folders.module("known-folders"));
     server.root_module.addImport("zeit", zeit.module("zeit"));
+    server.root_module.addImport("c", t.mod);
+
     addSqlite(server, zqlite, .server);
 
     const server_test = b.addTest(.{
@@ -208,6 +219,16 @@ pub fn setupGui(
         .optimize = dep_optimize,
     });
 
+    const translate_c = b.dependency("translate_c", .{ .optimize = .fast });
+    const Translator = @import("translate_c").Translator;
+    const t: Translator = .init(translate_c, .{
+        .c_source_file = b.path("src/client/c.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    t.addIncludePath(b.path("src"));
+    t.addIncludePath(ffmpeg.path("."));
+
     const options = b.addOptions();
     options.addOption(Context, "context", .client);
     options.addOption(bool, "local_cache", local_cache);
@@ -219,28 +240,34 @@ pub fn setupGui(
     gui.root_module.addImport("opus", opus.module("opus"));
     gui.root_module.addImport("rnnoise", rnnoise.module("rnnoise"));
     gui.root_module.addImport("miniaudio", miniaudio.module("miniaudio"));
+    gui.root_module.addImport("ffmpeg", ffmpeg.module("av"));
+    gui.root_module.addImport("c", t.mod);
 
-    // Link against system ffmpeg
     gui.root_module.linkLibrary(ffmpeg.artifact("ffmpeg"));
-    // gui.root_module.linkSystemLibrary("avutil", .{ .needed = true });
-    // gui.root_module.linkSystemLibrary("avcodec", .{ .needed = true });
+
     addSqlite(gui, zqlite, .client);
 
     switch (target.result.os.tag) {
         .macos => {
-            const xcode_frameworks = b.dependency("xcode_frameworks", .{});
+            const frameworks = b.dependency("xcode_frameworks", .{});
+            t.addIncludePath(frameworks.path("include"));
+            t.addFrameworkPath(frameworks.path("Frameworks"));
+            t.mod.addLibraryPath(frameworks.path("lib"));
+            t.mod.linkFramework("CoreServices", .{});
+
             const dvui = b.dependency("dvui", .{
                 .target = target,
                 .optimize = optimize,
                 .backend = .sdl3,
-                .system_include_path = xcode_frameworks.path("include"),
-                .system_framework_path = xcode_frameworks.path("Frameworks"),
-                .library_path = xcode_frameworks.path("lib"),
+                .system_include_path = frameworks.path("include"),
+                .system_framework_path = frameworks.path("Frameworks"),
+                .library_path = frameworks.path("lib"),
             });
+
             gui.root_module.addImport("dvui", dvui.module("dvui_sdl3"));
-            gui.root_module.addFrameworkPath(xcode_frameworks.path("Frameworks"));
-            gui.root_module.addSystemIncludePath(xcode_frameworks.path("include"));
-            gui.root_module.addLibraryPath(xcode_frameworks.path("lib"));
+            gui.root_module.addFrameworkPath(frameworks.path("Frameworks"));
+            gui.root_module.addSystemIncludePath(frameworks.path("include"));
+            gui.root_module.addLibraryPath(frameworks.path("lib"));
             gui.root_module.linkFramework("AVFoundation", .{});
             gui.root_module.linkFramework("VideoToolbox", .{});
             gui.root_module.linkFramework("ScreenCaptureKit", .{});
@@ -262,7 +289,7 @@ pub fn setupGui(
                     "-Wno-deprecated-declarations",
                     "-Wno-availability",
                     "-Wno-unguarded-availability-new",
-                    if (optimize == .Debug) "-DDEBUG" else "-DNDEBUG",
+                    if (optimize == .debug) "-DDEBUG" else "-DNDEBUG",
                 },
             });
         },
@@ -414,7 +441,7 @@ pub fn setupTui(
                     "-Wno-deprecated-declarations",
                     "-Wno-availability",
                     "-Wno-unguarded-availability-new",
-                    if (optimize == .Debug) "-DDEBUG" else "-DNODEBUG",
+                    if (optimize == .debug) "-DDEBUG" else "-DNODEBUG",
                 },
             });
         },
@@ -445,34 +472,33 @@ pub fn setupTui(
 pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.OptimizeMode) void {
     const targets: []const std.Target.Query = &.{
         .{ .cpu_arch = .aarch64, .os_tag = .macos },
-        .{ .cpu_arch = .x86_64, .os_tag = .macos },
-        .{ .cpu_arch = .aarch64, .os_tag = .linux },
-        .{ .cpu_arch = .x86_64, .os_tag = .linux },
-        .{ .cpu_arch = .x86_64, .os_tag = .windows },
+        // .{ .cpu_arch = .aarch64, .os_tag = .linux },
+        // .{ .cpu_arch = .x86_64, .os_tag = .linux },
+        // .{ .cpu_arch = .x86_64, .os_tag = .windows },
         // .{ .cpu_arch = .aarch64, .os_tag = .windows },
     };
 
     for (targets) |t| {
         const target = b.resolveTargetQuery(t);
-        const optimize = .Debug;
+        const optimize = .debug;
 
         const server, const server_test = setupServer(b, target, optimize, dep_optimize, false, false, zon.version);
         const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, false, false);
-        const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false, false);
+        // const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false, false);
         const dummy_gui, const dummy_gui_test = setupGui(b, target, optimize, dep_optimize, false, true);
-        const dummy_tui, const dummy_tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false, true);
+        // const dummy_tui, const dummy_tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false, true);
 
         step.dependOn(&b.addInstallArtifact(server, .{}).step);
         step.dependOn(&b.addInstallArtifact(gui, .{}).step);
-        step.dependOn(&b.addInstallArtifact(tui, .{}).step);
+        // step.dependOn(&b.addInstallArtifact(tui, .{}).step);
         step.dependOn(&b.addInstallArtifact(dummy_gui, .{ .dest_sub_path = "dummy" }).step);
-        step.dependOn(&b.addInstallArtifact(dummy_tui, .{ .dest_sub_path = "dummy" }).step);
+        // step.dependOn(&b.addInstallArtifact(dummy_tui, .{ .dest_sub_path = "dummy" }).step);
 
         step.dependOn(&server_test.step);
         step.dependOn(&gui_test.step);
-        step.dependOn(&tui_test.step);
+        // step.dependOn(&tui_test.step);
         step.dependOn(&dummy_gui_test.step);
-        step.dependOn(&dummy_tui_test.step);
+        // step.dependOn(&dummy_tui_test.step);
     }
 }
 
@@ -518,9 +544,7 @@ fn runArtifact(
     if (!target.query.isNative()) return;
 
     const run_cmd = b.addRunArtifact(artifact);
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    run_cmd.addPassthruArgs();
 
     step.dependOn(&run_cmd.step);
 }

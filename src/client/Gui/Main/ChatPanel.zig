@@ -206,7 +206,7 @@ fn sendBar(cp: *ChatPanel, core: *Core, h: *awebo.Host, c: *Channel, frozen: boo
     const clicked = dvui.button(@src(), "send", .{}, .{
         .gravity_x = 1,
         .margin = .{ .x = 0, .y = 4, .w = 4, .h = 4 },
-        .corner_radius = .{ .x = 0, .y = 5, .w = 5, .h = 0 },
+        // .corner_radius = .{ .x = 0, .y = 5, .w = 5, .h = 0 },
         .background = true,
         .border = dvui.Rect.all(1),
         .expand = .vertical,
@@ -215,7 +215,7 @@ fn sendBar(cp: *ChatPanel, core: *Core, h: *awebo.Host, c: *Channel, frozen: boo
     var in = dvui.textEntry(@src(), .{}, .{
         .expand = .horizontal,
         .margin = .{ .x = 4, .y = 4, .w = 0, .h = 4 },
-        .corner_radius = .{ .x = 5, .y = 0, .w = 0, .h = 5 },
+        // .corner_radius = .{ .x = 5, .y = 0, .w = 0, .h = 5 },
         // .color_fill = .{ .name = .fill_window },
     });
     defer in.deinit();
@@ -464,7 +464,7 @@ fn messageList(cp: *ChatPanel, core: *Core, h: *awebo.Host, channel_id: awebo.Ch
         fw.init(@src(), .{ .from = pt, .from_gravity_y = 1.0 }, .{
             .background = true,
             .style = .window,
-            .corner_radius = .all(1000),
+            // .corner_radius = .all(1000),
             .padding = .all(4),
             .margin = .all(4),
         });
@@ -591,7 +591,7 @@ fn drawMessage(
                 .id_extra = idx,
                 .background = true,
                 .border = dvui.Rect.all(1),
-                .corner_radius = dvui.Rect.all(100),
+                // .corner_radius = dvui.Rect.all(100),
                 .gravity_y = 0.5,
                 .gravity_x = 1,
                 // .color_border = .{ .name = .accent },

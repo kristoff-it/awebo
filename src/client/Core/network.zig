@@ -13,7 +13,7 @@ const ClientRequestReply = awebo.protocol.server.ClientRequestReply;
 const HostId = awebo.Host.ClientOnly.Id;
 const log = std.log.scoped(.net);
 
-pub const debug = if (builtin.mode != .Debug) void else struct {
+pub const debug = if (builtin.mode != .debug) void else struct {
     pub var send_bad_capture_packet: std.atomic.Value(bool) = .init(false);
     pub var drop_next_media_packets: std.atomic.Value(usize) = .init(0);
     var remaining_packets_to_drop: usize = 0;
@@ -42,7 +42,7 @@ pub fn runHostManager(
     defer log.debug("{s} exited", .{@src().fn_name});
 
     // On return this fuction must have progressed `fcs` to a terminal state.
-    defer if (builtin.mode == .Debug) switch (mode) {
+    defer if (builtin.mode == .debug) switch (mode) {
         .join => |fcs| assert(fcs.isDone()),
         .connect => {},
     };
@@ -278,7 +278,7 @@ fn runHostReceive(
     while (true) {
         const marker = try reader.takeByte();
         log.debug("seen marker '{c}'", .{marker});
-        const marker_enum: awebo.protocol.server.Enum = @enumFromInt(marker);
+        const marker_enum: awebo.protocol.server.Enum = @fromBackingInt(@intCast(marker));
         switch (marker_enum) {
             .AuthenticateReply, .InviteInfoReply => unreachable, // handled while establishing a connection
             .HostSync => {
@@ -635,6 +635,6 @@ fn oom() noreturn {
 
 fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.print(fmt, args);
-    if (builtin.mode == .Debug) @breakpoint();
+    if (builtin.mode == .debug) @breakpoint();
     std.process.exit(1);
 }

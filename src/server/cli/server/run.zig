@@ -81,10 +81,10 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
 
     server_log.info("loading database", .{});
     db = .init(cmd.db_path, .read_write);
-    defer if (builtin.mode == .Debug) db.close();
+    defer if (builtin.mode == .debug) db.close();
     qs = db.initQueries(Queries);
     cqs = db.initQueries(Database.CommonQueries);
-    defer if (builtin.mode == .Debug) {
+    defer if (builtin.mode == .debug) {
         db.deinitQueries(Queries, &qs);
         db.deinitQueries(Database.CommonQueries, &cqs);
     };
@@ -393,7 +393,7 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
 
         // OpenStream packet
         if (header.sequence == 0) {
-            if (@intFromEnum(header.stream_id.kind) != 0) {
+            if (@backingInt(header.stream_id.kind) != 0) {
                 server_log.debug("dropping bad open stream packet", .{});
                 continue;
             }
@@ -1549,11 +1549,12 @@ var ___state: struct {
 
             outer: while (rows.next()) |r| {
                 const key = r.textNoDupe(.key);
-                inline for (std.meta.fields(Settings)) |f| {
-                    if (std.mem.eql(u8, f.name, key)) {
-                        @field(settings, f.name) = switch (f.type) {
+                const info = @typeInfo(Settings).@"struct";
+                inline for (info.field_names, info.field_types) |f_name, f_type| {
+                    if (std.mem.eql(u8, f_name, key)) {
+                        @field(settings, f_name) = switch (f_type) {
                             []const u8 => try r.text(gpa, .value),
-                            else => r.getAs(f.type, .value),
+                            else => r.getAs(f_type, .value),
                         };
                         continue :outer;
                     }
@@ -1649,7 +1650,7 @@ var ___state: struct {
     }
 
     fn deinit(state: *State, gpa: Allocator) void {
-        if (builtin.mode != .Debug) return;
+        if (builtin.mode != .debug) return;
 
         state.host.deinit(gpa);
         state.clients.deinit(gpa);

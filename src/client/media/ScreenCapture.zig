@@ -77,7 +77,7 @@ fn reset(sc: *ScreenCapture) void {
 }
 
 pub fn deinit(sc: *ScreenCapture) void {
-    if (builtin.mode != .Debug) return;
+    if (builtin.mode != .debug) return;
     sc.os.deinit();
 }
 
@@ -341,7 +341,7 @@ pub const MacOsInterface = opaque {
 
     extern fn screenCaptureManagerShowPicker(*MacOsInterface, u32, u32, u8, u8) void;
     pub fn showOsPicker(mi: *MacOsInterface, config: media.Config, img_kind: VideoStream.ImageKind) void {
-        screenCaptureManagerShowPicker(mi, config.width, config.height, config.fps, @intFromEnum(img_kind));
+        screenCaptureManagerShowPicker(mi, config.width, config.height, config.fps, @backingInt(img_kind));
     }
 
     extern fn screenCaptureManagerStopCapture(*MacOsInterface) void;

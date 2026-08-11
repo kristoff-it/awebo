@@ -15,9 +15,9 @@ pub const Server = struct {
         ;
 
         comptime {
-            for (@typeInfo(Server).@"struct".fields) |f| {
-                if (!@hasDecl(descriptions, f.name)) {
-                    @compileError("Server." ++ f.name ++ " must have a corresponding description!");
+            for (@typeInfo(Server).@"struct".field_names) |f_name| {
+                if (!@hasDecl(descriptions, f_name)) {
+                    @compileError("Server." ++ f_name ++ " must have a corresponding description!");
                 }
             }
         }

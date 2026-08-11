@@ -97,7 +97,7 @@ pub fn MakeSerializeFn(T: type) SerializeFn(T) {
                         u2 => u8,
                         else => enum_info.tag_type,
                     };
-                    try w.writeInt(Int, @intFromEnum(elem), .little);
+                    try w.writeInt(Int, @backingInt(elem), .little);
                 },
                 .optional => {
                     if (elem) |e| {
@@ -114,7 +114,7 @@ pub fn MakeSerializeFn(T: type) SerializeFn(T) {
                     const Int = @typeInfo(union_info.tag_type.?).@"enum".tag_type;
                     switch (elem) {
                         inline else => |value, tag| {
-                            try w.writeInt(Int, @intFromEnum(tag), .little);
+                            try w.writeInt(Int, @backingInt(tag), .little);
                             try serializeInner(value, w);
                         },
                     }
@@ -142,18 +142,18 @@ pub fn MakeSerializeFn(T: type) SerializeFn(T) {
                         };
                         return w.writeInt(Int, @as(RawInt, @bitCast(elem)), .little);
                     }
-                    inline for (struct_info.fields) |f| {
-                        switch (@typeInfo(f.type)) {
-                            else => try serializeInner(@field(elem, f.name), w),
+                    inline for (struct_info.field_names, struct_info.field_types) |f_name, f_type| {
+                        switch (@typeInfo(f_type)) {
+                            else => try serializeInner(@field(elem, f_name), w),
                             .pointer => |pointer_info| switch (pointer_info.size) {
                                 .one => try serializeInner(elem.*, w),
                                 .many, .c => @compileError("not supported"),
                                 .slice => {
-                                    if (!@hasDecl(E.protocol, "sizes") or !@hasDecl(E.protocol.sizes, f.name)) {
-                                        @compileError("missing protocol.sizes." ++ f.name ++ " in " ++ @typeName(E));
+                                    if (!@hasDecl(E.protocol, "sizes") or !@hasDecl(E.protocol.sizes, f_name)) {
+                                        @compileError("missing protocol.sizes." ++ f_name ++ " in " ++ @typeName(E));
                                     }
-                                    const Int = @field(E.protocol.sizes, f.name);
-                                    const slice_field = @field(elem, f.name);
+                                    const Int = @field(E.protocol.sizes, f_name);
+                                    const slice_field = @field(elem, f_name);
 
                                     // std.log.debug("serializing {s}.{s} ({s})", .{ @typeName(E), f.name, @typeName(f.type) });
                                     // std.log.debug("size: {s} len: {}", .{ @typeName(Int), slice_field.len });
@@ -206,7 +206,7 @@ pub fn MakeDeserializeFn(T: type) DeserializeFn(T) {
                         u2 => u8,
                         else => enum_info.tag_type,
                     };
-                    return @enumFromInt(try r.takeInt(Int, .little));
+                    return @fromBackingInt(@intCast(try r.takeInt(Int, .little)));
                 },
                 .@"union" => |union_info| {
                     if (!@hasDecl(E, "protocol")) {
@@ -220,7 +220,7 @@ pub fn MakeDeserializeFn(T: type) DeserializeFn(T) {
                         else => |e| return e,
                     };
                     return switch (tag) {
-                        inline else => |t| @unionInit(E, @tagName(t), try deserializeInner(union_info.fields[@intFromEnum(t)].type, r)),
+                        inline else => |t| @unionInit(E, @tagName(t), try deserializeInner(union_info.field_types[@backingInt(t)], r)),
                     };
                 },
                 .@"struct" => |struct_info| {
@@ -238,8 +238,8 @@ pub fn MakeDeserializeFn(T: type) DeserializeFn(T) {
                     }
 
                     var s: E = undefined;
-                    inline for (struct_info.fields) |f| {
-                        @field(s, f.name) = try deserializeInner(f.type, r);
+                    inline for (struct_info.field_names, struct_info.field_types) |f_name, f_type| {
+                        @field(s, f_name) = try deserializeInner(f_type, r);
                     }
 
                     return s;
@@ -276,7 +276,7 @@ pub fn MakeDeserializeAllocFn(T: type) DeserializeAllocFn(T) {
                         u2 => u8,
                         else => enum_info.tag_type,
                     };
-                    return @enumFromInt(try r.takeInt(Int, .little));
+                    return @fromBackingInt(@intCast(try r.takeInt(Int, .little)));
                 },
                 .optional => |opt_info| {
                     const present = try r.takeByte();
@@ -297,7 +297,7 @@ pub fn MakeDeserializeAllocFn(T: type) DeserializeAllocFn(T) {
                     };
                     switch (tag) {
                         inline else => |t| {
-                            const field_type = union_info.fields[@intFromEnum(t)].type;
+                            const field_type = union_info.field_types[@backingInt(t)];
                             switch (@typeInfo(field_type)) {
                                 else => return @unionInit(E, @tagName(t), try deserializeAllocInner(field_type, gpa, r)),
                                 .pointer => |pointer_info| switch (pointer_info.size) {
@@ -339,38 +339,39 @@ pub fn MakeDeserializeAllocFn(T: type) DeserializeAllocFn(T) {
 
                     var s: E = undefined;
                     // TODO: errdefer :^)
-                    inline for (struct_info.fields) |f| switch (@typeInfo(f.type)) {
-                        else => @field(s, f.name) = try deserializeAllocInner(f.type, gpa, r),
-                        .pointer => |pointer_info| switch (pointer_info.size) {
-                            .many, .c => @compileError("not supported"),
-                            .one => {
-                                const field = &@field(s, f.name);
-                                field.* = try gpa.create(f.type);
-                                errdefer gpa.destroy(field.*);
+                    inline for (struct_info.field_names, struct_info.field_types) |f_name, f_type|
+                        switch (@typeInfo(f_type)) {
+                            else => @field(s, f_name) = try deserializeAllocInner(f_type, gpa, r),
+                            .pointer => |pointer_info| switch (pointer_info.size) {
+                                .many, .c => @compileError("not supported"),
+                                .one => {
+                                    const field = &@field(s, f_name);
+                                    field.* = try gpa.create(f_type);
+                                    errdefer gpa.destroy(field.*);
 
-                                field.* = try deserializeAllocInner(pointer_info.child, gpa, r);
-                            },
+                                    field.* = try deserializeAllocInner(pointer_info.child, gpa, r);
+                                },
 
-                            .slice => {
-                                if (!@hasDecl(E.protocol, "sizes") or !@hasDecl(E.protocol.sizes, f.name)) {
-                                    @compileError("missing protocol.sizes." ++ f.name ++ " in " ++ @typeName(E));
-                                }
-                                const Int = @field(E.protocol.sizes, f.name);
-                                const len = try r.takeInt(Int, .little);
-                                const field = &@field(s, f.name);
-                                field.* = try gpa.alloc(pointer_info.child, len);
-                                errdefer gpa.free(field.*);
-
-                                if (pointer_info.child == u8) {
-                                    try r.readSliceAll(@constCast(field.*));
-                                } else {
-                                    for (field.*) |*e| {
-                                        @constCast(e).* = try deserializeAllocInner(pointer_info.child, gpa, r);
+                                .slice => {
+                                    if (!@hasDecl(E.protocol, "sizes") or !@hasDecl(E.protocol.sizes, f_name)) {
+                                        @compileError("missing protocol.sizes." ++ f_name ++ " in " ++ @typeName(E));
                                     }
-                                }
+                                    const Int = @field(E.protocol.sizes, f_name);
+                                    const len = try r.takeInt(Int, .little);
+                                    const field = &@field(s, f_name);
+                                    field.* = try gpa.alloc(pointer_info.child, len);
+                                    errdefer gpa.free(field.*);
+
+                                    if (pointer_info.child == u8) {
+                                        try r.readSliceAll(@constCast(field.*));
+                                    } else {
+                                        for (field.*) |*e| {
+                                            @constCast(e).* = try deserializeAllocInner(pointer_info.child, gpa, r);
+                                        }
+                                    }
+                                },
                             },
-                        },
-                    };
+                        };
 
                     return s;
                 },

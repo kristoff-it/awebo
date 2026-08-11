@@ -44,7 +44,9 @@ fn init(window: *dvui.Window) !void {
     return global_app_singleton.init(window);
 }
 
-fn deinit() void {}
+fn deinit(window: *dvui.Window) void {
+    _ = window;
+}
 
 /// Contains references to Core, Gui and other resources needed to
 /// start the application. Adding more state to this struct is most
@@ -121,7 +123,7 @@ fn checkClosing(app: *App) bool {
 
 fn refresh(core: *Core, src: std.builtin.SourceLocation, id: ?u64) void {
     const app: *App = @alignCast(@fieldParentPtr("core", core));
-    dvui.refresh(app.window, src, if (id) |i| @enumFromInt(i) else null);
+    dvui.refresh(app.window, src, if (id) |i| @fromBackingInt(@intCast(i)) else null);
 }
 
 fn initialLoadingFrame() !dvui.App.Result {

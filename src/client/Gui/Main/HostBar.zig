@@ -39,7 +39,7 @@ pub fn draw(hb: *HostBar, core: *Core) void {
             .id_extra = idx,
             .margin = .{ .y = 5 },
             .border = dvui.Rect.all(1),
-            .corner_radius = dvui.Rect.all(100),
+            // .corner_radius = dvui.Rect.all(100),
             .background = true,
         });
         defer item.deinit();
@@ -49,7 +49,7 @@ pub fn draw(hb: *HostBar, core: *Core) void {
         }
 
         if (core.active_host == h.client.host_id) {
-            item.wd.options.corner_radius = dvui.Rect.all(10);
+            // item.wd.options.corner_radius = dvui.Rect.all(10);
             // item.wd.options.color_border = .{ .name = .text_press };
             item.wd.borderAndBackground(.{});
         }
@@ -66,7 +66,7 @@ pub fn draw(hb: *HostBar, core: *Core) void {
             .id_extra = idx,
             .background = true,
             .border = dvui.Rect.all(1),
-            .corner_radius = dvui.Rect.all(100),
+            // .corner_radius = dvui.Rect.all(100),
             .gravity_y = 0.5,
             .gravity_x = 1,
             // .color_border = .{ .name = .accent },

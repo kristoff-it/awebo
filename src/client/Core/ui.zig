@@ -69,7 +69,7 @@ pub fn AtomicEnum(
         }
 
         pub fn isDone(s: *const Self) bool {
-            const current: u8 = @intFromEnum(s.get());
+            const current: u8 = @backingInt(s.get());
             return current > progress.len;
         }
 
@@ -84,7 +84,7 @@ pub fn AtomicEnum(
         /// Updates a status only if the previous value is the expected one.
         /// Returns the old value.
         pub fn updateCompare(s: *Self, core: *Core, src: std.builtin.SourceLocation, comptime expected: Enum, new: Enum) Enum {
-            if (@intFromEnum(expected) > progress.len) {
+            if (@backingInt(expected) > progress.len) {
                 @compileError("'expected' cannot be a done state");
             }
 
@@ -97,10 +97,10 @@ pub fn AtomicEnum(
         }
 
         inline fn updateSafety(s: *Self, new: Enum) void {
-            if (builtin.mode == .Debug) {
-                const val = @intFromEnum(new);
+            if (builtin.mode == .debug) {
+                const val = @backingInt(new);
                 if (val == 0) @panic("tried to transition to the start value");
-                const current = @intFromEnum(s.impl.load(.acquire));
+                const current = @backingInt(s.impl.load(.acquire));
                 if (current > progress.len) @panic("tried to update a terminal status");
             }
         }

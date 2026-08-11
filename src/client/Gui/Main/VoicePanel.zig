@@ -123,10 +123,12 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
                         @memcpy(planes[ww * hh + half ..][0..half], yuv.cb);
                         tex.* = try backend.textureCreate(
                             @ptrCast(planes),
-                            @intCast(yuv.width),
-                            @intCast(yuv.height),
-                            .nearest,
-                            .fourcc_yv12,
+                            .{
+                                .width = @intCast(yuv.width),
+                                .height = @intCast(yuv.height),
+                                .interpolation = .nearest,
+                                .format = .fourcc_yv12,
+                            },
                         );
                     },
                     .nv12 => |nv12| {
@@ -138,19 +140,23 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
                         @memcpy(planes[ww * hh ..], nv12.cbcr);
                         tex.* = try backend.textureCreate(
                             @ptrCast(planes),
-                            @intCast(nv12.width),
-                            @intCast(nv12.height),
-                            .nearest,
-                            .fourcc_yv12,
+                            .{
+                                .width = @intCast(nv12.width),
+                                .height = @intCast(nv12.height),
+                                .interpolation = .nearest,
+                                .format = .fourcc_yv12,
+                            },
                         );
                     },
                     .bgra => |bgra| {
                         tex.* = try backend.textureCreate(
                             @ptrCast(bgra.pixels),
-                            @intCast(bgra.width),
-                            @intCast(bgra.height),
-                            .nearest,
-                            .bgra_32,
+                            .{
+                                .width = @intCast(bgra.width),
+                                .height = @intCast(bgra.height),
+                                .interpolation = .nearest,
+                                .format = .bgra_32,
+                            },
                         );
                     },
                 }
