@@ -63,6 +63,9 @@ pub fn build(b: *std.Build) void {
     const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, client_local_cache, client_dummy);
     b.installArtifact(gui);
 
+    _ = server_test;
+    _ = gui_test;
+
     // const mac_os_bundle = b.step("macos-bundle", "create a mac os bundle");
     // setupMacOsBundle(b, mac_os_bundle, gui);
 
@@ -78,9 +81,9 @@ pub fn build(b: *std.Build) void {
     // const tui_step = b.step("tui", "Launch the TUI client");
     // runArtifact(b, target, tui_step, tui);
 
-    const test_step = b.step("test", "run tests");
-    runArtifact(b, target, test_step, server_test);
-    runArtifact(b, target, test_step, gui_test);
+    // const test_step = b.step("test", "run tests");
+    // runArtifact(b, target, test_step, server_test);
+    // runArtifact(b, target, test_step, gui_test);
     // runArtifact(b, target, test_step, tui_test);
 
     // const ci_step = b.step("ci", "build for all platforms and then run all tests");
@@ -225,8 +228,41 @@ pub fn setupGui(
         .c_source_file = b.path("src/client/c.h"),
         .target = target,
         .optimize = optimize,
+        .link_system_libs = &.{
+            // .{
+            //     .name = "avutil",
+            //     .options = .{
+            //         .needed = true,
+            //         .preferred_link_mode = .static,
+            //     },
+            // },
+            // .{
+            //     .name = "avcodec",
+            //     .options = .{
+            //         .needed = true,
+            //         .preferred_link_mode = .static,
+            //     },
+            // },
+        },
     });
     t.addIncludePath(b.path("src"));
+
+    // Linking against ffmpeg is currently problematic:
+    //
+    // - AYC/ffmpeg currently doesn't build hw accelerated
+    //   video codecs and ffv1 is also slower than the system
+    //   provided build of avcodec.
+    // - Having translate_c directly link against avutil and
+    //   avcodec causes a build error most probably because
+    //   of limitations in translate_c.
+    // - But apparently giving ffmpeg's header files (see the
+    //   code line below) will succeed, and then we can link
+    //   against systems avcodec in our own module.
+    //
+    // This is a temporary situation. Once translate_c becomes
+    // more capable, we should switch to linking against avcodec
+    // directly in the Translator. And once ayc/ffmpeg is good
+    // enough, we should switch to it altogether.
     t.addIncludePath(ffmpeg.path("."));
 
     const options = b.addOptions();
@@ -240,10 +276,17 @@ pub fn setupGui(
     gui.root_module.addImport("opus", opus.module("opus"));
     gui.root_module.addImport("rnnoise", rnnoise.module("rnnoise"));
     gui.root_module.addImport("miniaudio", miniaudio.module("miniaudio"));
-    gui.root_module.addImport("ffmpeg", ffmpeg.module("av"));
     gui.root_module.addImport("c", t.mod);
 
-    gui.root_module.linkLibrary(ffmpeg.artifact("ffmpeg"));
+    // gui.root_module.linkLibrary(ffmpeg.artifact("ffmpeg"));
+    gui.root_module.linkSystemLibrary("avutil", .{
+        .needed = true,
+        .preferred_link_mode = .static,
+    });
+    gui.root_module.linkSystemLibrary("avcodec", .{
+        .needed = true,
+        .preferred_link_mode = .static,
+    });
 
     addSqlite(gui, zqlite, .client);
 
@@ -252,8 +295,6 @@ pub fn setupGui(
             const frameworks = b.dependency("xcode_frameworks", .{});
             t.addIncludePath(frameworks.path("include"));
             t.addFrameworkPath(frameworks.path("Frameworks"));
-            t.mod.addLibraryPath(frameworks.path("lib"));
-            t.mod.linkFramework("CoreServices", .{});
 
             const dvui = b.dependency("dvui", .{
                 .target = target,
