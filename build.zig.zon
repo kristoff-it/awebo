@@ -13,8 +13,8 @@
             .hash = "dvui-0.6.0-dev-AQFJmUH_AAGloFzBJgw0vAMLY4pFCl_BQ8qIPiL1kcOd",
         },
         .pulseaudio = .{
-            .url = "https://github.com/andrewrk/pulseaudio/archive/909a2ceebcc4efe74418107c279ac239f28e0f61.tar.gz",
-            .hash = "pulseaudio-16.1.1-9-mk_62MZkNwBaFwiZ7ZVrYRIf_3dTqqJR5PbMRCJzSuLw",
+            .url = "git+https://github.com/andrewrk/pulseaudio#b6ff9a7da57592609adbfad000039b0c01f26344",
+            .hash = "pulseaudio-16.1.1-10-mk_62DNlNwCDcTJ5iGhTxeCoetuAFKE1FrYNw5AErtX-",
             .lazy = true,
         },
         .opus = .{
