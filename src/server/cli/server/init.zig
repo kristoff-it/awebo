@@ -313,13 +313,13 @@ fn setUnion(comptime Map: type, comptime Set: type, gpa: Allocator, lhs: *const 
 
 fn dropTable(conn: zqlite.Conn, name: []const u8) !void {
     var buf: [4096]u8 = undefined;
-    const sql = try std.fmt.bufPrintZ(&buf, "DROP TABLE {s};", .{name});
+    const sql = try std.fmt.bufPrintSentinel(&buf, "DROP TABLE {s};", .{name}, 0);
     try conn.execNoArgs(sql);
 }
 
 fn dropIndex(conn: zqlite.Conn, name: []const u8) !void {
     var buf: [4096]u8 = undefined;
-    const sql = try std.fmt.bufPrintZ(&buf, "DROP INDEX {s}", .{name});
+    const sql = try std.fmt.bufPrintSentinel(&buf, "DROP INDEX {s}", .{name}, 0);
     try conn.execNoArgs(sql);
 }
 

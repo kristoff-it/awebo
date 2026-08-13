@@ -1155,7 +1155,7 @@ const DummyInterface = struct {
     pub fn discoverDevicesAndListen(_: *DummyInterface, ac: *Audio) void {
         var buf: [256]u8 = undefined;
         for (0..5) |i| {
-            const id = std.fmt.bufPrintZ(&buf, "ID DummyAudioDevice #{}", .{i}) catch unreachable;
+            const id = std.fmt.bufPrintSentinel(&buf, "ID DummyAudioDevice #{}", .{i}, 0) catch unreachable;
             ac.upsertDevice(&.{
                 .id = id,
                 .name = id[3..],
