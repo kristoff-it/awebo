@@ -173,7 +173,7 @@ const DummyInterface = opaque {
         _ = mi;
         var buf: [256]u8 = undefined;
         for (0..5) |i| {
-            const id = std.fmt.bufPrintZ(&buf, "ID Dummy Device #{}", .{i}) catch unreachable;
+            const id = std.fmt.bufPrintSentinel(&buf, "ID Dummy Device #{}", .{i}, 0) catch unreachable;
             wc.upsertDevice(id.ptr, id[3..].ptr, true);
         }
     }

@@ -278,15 +278,18 @@ pub fn setupGui(
     gui.root_module.addImport("miniaudio", miniaudio.module("miniaudio"));
     gui.root_module.addImport("c", t.mod);
 
-    // gui.root_module.linkLibrary(ffmpeg.artifact("ffmpeg"));
-    gui.root_module.linkSystemLibrary("avutil", .{
-        .needed = true,
-        .preferred_link_mode = .static,
-    });
-    gui.root_module.linkSystemLibrary("avcodec", .{
-        .needed = true,
-        .preferred_link_mode = .static,
-    });
+    if (target.query.isNativeTriple()) {
+        gui.root_module.linkSystemLibrary("avutil", .{
+            .needed = true,
+            .preferred_link_mode = .static,
+        });
+        gui.root_module.linkSystemLibrary("avcodec", .{
+            .needed = true,
+            .preferred_link_mode = .static,
+        });
+    } else {
+        gui.root_module.linkLibrary(ffmpeg.artifact("ffmpeg"));
+    }
 
     addSqlite(gui, zqlite, .client);
 
