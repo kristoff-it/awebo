@@ -1,14 +1,6 @@
-// const c = @cImport({
-//     @cInclude("opus.h");
-//     @cDefine("OUTSIDE_SPEEX", "1");
-//     @cDefine("RANDOM_PREFIX", "speex");
-//     @cInclude("speex_resampler.h");
-// });
-const opus_h = @import("opus.h.zig");
-const speex_h = @import("speex_resampler.h.zig");
-
 const std = @import("std");
 const assert = std.debug.assert;
+const c = @import("c");
 
 pub const SAMPLE_SIZE = @sizeOf(f32);
 pub const CHANNELS = 1;
@@ -19,7 +11,7 @@ pub const DRED_DURATION: c_int = 100; // number of 10ms mini-packets
 pub const FEC = true;
 
 pub fn packetHasLbrr(data: []const u8) !bool {
-    const result = opus_h.opus_packet_has_lbrr(data.ptr, @intCast(data.len));
+    const result = c.opus_packet_has_lbrr(data.ptr, @intCast(data.len));
     try checkErr(result);
     return result == 1;
 }
@@ -27,33 +19,33 @@ pub fn packetHasLbrr(data: []const u8) !bool {
 pub const Encoder = opaque {
     pub fn create() !*Encoder {
         var err: c_int = undefined;
-        const h = opus_h.opus_encoder_create(FREQ, CHANNELS, opus_h.OPUS_APPLICATION_AUDIO, &err);
+        const h = c.opus_encoder_create(FREQ, CHANNELS, c.OPUS_APPLICATION_AUDIO, &err);
         try checkErr(err);
 
         if (FEC) {
-            err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_INBAND_FEC_REQUEST, @as(c_int, 1));
+            err = c.opus_encoder_ctl(h, c.OPUS_SET_INBAND_FEC_REQUEST, @as(c_int, 1));
             try checkErr(err);
         }
 
-        err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_DTX_REQUEST, @as(c_int, 1));
+        err = c.opus_encoder_ctl(h, c.OPUS_SET_DTX_REQUEST, @as(c_int, 1));
         try checkErr(err);
-        err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_BITRATE_REQUEST, @as(c_int, 64000));
+        err = c.opus_encoder_ctl(h, c.OPUS_SET_BITRATE_REQUEST, @as(c_int, 64000));
         try checkErr(err);
-        err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_PACKET_LOSS_PERC_REQUEST, @as(c_int, 50));
+        err = c.opus_encoder_ctl(h, c.OPUS_SET_PACKET_LOSS_PERC_REQUEST, @as(c_int, 50));
         try checkErr(err);
-        err = opus_h.opus_encoder_ctl(h, opus_h.OPUS_SET_DRED_DURATION_REQUEST, DRED_DURATION);
+        err = c.opus_encoder_ctl(h, c.OPUS_SET_DRED_DURATION_REQUEST, DRED_DURATION);
         try checkErr(err);
 
         return @ptrCast(h.?);
     }
 
     pub fn destroy(e: *Encoder) void {
-        opus_h.opus_encoder_destroy(@ptrCast(e));
+        c.opus_encoder_destroy(@ptrCast(e));
     }
 
     /// Returns the number of bytes written to `out`.
     pub fn encodeFloat(e: *Encoder, pcm: *const [PACKET_SAMPLE_COUNT]f32, out: []u8) !usize {
-        const res = opus_h.opus_encode_float(
+        const res = c.opus_encode_float(
             @ptrCast(e),
             pcm,
             PACKET_FRAME_COUNT,
@@ -72,13 +64,13 @@ pub const DredInfo = struct {
 pub const DredDecoder = opaque {
     pub fn create() !*DredDecoder {
         var err: c_int = undefined;
-        const dd = opus_h.opus_dred_decoder_create(&err);
+        const dd = c.opus_dred_decoder_create(&err);
         try checkErr(err);
         return @ptrCast(dd.?);
     }
 
     pub fn destroy(dd: *DredDecoder) void {
-        opus_h.opus_dred_decoder_destroy(dd);
+        c.opus_dred_decoder_destroy(dd);
     }
 
     pub fn parse(
@@ -89,7 +81,7 @@ pub const DredDecoder = opaque {
         processing: enum { eager, deferred },
     ) !DredInfo {
         var end: c_int = 0;
-        const available = opus_h.opus_dred_parse(
+        const available = c.opus_dred_parse(
             @ptrCast(dd),
             @ptrCast(state),
             data.ptr,
@@ -107,7 +99,7 @@ pub const DredDecoder = opaque {
     }
 
     pub fn process(dd: *DredDecoder, state_src: *const DredState, state_dst: *DredState) !void {
-        const err = opus_h.opus_dred_process(@ptrCast(dd), @ptrCast(state_src), @ptrCast(state_dst));
+        const err = c.opus_dred_process(@ptrCast(dd), @ptrCast(state_src), @ptrCast(state_dst));
         try checkErr(err);
     }
 };
@@ -115,31 +107,31 @@ pub const DredDecoder = opaque {
 pub const DredState = opaque {
     pub fn create() !*DredState {
         var err: c_int = 0;
-        const ds = opus_h.opus_dred_alloc(&err);
+        const ds = c.opus_dred_alloc(&err);
         try checkErr(err);
         return @ptrCast(ds.?);
     }
 
     pub fn destroy(dd: *DredState) void {
-        opus_h.opus_dred_decoder_destroy(dd);
+        c.opus_dred_decoder_destroy(dd);
     }
 };
 
 pub const Decoder = opaque {
     pub fn create() !*Decoder {
         var err: c_int = undefined;
-        const h = opus_h.opus_decoder_create(FREQ, CHANNELS, &err);
+        const h = c.opus_decoder_create(FREQ, CHANNELS, &err);
         try checkErr(err);
         return @ptrCast(h.?);
     }
 
     pub fn destroy(d: *Decoder) void {
-        opus_h.opus_decoder_destroy(@ptrCast(d));
+        c.opus_decoder_destroy(@ptrCast(d));
     }
 
     /// Returns the number of SAMPLES written to `out`.
     pub fn decodeFloat(d: *Decoder, in: []const u8, pcm: []f32, fec: bool) !usize {
-        const res = opus_h.opus_decode_float(
+        const res = c.opus_decode_float(
             @ptrCast(d),
             in.ptr,
             @intCast(in.len),
@@ -157,7 +149,7 @@ pub const Decoder = opaque {
 
     /// pcm.len defines how much silence to produce
     pub fn decodeMissing(d: *Decoder, pcm: []f32, fec: bool) usize {
-        const res = opus_h.opus_decode_float(
+        const res = c.opus_decode_float(
             @ptrCast(d),
             null,
             0,
@@ -170,7 +162,7 @@ pub const Decoder = opaque {
 
     pub fn decodeDredFloat(d: *Decoder, dred_state: *DredState, dred_offset: u32, pcm: []f32) !u32 {
         assert(pcm.len == 960);
-        const decoded = opus_h.opus_decoder_dred_decode_float(
+        const decoded = c.opus_decoder_dred_decode_float(
             @ptrCast(d),
             @ptrCast(dred_state),
             @intCast(dred_offset),
@@ -185,14 +177,14 @@ pub const Decoder = opaque {
 fn checkErr(err: c_int) !void {
     if (err > 0) return;
     return switch (err) {
-        opus_h.OPUS_OK => {},
-        opus_h.OPUS_BAD_ARG => error.OpusBadArg,
-        opus_h.OPUS_BUFFER_TOO_SMALL => error.OpusBufferTooSmall,
-        opus_h.OPUS_INTERNAL_ERROR => error.OpusInternalError,
-        opus_h.OPUS_INVALID_PACKET => error.OpusInvalidPacket,
-        opus_h.OPUS_UNIMPLEMENTED => error.OpusUnimplemented,
-        opus_h.OPUS_INVALID_STATE => error.OpusInvalidState,
-        opus_h.OPUS_ALLOC_FAIL => error.OutOfMemory,
+        c.OPUS_OK => {},
+        c.OPUS_BAD_ARG => error.OpusBadArg,
+        c.OPUS_BUFFER_TOO_SMALL => error.OpusBufferTooSmall,
+        c.OPUS_INTERNAL_ERROR => error.OpusInternalError,
+        c.OPUS_INVALID_PACKET => error.OpusInvalidPacket,
+        c.OPUS_UNIMPLEMENTED => error.OpusUnimplemented,
+        c.OPUS_INVALID_STATE => error.OpusInvalidState,
+        c.OPUS_ALLOC_FAIL => error.OutOfMemory,
         else => {
             std.log.err("unexpected opus error code {}", .{err});
             return error.Unexpected;
@@ -226,7 +218,7 @@ pub const Resampler = opaque {
         //  * @retval NULL Error: not enough memory
         //  */
         var err: i32 = undefined;
-        const res = speex_h.speex_resampler_init(
+        const res = c.speex_resampler_init(
             channels,
             input_rate,
             output_rate,
@@ -255,7 +247,7 @@ pub const Resampler = opaque {
         //  */
         var input_len: u32 = @intCast(@divExact(input_pcm.len, channels));
         var output_len: u32 = @intCast(@divExact(output_pcm.len, channels));
-        const err = speex_h.speex_resampler_process_interleaved_float(
+        const err = c.speex_resampler_process_interleaved_float(
             @ptrCast(r),
             input_pcm.ptr,
             &input_len,
@@ -271,7 +263,7 @@ pub const Resampler = opaque {
         };
     }
     pub fn destroy(r: *Resampler) void {
-        speex_h.speex_resampler_destroy(@ptrCast(r));
+        c.speex_resampler_destroy(@ptrCast(r));
     }
 
     fn checkResamplerErr(code: i32) !void {
@@ -284,7 +276,7 @@ pub const Resampler = opaque {
             RESAMPLER_ERR_OVERFLOW = 5,
         };
 
-        const resampler_err: ResamplerErrorEnum = @enumFromInt(code);
+        const resampler_err: ResamplerErrorEnum = @fromBackingInt(@intCast(code));
         return switch (resampler_err) {
             .RESAMPLER_ERR_SUCCESS => {},
             .RESAMPLER_ERR_ALLOC_FAILED => error.OutOfMemory,

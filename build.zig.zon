@@ -18,8 +18,8 @@
             .lazy = true,
         },
         .opus = .{
-            .url = "git+https://github.com/allyourcodebase/opus?ref=0.17-dev#c9353d73660a87791070522002eb93800f4ebf00",
-            .hash = "opus-0.0.2-vuF-cNCSAABZ7Qzji7OBdm9wMu47lITqjUdTgBnzUCdK",
+            .url = "git+https://github.com/allyourcodebase/opus?ref=0.17-dev#7fc2bef07389ad5731d670099774e8368f83f61b",
+            .hash = "opus-0.0.2-vuF-cPiQAABH1lEhaTs-C3DF8-YrJ4AAcKInLdVTwKKP",
         },
         .zqlite = .{
             .url = "git+https://github.com/kristoff-it/zqlite.zig.git?ref=0.17.x#4ca08b74ea8b8ba38dc5eb67abec469badd5b6dc",
@@ -57,6 +57,10 @@
         .translate_c = .{
             .url = "git+https://codeberg.org/ziglang/translate-c#32dde9bff199152a6cc4ddc77e0e79cc9a3e57fc",
             .hash = "translate_c-0.0.0-Q_BUWhc9BwBtLC-dx8AuZH4hp4edEh90v2mqRBxjr3gW",
+        },
+        .opus_tools = .{
+            .url = "git+https://github.com/allyourcodebase/opus-tools#40dc7cc3632c5b76b53c79455f0aa1b9b795f749",
+            .hash = "opus_tools-0.0.2-ERo7OrcyAABTrIDA_Er6oZ0S5OzxXN0N3bLw4mtftHnA",
         },
     },
     .paths = .{

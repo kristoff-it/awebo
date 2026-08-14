@@ -4,6 +4,7 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const awebo = @import("../../awebo.zig");
+const opus = @import("../media/opus.zig");
 const persistence = @import("../Core/persistence.zig");
 const Core = @import("../Core.zig");
 const Media = @import("../Media.zig");
@@ -17,8 +18,8 @@ pub const debug = if (builtin.mode != .debug) void else struct {
     pub var send_bad_capture_packet: std.atomic.Value(bool) = .init(false);
     pub var drop_next_media_packets: std.atomic.Value(usize) = .init(0);
     var remaining_packets_to_drop: usize = 0;
-    var dred_decoder: *awebo.opus.DredDecoder = undefined;
-    var dred_state: *awebo.opus.DredState = undefined;
+    var dred_decoder: *opus.DredDecoder = undefined;
+    var dred_state: *opus.DredState = undefined;
 };
 
 pub const HostConnectMode = union(enum) {
@@ -445,7 +446,7 @@ pub fn runHostMediaReceiver(
                     const voice, const data = awebo.protocol.media.Voice.parse(body) orelse continue;
                     caller.audio.packets.writePacket(io, voice.restart, header.sequence, data);
 
-                    if (awebo.opus.packetHasLbrr(data) catch false) {
+                    if (opus.packetHasLbrr(data) catch false) {
                         try core.putEvent(.{ .network = .{
                             .host_id = host_id,
                             .cmd = .{

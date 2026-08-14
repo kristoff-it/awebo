@@ -6,7 +6,8 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
-const awebo = @import("../../awebo.zig");
+const rnnoise = @import("rnnoise.zig");
+const opus = @import("opus.zig");
 const Core = @import("../Core.zig");
 const RingBuffer = @import("../RingBuffer.zig").RingBuffer;
 const PacketRing = @import("packet_ring.zig").PacketRing;
@@ -87,11 +88,11 @@ capture_default: ?usize = null,
 capture_volume: f32 = 1.0,
 capture_mute_state: DeviceMuteState = .unmuted,
 capture_threshold: std.atomic.Value(f32) = .init(0.2),
-capture_denoiser: *awebo.rnnoise.Denoiser,
+capture_denoiser: *rnnoise.Denoiser,
 capture_noise_gate: std.atomic.Value(NoiseGate) = .init(.denoiser),
 capture_silence_count: u32 = 10,
 capture_stream: Stream(f32, 1),
-capture_encoder: *awebo.opus.Encoder,
+capture_encoder: *opus.Encoder,
 capture_packets: PacketRing(Packet, 8) = .empty,
 
 /// Same as input, but for the playback device
@@ -100,7 +101,7 @@ playback_default: ?usize = null,
 playback_volume: f32 = 1.0,
 playback_mute_state: DeviceMuteState = .unmuted,
 playback_stream: Stream(f32, 2),
-playback_decoder: *awebo.opus.Decoder,
+playback_decoder: *opus.Decoder,
 playback_voice_processing: bool = false,
 
 os: OsInterface,
@@ -128,7 +129,7 @@ pub const Device = struct {
 pub const Caller = struct {
     core: *Core,
     speaking_last_ns: u64 = 0,
-    decoder: *awebo.opus.Decoder,
+    decoder: *opus.Decoder,
     packets: JitterBuffer,
     voice: Stream(f32, 1),
     os: OsInterface.OsCaller,
@@ -144,7 +145,7 @@ pub const Caller = struct {
                 f32,
                 std.math.ceilPowerOfTwoAssert(
                     usize,
-                    awebo.opus.PACKET_SAMPLE_COUNT,
+                    opus.PACKET_SAMPLE_COUNT,
                 ),
             )}),
             .os = undefined,
@@ -176,7 +177,7 @@ pub const Caller = struct {
                     return;
                 },
                 .playing => |playing| {
-                    if (remaining.len >= awebo.opus.PACKET_SAMPLE_COUNT) {
+                    if (remaining.len >= opus.PACKET_SAMPLE_COUNT) {
                         const written = caller.decoder.decodeFloat(
                             playing.data,
                             remaining,
@@ -187,12 +188,12 @@ pub const Caller = struct {
                             caller.packets.nextPacketCommit(playing);
                             return;
                         };
-                        assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+                        assert(written == opus.PACKET_SAMPLE_COUNT);
                         caller.packets.nextPacketCommit(playing);
-                        remaining = remaining[awebo.opus.PACKET_SAMPLE_COUNT..];
+                        remaining = remaining[opus.PACKET_SAMPLE_COUNT..];
                         continue;
                     } else {
-                        assert(voice_read.data.len >= awebo.opus.PACKET_SAMPLE_COUNT);
+                        assert(voice_read.data.len >= opus.PACKET_SAMPLE_COUNT);
                         const written = caller.decoder.decodeFloat(
                             playing.data,
                             voice_read.data,
@@ -205,51 +206,51 @@ pub const Caller = struct {
                         };
 
                         caller.packets.nextPacketCommit(playing);
-                        assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+                        assert(written == opus.PACKET_SAMPLE_COUNT);
                         assert(written > remaining.len);
                         @memcpy(remaining, voice_read.data.ptr);
-                        voice_read.write_index = awebo.opus.PACKET_SAMPLE_COUNT;
+                        voice_read.write_index = opus.PACKET_SAMPLE_COUNT;
                         voice_read.read_index = remaining.len;
                         return;
                     }
                 },
                 .dred => |dred| {
                     // TODO: implement this :^)
-                    // if (remaining.len >= awebo.opus.PACKET_SAMPLE_COUNT) {}
-                    // assert(dred.info.available >= dred.distance * awebo.opus.PACKET_SAMPLE_COUNT);
-                    // assert(dred.info.end < dred.distance * awebo.opus.PACKET_SAMPLE_COUNT);
+                    // if (remaining.len >= opus.PACKET_SAMPLE_COUNT) {}
+                    // assert(dred.info.available >= dred.distance * opus.PACKET_SAMPLE_COUNT);
+                    // assert(dred.info.end < dred.distance * opus.PACKET_SAMPLE_COUNT);
 
                     log.debug("distance = {}", .{dred.distance_samples});
                     const written = caller.decoder.decodeDredFloat(
                         caller.packets.dred_state,
                         dred.distance_samples,
-                        voice_read.data[0..awebo.opus.PACKET_SAMPLE_COUNT],
+                        voice_read.data[0..opus.PACKET_SAMPLE_COUNT],
                     ) catch |err| blk: {
                         log.err("error decoding dred samples: {t}", .{err});
-                        @memset(voice_read.data[0..awebo.opus.PACKET_SAMPLE_COUNT], 0);
-                        break :blk awebo.opus.PACKET_SAMPLE_COUNT;
+                        @memset(voice_read.data[0..opus.PACKET_SAMPLE_COUNT], 0);
+                        break :blk opus.PACKET_SAMPLE_COUNT;
                     };
 
-                    assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+                    assert(written == opus.PACKET_SAMPLE_COUNT);
                     assert(written > remaining.len);
                     @memcpy(remaining, voice_read.data.ptr);
-                    voice_read.write_index = awebo.opus.PACKET_SAMPLE_COUNT;
+                    voice_read.write_index = opus.PACKET_SAMPLE_COUNT;
                     voice_read.read_index = remaining.len;
                     return;
                 },
                 .missing => {
-                    if (remaining.len >= awebo.opus.PACKET_SAMPLE_COUNT) {
+                    if (remaining.len >= opus.PACKET_SAMPLE_COUNT) {
                         const written = caller.decoder.decodeMissing(remaining, false);
-                        assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+                        assert(written == opus.PACKET_SAMPLE_COUNT);
                         assert(written > remaining.len);
-                        remaining = remaining[awebo.opus.PACKET_SAMPLE_COUNT..];
+                        remaining = remaining[opus.PACKET_SAMPLE_COUNT..];
                         continue;
                     } else {
                         const written = caller.decoder.decodeMissing(voice_read.data, false);
-                        assert(written == awebo.opus.PACKET_SAMPLE_COUNT);
+                        assert(written == opus.PACKET_SAMPLE_COUNT);
                         assert(written > remaining.len);
                         @memcpy(remaining, voice_read.data.ptr);
-                        voice_read.write_index = awebo.opus.PACKET_SAMPLE_COUNT;
+                        voice_read.write_index = opus.PACKET_SAMPLE_COUNT;
                         voice_read.read_index = remaining.len;
                         return;
                     }
@@ -264,9 +265,9 @@ pub const Caller = struct {
 /// has been initialized.
 pub fn init(audio: *Audio, capture_buf: []f32, playback_bufs: [2][]f32) void {
     assert(playback_bufs[0].len == playback_bufs[1].len);
-    const capture_encoder = awebo.opus.Encoder.create() catch unreachable;
-    const capture_denoiser = awebo.rnnoise.Denoiser.create() catch unreachable;
-    const playback_decoder = awebo.opus.Decoder.create() catch unreachable;
+    const capture_encoder = opus.Encoder.create() catch unreachable;
+    const capture_denoiser = rnnoise.Denoiser.create() catch unreachable;
+    const playback_decoder = opus.Decoder.create() catch unreachable;
     audio.* = .{
         .capture_permission = .unknown,
         .capture_encoder = capture_encoder,
@@ -381,12 +382,12 @@ pub fn captureTestStop(audio: *Audio) void {
 fn capturePush(audio: *Audio, frames: [*]const f32, frame_count: u32) callconv(.c) void {
     const capture = &audio.capture_stream.channels[0];
     capture.writeSliceAssumeCapacity(frames[0..frame_count]);
-    if (capture.len() < awebo.opus.PACKET_SAMPLE_COUNT) return;
+    if (capture.len() < opus.PACKET_SAMPLE_COUNT) return;
 
-    var pcm: [awebo.opus.PACKET_SAMPLE_COUNT]f32 = undefined;
+    var pcm: [opus.PACKET_SAMPLE_COUNT]f32 = undefined;
     capture.readFirstAssumeCount(
         &pcm,
-        awebo.opus.PACKET_SAMPLE_COUNT,
+        opus.PACKET_SAMPLE_COUNT,
     );
 
     const noise_gate = audio.capture_noise_gate.load(.unordered);
@@ -397,12 +398,12 @@ fn capturePush(audio: *Audio, frames: [*]const f32, frame_count: u32) callconv(.
                 s.* *= 32768;
             }
             const voice1 = audio.capture_denoiser.processFrame(
-                pcm[0..awebo.rnnoise.FRAME_SIZE],
-                pcm[0..awebo.rnnoise.FRAME_SIZE],
+                pcm[0..rnnoise.FRAME_SIZE],
+                pcm[0..rnnoise.FRAME_SIZE],
             );
             const voice2 = audio.capture_denoiser.processFrame(
-                pcm[awebo.rnnoise.FRAME_SIZE..],
-                pcm[awebo.rnnoise.FRAME_SIZE..],
+                pcm[rnnoise.FRAME_SIZE..],
+                pcm[rnnoise.FRAME_SIZE..],
             );
 
             for (&pcm) |*s| {
@@ -1274,8 +1275,8 @@ const JitterBuffer = struct {
     expected_next_seq: u32 = 0,
     last_buffer_len: u32 = start_count,
     max_deficit: u32 = 0,
-    dred_state: *awebo.opus.DredState,
-    dred_decoder: *awebo.opus.DredDecoder,
+    dred_state: *opus.DredState,
+    dred_decoder: *opus.DredDecoder,
     dred_last_seq: u32 = 0,
 
     /// Shared
@@ -1283,8 +1284,8 @@ const JitterBuffer = struct {
 
     pub fn init() JitterBuffer {
         return .{
-            .dred_state = awebo.opus.DredState.create() catch @panic("oom"),
-            .dred_decoder = awebo.opus.DredDecoder.create() catch @panic("oom"),
+            .dred_state = opus.DredState.create() catch @panic("oom"),
+            .dred_decoder = opus.DredDecoder.create() catch @panic("oom"),
             .packets = .init,
         };
     }
@@ -1456,9 +1457,9 @@ const JitterBuffer = struct {
 
             const data = jb.packets.data[n].slice();
             const distance_packets = next_meta.seq - jb.expected_next_seq;
-            const distance_samples = distance_packets * awebo.opus.PACKET_SAMPLE_COUNT;
+            const distance_samples = distance_packets * opus.PACKET_SAMPLE_COUNT;
 
-            if (awebo.opus.FEC and distance_packets == 1) {
+            if (opus.FEC and distance_packets == 1) {
                 jb.expected_next_seq += 1;
                 if (idx > 1) jb.packets.commitRead(packet_slices.read_index + idx - 1);
                 return .{
@@ -1484,7 +1485,7 @@ const JitterBuffer = struct {
                     jb.dred_state,
                     jb.packets.data[n].slice(),
                     48000,
-                    // distance_packets + awebo.opus.PACKET_SAMPLE_COUNT,
+                    // distance_packets + opus.PACKET_SAMPLE_COUNT,
                     // distance_packets,
                     .eager,
                 )) |info| {
@@ -1560,8 +1561,8 @@ const JitterBuffer = struct {
         };
 
         // pub const DredPacket = struct {
-        //     state: *awebo.opus.DredState,
-        //     info: awebo.opus.DredInfo = undefined,
+        //     state: *opus.DredState,
+        //     info: opus.DredInfo = undefined,
         // };
 
         pub const init: PlaybackPacketRing = .{};
@@ -1584,8 +1585,8 @@ const JitterBuffer = struct {
         }
 
         pub const DredWrite = struct {
-            state: *awebo.opus.DredState,
-            info: *awebo.opus.DredInfo,
+            state: *opus.DredState,
+            info: *opus.DredInfo,
             w: usize,
         };
 

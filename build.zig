@@ -191,6 +191,11 @@ pub fn setupGui(
         .rtcd = !target.query.isNativeCpu(),
     });
 
+    const opus_tools = b.dependency("opus_tools", .{
+        .target = target,
+        .optimize = dep_optimize,
+    });
+
     const rnnoise = b.dependency("rnnoise", .{
         .target = target,
         .optimize = dep_optimize,
@@ -246,6 +251,8 @@ pub fn setupGui(
         },
     });
     t.addIncludePath(b.path("src"));
+    t.linkLibrary(opus.artifact("opus"));
+    t.linkLibrary(opus_tools.artifact("opus-tools"));
 
     // Linking against ffmpeg is currently problematic:
     //
@@ -273,7 +280,7 @@ pub fn setupGui(
     gui.root_module.addImport("appicon", appicon);
     gui.root_module.addImport("folders", folders.module("known-folders"));
     gui.root_module.addImport("zeit", zeit.module("zeit"));
-    gui.root_module.addImport("opus", opus.module("opus"));
+    // gui.root_module.addImport("opus", opus.module("opus"));
     gui.root_module.addImport("rnnoise", rnnoise.module("rnnoise"));
     gui.root_module.addImport("miniaudio", miniaudio.module("miniaudio"));
     gui.root_module.addImport("c", t.mod);
