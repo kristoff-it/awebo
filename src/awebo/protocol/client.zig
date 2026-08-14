@@ -293,7 +293,7 @@ pub const ChannelCreate = struct {
         gpa.free(ca.name);
     }
 
-    pub const Result = enum { ok, name_taken };
+    pub const Result = enum { ok, name_taken, invalid_name };
     pub fn reply(
         cc: ChannelCreate,
         result: Result,
