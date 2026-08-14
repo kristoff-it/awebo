@@ -722,6 +722,35 @@ const Client = struct {
         const cc = try awebo.protocol.client.ChannelCreate.deserializeAlloc(gpa, reader);
         assert(cc.kind == .chat);
 
+        // Validate channel name: max 100 chars, no control chars,
+        // no null bytes, not empty, no leading/trailing whitespace.
+        if (cc.name.len == 0 or cc.name.len > 100) {
+            const ccr = cc.reply(.invalid_name);
+            const bytes = try ccr.serializeAlloc(gpa);
+            errdefer gpa.free(bytes);
+            const msg: *TcpMessage = .create(gpa, bytes, 1);
+            try client.tcp.queue.putOne(io, msg);
+            return;
+        }
+        for (cc.name) |c| {
+            if (std.ascii.isControl(c) or c == 0) {
+                const ccr = cc.reply(.invalid_name);
+                const bytes = try ccr.serializeAlloc(gpa);
+                errdefer gpa.free(bytes);
+                const msg: *TcpMessage = .create(gpa, bytes, 1);
+                try client.tcp.queue.putOne(io, msg);
+                return;
+            }
+        }
+        if (std.ascii.isWhitespace(cc.name[0]) or std.ascii.isWhitespace(cc.name[cc.name.len - 1])) {
+            const ccr = cc.reply(.invalid_name);
+            const bytes = try ccr.serializeAlloc(gpa);
+            errdefer gpa.free(bytes);
+            const msg: *TcpMessage = .create(gpa, bytes, 1);
+            try client.tcp.queue.putOne(io, msg);
+            return;
+        }
+
         const locked = lockState(io);
         defer locked.unlock(io);
         const state = locked.state;
