@@ -497,16 +497,12 @@ const MacOsInterface = struct {
     /// which node to disconnect from the graph.
     const AVAudioSourceNode = opaque {};
 
-    // Temporarily replaces cimport because of 0.16 translate-c regressions.
-    const ca = @import("macos/CoreAudio.h.zig");
-    // const c = @cImport({
-    //     @cInclude("CoreAudio/CoreAudio.h");
-    // });
+    const c = @import("c");
 
     engine: *AudioEngineManager,
 
     pub const OsDevice = struct {
-        device_id: ca.AudioDeviceID,
+        device_id: c.AudioDeviceID,
         pub fn format(md: OsDevice, w: *Io.Writer) !void {
             try w.print("MacOsDevice({})", .{md.device_id});
         }
@@ -623,30 +619,30 @@ const MacOsInterface = struct {
             break :blk core.gpa;
         };
 
-        const addr: ca.AudioObjectPropertyAddress = .{
-            .mSelector = ca.kAudioHardwarePropertyDevices,
-            .mScope = ca.kAudioObjectPropertyScopeGlobal,
-            .mElement = ca.kAudioObjectPropertyElementMain,
+        const addr: c.AudioObjectPropertyAddress = .{
+            .mSelector = c.kAudioHardwarePropertyDevices,
+            .mScope = c.kAudioObjectPropertyScopeGlobal,
+            .mElement = c.kAudioObjectPropertyElementMain,
         };
 
         var data_size: u32 = 0;
-        if (ca.AudioObjectGetPropertyDataSize(
-            ca.kAudioObjectSystemObject,
+        if (c.AudioObjectGetPropertyDataSize(
+            c.kAudioObjectSystemObject,
             &addr,
             0,
             null,
             &data_size,
-        ) != ca.noErr) return;
+        ) != c.noErr) return;
 
-        const count = data_size / @sizeOf(ca.AudioDeviceID);
+        const count = data_size / @sizeOf(c.AudioDeviceID);
 
-        const ids = gpa.alloc(ca.AudioDeviceID, count) catch oom();
+        const ids = gpa.alloc(c.AudioDeviceID, count) catch oom();
 
         var actual_size = data_size;
-        if (ca.AudioObjectGetPropertyData(ca.kAudioObjectSystemObject, &addr, 0, null, &actual_size, ids.ptr) != ca.noErr) return;
+        if (c.AudioObjectGetPropertyData(c.kAudioObjectSystemObject, &addr, 0, null, &actual_size, ids.ptr) != c.noErr) return;
 
-        const default_input = defaultDeviceID(ca.kAudioHardwarePropertyDefaultInputDevice);
-        const default_output = defaultDeviceID(ca.kAudioHardwarePropertyDefaultOutputDevice);
+        const default_input = defaultDeviceID(c.kAudioHardwarePropertyDefaultInputDevice);
+        const default_output = defaultDeviceID(c.kAudioHardwarePropertyDefaultOutputDevice);
 
         for (ids) |device_id| {
             reportDevice(ac, device_id, default_input, default_output);
@@ -655,21 +651,21 @@ const MacOsInterface = struct {
 
     fn reportDevice(
         ac: *Audio,
-        device_id: ca.AudioDeviceID,
-        default_input: ca.AudioDeviceID,
-        default_output: ca.AudioDeviceID,
+        device_id: c.AudioDeviceID,
+        default_input: c.AudioDeviceID,
+        default_output: c.AudioDeviceID,
     ) void {
         var uid_buf: [512:0]u8 = undefined;
         var name_buf: [512:0]u8 = undefined;
 
-        const uid = getStringProperty(device_id, ca.kAudioDevicePropertyDeviceUID, &uid_buf) orelse return;
-        const name = getStringProperty(device_id, ca.kAudioDevicePropertyDeviceNameCFString, &name_buf) orelse return;
+        const uid = getStringProperty(device_id, c.kAudioDevicePropertyDeviceUID, &uid_buf) orelse return;
+        const name = getStringProperty(device_id, c.kAudioDevicePropertyDeviceNameCFString, &name_buf) orelse return;
 
         ac.upsertDevice(&.{
             .id = uid,
             .name = name,
-            .channels_in_count = countChannels(device_id, ca.kAudioDevicePropertyScopeInput),
-            .channels_out_count = countChannels(device_id, ca.kAudioDevicePropertyScopeOutput),
+            .channels_in_count = countChannels(device_id, c.kAudioDevicePropertyScopeInput),
+            .channels_out_count = countChannels(device_id, c.kAudioDevicePropertyScopeOutput),
             .default_in = device_id == default_input,
             .default_out = device_id == default_output,
             .connected = true,
@@ -677,73 +673,73 @@ const MacOsInterface = struct {
         });
     }
 
-    fn defaultDeviceID(selector: ca.AudioObjectPropertySelector) ca.AudioDeviceID {
-        const addr = ca.AudioObjectPropertyAddress{
+    fn defaultDeviceID(selector: c.AudioObjectPropertySelector) c.AudioDeviceID {
+        const addr = c.AudioObjectPropertyAddress{
             .mSelector = selector,
-            .mScope = ca.kAudioObjectPropertyScopeGlobal,
-            .mElement = ca.kAudioObjectPropertyElementMain,
+            .mScope = c.kAudioObjectPropertyScopeGlobal,
+            .mElement = c.kAudioObjectPropertyElementMain,
         };
-        var id: ca.AudioDeviceID = ca.kAudioDeviceUnknown;
-        var size: u32 = @sizeOf(ca.AudioDeviceID);
-        _ = ca.AudioObjectGetPropertyData(ca.kAudioObjectSystemObject, &addr, 0, null, &size, &id);
+        var id: c.AudioDeviceID = c.kAudioDeviceUnknown;
+        var size: u32 = @sizeOf(c.AudioDeviceID);
+        _ = c.AudioObjectGetPropertyData(c.kAudioObjectSystemObject, &addr, 0, null, &size, &id);
         return id;
     }
 
     fn getStringProperty(
-        device_id: ca.AudioDeviceID,
-        selector: ca.AudioObjectPropertySelector,
+        device_id: c.AudioDeviceID,
+        selector: c.AudioObjectPropertySelector,
         out: [:0]u8,
     ) ?[:0]const u8 {
-        const addr = ca.AudioObjectPropertyAddress{
+        const addr = c.AudioObjectPropertyAddress{
             .mSelector = selector,
-            .mScope = ca.kAudioObjectPropertyScopeGlobal,
-            .mElement = ca.kAudioObjectPropertyElementMain,
+            .mScope = c.kAudioObjectPropertyScopeGlobal,
+            .mElement = c.kAudioObjectPropertyElementMain,
         };
-        var cf_str: ca.CFStringRef = null;
-        var size: u32 = @sizeOf(ca.CFStringRef);
-        if (ca.AudioObjectGetPropertyData(device_id, &addr, 0, null, &size, @ptrCast(&cf_str)) != ca.noErr) return null;
+        var cf_str: c.CFStringRef = null;
+        var size: u32 = @sizeOf(c.CFStringRef);
+        if (c.AudioObjectGetPropertyData(device_id, &addr, 0, null, &size, @ptrCast(&cf_str)) != c.noErr) return null;
         if (cf_str == null) return null;
-        defer ca.CFRelease(cf_str);
+        defer c.CFRelease(cf_str);
 
-        if (ca.CFStringGetCString(cf_str, out.ptr, @intCast(out.len), ca.kCFStringEncodingUTF8) == 0) return null;
+        if (c.CFStringGetCString(cf_str, out.ptr, @intCast(out.len), c.kCFStringEncodingUTF8) == 0) return null;
         return std.mem.span(out.ptr);
     }
 
-    fn countChannels(device_id: ca.AudioDeviceID, scope: ca.AudioObjectPropertyScope) u32 {
-        const addr = ca.AudioObjectPropertyAddress{
-            .mSelector = ca.kAudioDevicePropertyStreamConfiguration,
+    fn countChannels(device_id: c.AudioDeviceID, scope: c.AudioObjectPropertyScope) u32 {
+        const addr = c.AudioObjectPropertyAddress{
+            .mSelector = c.kAudioDevicePropertyStreamConfiguration,
             .mScope = scope,
-            .mElement = ca.kAudioObjectPropertyElementMain,
+            .mElement = c.kAudioObjectPropertyElementMain,
         };
         var size: u32 = 0;
-        if (ca.AudioObjectGetPropertyDataSize(device_id, &addr, 0, null, &size) != ca.noErr or size == 0) return 0;
+        if (c.AudioObjectGetPropertyDataSize(device_id, &addr, 0, null, &size) != c.noErr or size == 0) return 0;
 
         // AudioBufferList is variable-length; use a fixed-size stack buffer
-        var raw: [4096]u8 align(@alignOf(ca.AudioBufferList)) = undefined;
+        var raw: [4096]u8 align(@alignOf(c.AudioBufferList)) = undefined;
         if (size > raw.len) return 0;
-        if (ca.AudioObjectGetPropertyData(device_id, &addr, 0, null, &size, &raw) != ca.noErr) return 0;
+        if (c.AudioObjectGetPropertyData(device_id, &addr, 0, null, &size, &raw) != c.noErr) return 0;
 
-        const bl: *const ca.AudioBufferList = @ptrCast(&raw);
+        const bl: *const c.AudioBufferList = @ptrCast(&raw);
         var total: u32 = 0;
         for ((&bl.mBuffers).ptr[0..bl.mNumberBuffers]) |b| total += b.mNumberChannels;
         return total;
     }
 
-    const kHardwareSelectors = [_]ca.AudioObjectPropertySelector{
-        ca.kAudioHardwarePropertyDevices,
-        ca.kAudioHardwarePropertyDefaultInputDevice,
-        ca.kAudioHardwarePropertyDefaultOutputDevice,
+    const kHardwareSelectors = [_]c.AudioObjectPropertySelector{
+        c.kAudioHardwarePropertyDevices,
+        c.kAudioHardwarePropertyDefaultInputDevice,
+        c.kAudioHardwarePropertyDefaultOutputDevice,
     };
 
     fn installHardwareListener(ac: *Audio) void {
         for (kHardwareSelectors) |sel| {
-            const addr = ca.AudioObjectPropertyAddress{
+            const addr = c.AudioObjectPropertyAddress{
                 .mSelector = sel,
-                .mScope = ca.kAudioObjectPropertyScopeGlobal,
-                .mElement = ca.kAudioObjectPropertyElementMain,
+                .mScope = c.kAudioObjectPropertyScopeGlobal,
+                .mElement = c.kAudioObjectPropertyElementMain,
             };
-            _ = ca.AudioObjectAddPropertyListener(
-                ca.kAudioObjectSystemObject,
+            _ = c.AudioObjectAddPropertyListener(
+                c.kAudioObjectSystemObject,
                 &addr,
                 hardwareListenerProc,
                 ac,
@@ -753,13 +749,13 @@ const MacOsInterface = struct {
 
     fn removeHardwareListener(ac: *Audio) void {
         for (kHardwareSelectors) |sel| {
-            const addr = ca.AudioObjectPropertyAddress{
+            const addr = c.AudioObjectPropertyAddress{
                 .mSelector = sel,
-                .mScope = ca.kAudioObjectPropertyScopeGlobal,
-                .mElement = ca.kAudioObjectPropertyElementMain,
+                .mScope = c.kAudioObjectPropertyScopeGlobal,
+                .mElement = c.kAudioObjectPropertyElementMain,
             };
-            _ = ca.AudioObjectRemovePropertyListener(
-                ca.kAudioObjectSystemObject,
+            _ = c.AudioObjectRemovePropertyListener(
+                c.kAudioObjectSystemObject,
                 &addr,
                 hardwareListenerProc,
                 ac,
@@ -768,16 +764,16 @@ const MacOsInterface = struct {
     }
 
     fn hardwareListenerProc(
-        _: ca.AudioObjectID,
+        _: c.AudioObjectID,
         _: c_uint,
-        _: ?[*]const ca.AudioObjectPropertyAddress,
+        _: ?[*]const c.AudioObjectPropertyAddress,
         client_data: ?*anyopaque,
-    ) callconv(.c) ca.OSStatus {
-        const ac: *Audio = @ptrCast(@alignCast(client_data orelse return ca.noErr));
+    ) callconv(.c) c.OSStatus {
+        const ac: *Audio = @ptrCast(@alignCast(client_data orelse return c.noErr));
         // Re-enumerate all devices so connected/default flags stay consistent
         discoverDevices(ac);
         ac.restart();
-        return ca.noErr;
+        return c.noErr;
     }
 
     const AudioEngineManager = opaque {
@@ -798,8 +794,8 @@ const MacOsInterface = struct {
             }
         }
 
-        extern fn audioSetDevices(*AudioEngineManager, ca.AudioDeviceID, ca.AudioDeviceID, bool) void;
-        pub fn setDevices(ae: *AudioEngineManager, input: ca.AudioDeviceID, output: ca.AudioDeviceID, voice: bool) void {
+        extern fn audioSetDevices(*AudioEngineManager, c.AudioDeviceID, c.AudioDeviceID, bool) void;
+        pub fn setDevices(ae: *AudioEngineManager, input: c.AudioDeviceID, output: c.AudioDeviceID, voice: bool) void {
             audioSetDevices(ae, input, output, voice);
         }
 

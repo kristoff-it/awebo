@@ -14,6 +14,10 @@
 #include "libavutil/pixdesc.h"
 #include <errno.h>
 
+#ifdef __APPLE__
+#include <CoreAudio/CoreAudio.h>
+#endif
+
 // @cInclude("libavutil/frame.h");
 // @cInclude("libavutil/mem.h");
 // @cInclude("libavutil/error.h");
