@@ -825,7 +825,7 @@ const Client = struct {
 
             client.voice = .{
                 .id = cmd.voice,
-                .nonce = 12345,
+                .nonce = std.crypto.random.int(u64),
             };
 
             const gop = try state.clients.voice_index.getOrPutValue(
@@ -843,7 +843,7 @@ const Client = struct {
 
         const mcd: awebo.protocol.server.MediaConnectionDetails = .{
             .voice = cmd.voice,
-            .nonce = 12345, // number chosen by me, guaranteed to be random!
+            .nonce = client.voice.?.nonce,
         };
         const bytes = try mcd.serializeAlloc(gpa);
         errdefer gpa.free(bytes);
