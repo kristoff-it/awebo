@@ -13,17 +13,6 @@ capture: bool = false,
 power: std.atomic.Value(f32) = .init(0),
 
 pub fn draw(av: *Av, core: *Core) !void {
-    if (builtin.target.os.tag == .macos) {
-        dvui.labelNoFmt(@src(),
-            \\Sorry audio is a bit janky on macOS.
-            \\Changing the audio input / output dropdown menus will
-            \\  change your OS-wide default device,
-            \\  and sometimes the audio engine will break during the transition.
-            \\If you don't hear anything after switching settings, restart Awebo.
-        , .{ .ellipsize = false }, .{});
-        _ = dvui.spacer(@src(), .{});
-    }
-
     {
         var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{
             .expand = .horizontal,

@@ -327,7 +327,7 @@ pub fn setupGui(
             gui.root_module.linkFramework("Security", .{});
             gui.root_module.addCSourceFiles(.{
                 .files = &.{
-                    "src/client/media/macos/audio.m",
+                    // "src/client/media/macos/audio.m",
                     // "src/client/media/macos/video.m",
                     // "src/client/media/macos/video-format.m",
                     "src/client/media/macos/screen-capture.m",
