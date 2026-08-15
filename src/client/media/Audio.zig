@@ -154,11 +154,26 @@ pub const Caller = struct {
         return caller;
     }
 
-    pub fn destroy(c: *Caller, gpa: Allocator, audio: *Audio) void {
-        c.os.deinit(audio);
+    pub fn destroy(c: *Caller) void {
+        log.debug("caller deinit", .{});
+        c.os.deinit();
+        const gpa = c.core.gpa;
         c.decoder.destroy();
         c.voice.deinit(gpa);
         gpa.destroy(c);
+    }
+
+    /// Called during normal call operation to detatch a caller from the
+    /// audio stream and eventually destroy it. This is necessary because
+    /// the audio thread might still be accessing state of this caller and
+    /// and immediate destroy would cause the audio thread to read garbage.
+    ///
+    /// Currently the final destroy invocation is handled by the audio thread,
+    /// which is not optimal.
+    ///
+    /// Once the call is over, call `destroy` directly instead.
+    pub fn detatchAndDestroy(c: *Caller, audio: *Audio) void {
+        c.os.detatchAndDestroy(audio);
     }
 
     /// Called by the OS audio thread to get new audio data
@@ -508,7 +523,11 @@ const MiniAudioInterface = struct {
             return .{};
         }
 
-        pub fn deinit(mac: *OsCaller, audio: *Audio) void {
+        pub fn deinit(mac: *OsCaller) void {
+            _ = mac;
+        }
+
+        pub fn detatchAndDestroy(mac: *OsCaller, audio: *Audio) void {
             audio.os.callSourceRemove(mac);
         }
 
@@ -531,11 +550,15 @@ const MiniAudioInterface = struct {
     capture_device_init: bool = false,
 
     // this should be behind a mutex
-    callers: std.ArrayList(*Caller) = .empty,
+    callers: std.ArrayList(*Caller),
+    requests: CallJoinLeaveRing = .empty,
 
     pub fn init(ac: *Audio) MiniAudioInterface {
-        _ = ac;
-        return .{};
+        const core: *Core = @alignCast(@fieldParentPtr("audio", ac));
+
+        return .{
+            .callers = std.ArrayList(*Caller).initCapacity(core.gpa, 256) catch @panic("TODO"),
+        };
     }
 
     pub fn deinit(mai: *MiniAudioInterface, ac: *Audio) void {
@@ -568,8 +591,7 @@ const MiniAudioInterface = struct {
     }
 
     pub fn callBegin(mai: *MiniAudioInterface, ac: *Audio) bool {
-        const core: *Core = @alignCast(@fieldParentPtr("audio", ac));
-        mai.callers.clearAndFree(core.gpa);
+        mai.callers.clearRetainingCapacity();
         mai.captureStart(ac);
         mai.playbackStart();
         return true;
@@ -613,14 +635,13 @@ const MiniAudioInterface = struct {
         frame_count: ma.ma_uint32,
     ) callconv(.c) void {
         _ = p_input;
-        const callers: *std.ArrayList(*Caller) = @ptrCast(@alignCast(p_device.*.pUserData));
+        const mai: *MiniAudioInterface = @ptrCast(@alignCast(p_device.*.pUserData));
         const output_m: [*]f32 = @ptrCast(@alignCast(p_output));
         const output = output_m[0..(frame_count * playback_channels)];
 
         var temp: [4096]f32 = undefined;
         assert(frame_count < temp.len); // if this fails, we need to make temp bigger
-        for (callers.items) |caller| {
-            // I NEED TO SUM THE CALLERS SAMPLES, NOT OVERRIDE
+        for (mai.callers.items) |caller| {
             caller.playbackSourceMonoFill(&temp, frame_count);
             for (0..frame_count) |i| {
                 // repeat the same sample for each channel since the source is mono
@@ -629,11 +650,29 @@ const MiniAudioInterface = struct {
                 }
             }
         }
+
+        // TODO: compute our time budget and only process part of the requests
+        const slices = mai.requests.slices();
+        for (slices.array()) |slice| for (slice) |req| switch (req.action) {
+            .join => mai.callers.appendAssumeCapacity(req.caller),
+            .leave => if (std.mem.findScalar(
+                *Caller,
+                mai.callers.items,
+                req.caller,
+            )) |index| {
+                _ = mai.callers.swapRemove(index);
+                // TODO: Not optimal to have the audio thread perform the destroy.
+                req.caller.destroy();
+            },
+        };
+
+        mai.requests.commitRead(slices.read_index + slices.len());
     }
 
     fn playbackStart(mai: *MiniAudioInterface) void {
         assert(mai.context_init);
         assert(!mai.playback_device_init);
+        mai.playback_device_init = true;
 
         var device_config = ma.ma_device_config_init(ma.ma_device_type_playback);
         device_config.playback.pDeviceID = if (mai.playback_device_id) |*d| d else null;
@@ -641,7 +680,7 @@ const MiniAudioInterface = struct {
         device_config.playback.channels = playback_channels;
         device_config.sampleRate = playback_rate;
         device_config.dataCallback = playbackCb;
-        device_config.pUserData = &mai.callers;
+        device_config.pUserData = mai;
 
         ma_error_check(ma.ma_device_init(&mai.context, &device_config, &mai.playback_device)) catch ma_panic();
         ma_error_check(ma.ma_device_start(&mai.playback_device)) catch ma_panic();
@@ -650,19 +689,18 @@ const MiniAudioInterface = struct {
     fn playbackStop(mai: *MiniAudioInterface) void {
         if (mai.playback_device_init) {
             ma.ma_device_uninit(&mai.playback_device);
+            log.debug("--- end of call playback ---", .{});
             mai.playback_device_init = false;
         }
     }
 
     pub fn callSourceAdd(mai: *MiniAudioInterface, caller: *Caller, kind: SourceKind) void {
         _ = kind;
-        mai.callers.append(caller.core.gpa, caller) catch oom();
+        mai.requests.write(.{ .caller = caller, .action = .join }) catch @panic("TODO");
     }
 
     pub fn callSourceRemove(mai: *MiniAudioInterface, caller: *OsCaller) void {
-        if (std.mem.findScalar(*Caller, mai.callers.items, caller.get_caller())) |index| {
-            _ = mai.callers.swapRemove(index);
-        }
+        mai.requests.write(.{ .caller = caller.get_caller(), .action = .leave }) catch @panic("TODO");
     }
 
     fn initContext(mai: *MiniAudioInterface) void {
@@ -789,9 +827,12 @@ const DummyInterface = struct {
             return .{};
         }
 
-        pub fn deinit(dc: OsCaller, audio: *Audio) void {
+        pub fn deinit(dc: *OsCaller) void {
             _ = dc;
-            _ = audio;
+        }
+
+        pub fn detatchAndDestroy(dc: *OsCaller) void {
+            _ = dc;
         }
     };
 
@@ -1334,4 +1375,87 @@ const JitterBuffer = struct {
                 lhs.restart < rhs.restart;
         }
     };
+};
+
+const CallJoinLeaveRing = struct {
+    requests: [buffer_len]Request = undefined,
+
+    /// This data structure operates similarly to a ring buffer.
+    read_index: std.atomic.Value(usize) = .init(0),
+    write_index: std.atomic.Value(usize) = .init(0),
+
+    pub const Request = struct {
+        caller: *Caller,
+        action: enum { join, leave },
+    };
+
+    pub const empty: CallJoinLeaveRing = .{};
+    pub const RingIndex = std.math.IntFittingRange(0, buffer_len);
+
+    pub fn write(pb: *CallJoinLeaveRing, request: Request) !void {
+        const w = pb.write_index.load(.acquire);
+        const r = pb.read_index.load(.acquire);
+        if (mask2(w + buffer_len) == r) return error.Full;
+        pb.requests[mask(w)] = request;
+        pb.write_index.store(mask2(w + 1), .release);
+    }
+
+    pub const DredWrite = struct {
+        state: *opus.DredState,
+        info: *opus.DredInfo,
+        w: usize,
+    };
+
+    pub const Slices = struct {
+        read_index: usize,
+        first: []Request,
+        second: []Request,
+
+        pub fn len(s: *const Slices) usize {
+            return s.first.len + s.second.len;
+        }
+
+        /// Convenience method for iterating over both slices more easily.
+        pub fn array(s: *const Slices) [2][]Request {
+            return .{ s.first, s.second };
+        }
+    };
+
+    /// Returns two slices that contain written data.
+    /// The first slice contains older data.
+    pub fn slices(pb: *CallJoinLeaveRing) Slices {
+        const w = pb.write_index.load(.acquire);
+        const r = pb.read_index.load(.acquire);
+        const l = len(w, r);
+
+        const slice1_start = mask(r);
+        const slice1_end = @min(buffer_len, slice1_start + l);
+
+        const slice1 = pb.requests[slice1_start..slice1_end];
+        const slice2 = pb.requests[0 .. l - slice1.len];
+
+        return .{
+            .read_index = r,
+            .first = slice1,
+            .second = slice2,
+        };
+    }
+
+    pub fn commitRead(pb: *CallJoinLeaveRing, new_read_index: usize) void {
+        pb.read_index.store(mask2(new_read_index), .release);
+    }
+
+    fn mask(index: usize) usize {
+        return index % buffer_len;
+    }
+
+    fn mask2(index: usize) usize {
+        return index % (2 * buffer_len);
+    }
+
+    pub fn len(w: usize, r: usize) usize {
+        const wrap_offset = 2 * buffer_len * @intFromBool(w < r);
+        const adjusted_write_index = w + wrap_offset;
+        return adjusted_write_index - r;
+    }
 };

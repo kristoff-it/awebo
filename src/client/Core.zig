@@ -338,10 +338,10 @@ fn handleRequestReply(core: *Core, crr: awebo.protocol.server.ClientRequestReply
                     .ok => .ok,
                     .rate_limit => .rate_limit,
                     .no_permission => .no_permission,
-                    .err => |err| @enumFromInt(err.code),
+                    .err => |err| @fromBackingInt(@intCast(err.code)),
                 };
 
-                @atomicStore(u8, status, @intFromEnum(new), .release);
+                @atomicStore(u8, status, @backingInt(new), .release);
             }
         },
         else => log.warn("unhandled ClientRequestReply marker '{c}'", .{
@@ -779,7 +779,7 @@ pub const ActiveCall = struct {
             .audio => {}, // TODO
             .leave => {
                 if (ac.callers.fetchSwapRemove(cu.id)) |entry| {
-                    entry.value.audio.destroy(core.gpa, &core.audio);
+                    entry.value.audio.detatchAndDestroy(&core.audio);
                     if (entry.value.screen) |s| s.destroy(core.gpa);
                 }
             },
@@ -799,7 +799,7 @@ pub const ActiveCall = struct {
         if (call.manager_future) |*manager_future| manager_future.cancel(io);
         log.debug("manager future done", .{});
         for (call.callers.values()) |caller| {
-            caller.audio.destroy(core.gpa, &core.audio);
+            caller.audio.destroy();
             if (caller.screen) |s| s.destroy(core.gpa);
         }
 
