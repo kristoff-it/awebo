@@ -22,6 +22,26 @@ calls on Awebo.
 A call with 3 screensharing sessions active at the same time (March 2026):
 ![](.forgejo/march2026.png)
 
+### ⚠️ Security Warning
+
+**Awebo is not yet safe to run on a public network.** The following
+security issues must be addressed before production use:
+
+1. **No TLS encryption** — TCP traffic (including authentication credentials)
+   is sent in plaintext. Use a TLS-terminating reverse proxy (e.g., nginx,
+   Traefik, Caddy) in front of the Awebo server, or restrict access to
+   trusted networks only.
+
+2. **UDP media has no per-session encryption** — Voice and video packets
+   are unencrypted on the wire.
+
+3. **Authentication timeout not yet implemented** — Unauthenticated clients
+   can hold connections open. The connection rate limiter provides partial
+   protection but should not be relied upon.
+
+Until these are resolved, run Awebo behind a VPN (e.g., WireGuard, Tailscale)
+or on a trusted LAN.
+
 ### Does Awebo use WebRTC?
 
 No, we are using state of the art codecs (Opus DRED, h264, HEVC, AV1, FFV1)
