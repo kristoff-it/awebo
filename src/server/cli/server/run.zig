@@ -1842,7 +1842,12 @@ fn getUserByLogin(
 ) error{ NotFound, Password }!awebo.User {
     const maybe_pswd_row = qs.select_password.run(@src(), db, .{ .handle = username });
     const pswd_row = maybe_pswd_row orelse {
-        std.crypto.pwhash.argon2.strVerify("bananarama123", password, .{ .allocator = gpa }, io) catch {};
+        // Use a pre-computed valid Argon2id hash to ensure the dummy
+        // verification takes the same time as a real one, preventing
+        // timing attacks that distinguish existing vs non-existing users.
+        // This hash was generated with argon2id, m=65536, t=3, p=4.
+        const dummy_hash = "$argon2id$v=19$m=65536,t=3,p=4$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        std.crypto.pwhash.argon2.strVerify(dummy_hash, password, .{ .allocator = gpa }, io) catch {};
         return error.NotFound;
     };
 
