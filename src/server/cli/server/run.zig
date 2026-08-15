@@ -1262,6 +1262,20 @@ const Client = struct {
         const log = client.scopedLog();
         const cms = try awebo.protocol.client.ChatMessageSend.deserializeAlloc(gpa, reader);
 
+        // Reject messages exceeding 10,000 characters to prevent
+        // memory exhaustion attacks from large message payloads.
+        const max_message_len: usize = 10_000;
+        if (cms.text.len > max_message_len) {
+            log.debug("message too long ({} bytes), rejecting", .{cms.text.len});
+            const reply = cms.replyErr(.too_long);
+
+            const bytes = try reply.serializeAlloc(gpa);
+            const msg: *TcpMessage = .create(gpa, bytes, 1);
+            try client.tcp.queue.putOne(io, msg);
+            gpa.free(cms.text);
+            return;
+        }
+
         const locked = lockState(io);
         defer locked.unlock(io);
         const state = locked.state;
