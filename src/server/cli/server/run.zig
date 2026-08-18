@@ -196,13 +196,27 @@ fn runClientManager(io: Io, gpa: Allocator, stream: Io.net.Stream) Io.Cancelable
         // TODO: timeout
         const marker = reader.takeByte() catch return;
         if (marker != awebo.protocol.client.Authenticate.marker) {
-            // TODO: failing auth should consume rate limiter tokens
+            // Consume a rate limiter token for failed auth to prevent
+            // auth brute-force attempts. The connect rate limiter already
+            // limits connection frequency, but we add an additional
+            // user_action rate limiter here to slow down auth attempts
+            // from within a single connection.
+            var auth_rl: RateLimiter = .init(io, .user_action);
+            auth_rl.takeToken(io, .user_action) catch {
+                log.debug("auth rate limit exceeded after wrong marker, closing", .{});
+                return;
+            };
             log.debug("unauthenticated client sent us wrong marker: '{c}'", .{marker});
             return;
         }
 
         client.authenticateRequest(io, gpa, reader) catch |err| {
-            // TODO: failing auth should consume rate limiter tokens
+            // Consume a rate limiter token for failed auth.
+            var auth_rl: RateLimiter = .init(io, .user_action);
+            auth_rl.takeToken(io, .user_action) catch {
+                log.debug("auth rate limit exceeded after failed auth, closing", .{});
+                return;
+            };
             log.err("error processing Authenticate: {t}", .{err});
             return;
         };
