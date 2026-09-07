@@ -1868,7 +1868,11 @@ fn getUserByLogin(
         .handle = gpa.dupe(u8, username) catch oom(),
         .invited_by = r.get(.invited_by),
         .server = .{
-            .pswd_hash = gpa.dupe(u8, pswd_hash) catch oom(),
+            // Don't store the password hash in memory after authentication.
+            // It's never used again and keeping it increases the impact of
+            // a memory dump attack. Store an empty string that will be
+            // freed by deinit without leaking sensitive data.
+            .pswd_hash = "",
         },
     };
 }
