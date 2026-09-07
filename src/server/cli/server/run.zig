@@ -159,6 +159,12 @@ fn runTcpAccept(io: Io, gpa: Allocator, tcp: Io.net.Server) !void {
 }
 
 /// Spawns runClientReceive and runClientSend for a TCP connection.
+/// Reads the authentication marker byte from the client.
+/// Used with Io.Select to implement an authentication timeout.
+fn authReadMarker(reader: *Io.Reader) !u8 {
+    return reader.takeByte();
+}
+
 /// Failure in either child coroutine will trigger cancelation of all,
 /// ending with the TCP connection getting closed.
 fn runClientManager(io: Io, gpa: Allocator, stream: Io.net.Stream) Io.Cancelable!void {
@@ -193,8 +199,42 @@ fn runClientManager(io: Io, gpa: Allocator, stream: Io.net.Stream) Io.Cancelable
     // Authentication, client won't be able to send any other kind of command
     // until successfully authenticated.
     {
-        // TODO: timeout
-        const marker = reader.takeByte() catch return;
+        // Give clients 10 seconds to authenticate, otherwise close the
+        // connection to prevent resource exhaustion from idle connections.
+        const AuthSelect = Io.Select(union(enum) {
+            read: @typeInfo(@TypeOf(authReadMarker)).@"fn".return_type.?,
+            timeout: void,
+        });
+        var auth_buf: [1]AuthSelect.Union = undefined;
+        var auth_select: AuthSelect = .init(io, &auth_buf);
+        defer auth_select.cancelDiscard();
+
+        auth_select.concurrent(.read, authReadMarker, .{reader}) catch {
+            log.debug("failed to start auth read, closing connection", .{});
+            return;
+        };
+        auth_select.concurrent(.timeout, Io.Timeout.sleep, .{
+            .deadline = Io.Clock.real.now(io).addDuration(.fromSeconds(10)).withClock(.real),
+        }) catch {
+            log.debug("failed to start auth timeout, closing connection", .{});
+            return;
+        };
+
+        const auth_result = auth_select.await() catch {
+            log.debug("auth select failed, closing connection", .{});
+            return;
+        };
+
+        const marker = switch (auth_result) {
+            .read => |m| m catch {
+                log.debug("failed to read auth marker, closing connection", .{});
+                return;
+            },
+            .timeout => {
+                log.debug("authentication timed out after 10s, closing connection", .{});
+                return;
+            },
+        };
         if (marker != awebo.protocol.client.Authenticate.marker) {
             // TODO: failing auth should consume rate limiter tokens
             log.debug("unauthenticated client sent us wrong marker: '{c}'", .{marker});
