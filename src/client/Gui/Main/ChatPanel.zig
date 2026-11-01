@@ -558,7 +558,7 @@ fn drawMessage(
 
             if (e.evt == .mouse and e.evt.mouse.action == .position) {
                 msg_box.data().options.background = true;
-                msg_box.data().options.color_fill = dvui.themeGet().color(.content, .fill_hover);
+                msg_box.data().options.color_fill = .{ .color = dvui.themeGet().color(.content, .fill_hover) };
                 hover = true;
                 e.handle(@src(), msg_box.data());
             }
@@ -661,7 +661,7 @@ fn drawMessage(
                 .padding = .all(0),
                 .margin = .all(0),
                 .font = .theme(.mono),
-                .color_text = if (hover) dvui.Color.gray.lighten(8) else .transparent,
+                .color_text = if (hover) .{ .color = dvui.Color.gray.lighten(8) } else .transparent,
             });
         }
 
@@ -690,7 +690,7 @@ fn drawMessage(
                 const highlighted, rest = std.mem.cut(u8, highlight_start, &.{ 0x20, 0x0B }).?;
                 tl.addText(highlighted, .{
                     .background = true,
-                    .color_fill = dvui.themeGet().highlight.fill,
+                    .color_fill = if (dvui.themeGet().highlight.fill) |f| .{ .color = f } else null,
                 });
             }
 

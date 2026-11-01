@@ -23,7 +23,7 @@ pub fn button(
     var btout: dvui.WidgetData = undefined;
     var disabled_opt = opt;
     // disabled_opt.tab_index = 0;
-    disabled_opt.color_text = dvui.Color.average(control_opts.color(.text), control_opts.color(.fill));
+    disabled_opt.color_text = .{ .color = dvui.Color.average(control_opts.color(.text).color, control_opts.color(.fill).color) };
     disabled_opt.data_out = &btout;
 
     bw.init(src, bo, disabled_opt);

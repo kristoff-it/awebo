@@ -2,15 +2,15 @@
     .name = .awebo,
     .version = "0.0.1",
     .fingerprint = 0x50424de2ba07ebcc,
-    .minimum_zig_version = "0.17.0-dev.1640+2597da025",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .miniaudio = .{
             .url = "git+https://codeberg.org/allyourcodebase/miniaudio.git#9907be968cf9f31bdcd4c0dcdd8e91ffdf585441",
             .hash = "miniaudio-0.11.25-LWmAGwwgAAAdQQ-kMRYz0yW-p-KQkFKDSZI3RlC1YWN8",
         },
         .dvui = .{
-            .url = "git+https://github.com/david-vanderson/dvui?ref=0.17.x#20d3e92db74e55678c26009818786d07ae9f30a1",
-            .hash = "dvui-0.6.0-dev-AQFJmUH_AAGloFzBJgw0vAMLY4pFCl_BQ8qIPiL1kcOd",
+            .url = "git+https://github.com/david-vanderson/dvui#4ed19f847fd0ec6ec97f9600316d86c0e0cd255c",
+            .hash = "dvui-0.6.0-dev-AQFJmaGoBAG4gedKz36Pkv4RuRs86V5BjXavPsYijdkp",
         },
         .pulseaudio = .{
             .url = "git+https://github.com/andrewrk/pulseaudio#b6ff9a7da57592609adbfad000039b0c01f26344",
@@ -51,12 +51,12 @@
             .hash = "rnnoise-0.0.1-7NNaDOAZAACgbO86yoLlnsJvt5r-kgZYbyJFiYyGoxKs",
         },
         .ffmpeg = .{
-            .url = "git+https://github.com/allyourcodebase/ffmpeg#9ea6a594390380900f46fa89628934194f979a9a",
-            .hash = "ffmpeg-8.1.1-5-zT7QA_DkUQRwO2hxIQpPizeSEup1zwQcuKVEIH2WlUEX",
+            .url = "git+https://github.com/allyourcodebase/ffmpeg#334f343113ae77b8522de8e117c0c946decc15a2",
+            .hash = "ffmpeg-8.1.1-6-zT7QA0j0UQQo_DEGnhkpNwIqHV7FLgglTQg-geJcF7LS",
         },
         .translate_c = .{
-            .url = "git+https://codeberg.org/ziglang/translate-c#32dde9bff199152a6cc4ddc77e0e79cc9a3e57fc",
-            .hash = "translate_c-0.0.0-Q_BUWhc9BwBtLC-dx8AuZH4hp4edEh90v2mqRBxjr3gW",
+            .url = "git+https://codeberg.org/ziglang/translate-c?ref=zig-0.17.x#cfac21f3199b2b02ce3fd7db652aa456421fe4ab",
+            .hash = "translate_c-2.0.2-Q_BUWvBNBwDnyehSiuAJmdFcMYHYGA-Jc3KiYdrV2Dqx",
         },
         .opus_tools = .{
             .url = "git+https://github.com/allyourcodebase/opus-tools#40dc7cc3632c5b76b53c79455f0aa1b9b795f749",

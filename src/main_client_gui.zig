@@ -22,6 +22,8 @@ pub const dvui_app: dvui.App = .{
             .size = .{ .w = 1280.0, .h = 720.0 },
             .min_size = .{ .w = 250.0, .h = 350.0 },
             .title = "Awebo",
+            .org = "awebo",
+            .app = "awebo",
             .icon = @embedFile("appicon"),
             .window_init_options = .{
                 .theme = dvui.Theme.builtin.adwaita_dark,

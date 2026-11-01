@@ -451,17 +451,15 @@ fn renderVoiceChannel(cl: *ChannelList, core: *Core, h: *awebo.Host, v: *const C
             dvui.timer(box.data().id, wait);
         }
 
-        const bg_color: ?dvui.Color = if (speaking) .yellow else null;
-
         dvui.label(@src(), "{s}{s}", .{
             m.display_name,
             if (caller.state.muted) " [M]" else "",
         }, .{
             .font = .theme(.title),
             .id_extra = caller.id.toInt(),
-            .color_text = text_color,
+            .color_text = .{ .color = text_color },
             .background = true,
-            .color_border = bg_color,
+            .color_border = if (speaking) .{ .color = .yellow } else null,
             .border = .all(2),
         });
     }
