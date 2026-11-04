@@ -160,7 +160,7 @@ pub fn run(core: *Core) void {
     defer core.audio.deinit();
 
     log.debug("starting screen capture support", .{});
-    core.screen_capture.init(core.gpa);
+    core.screen_capture.init(core.io, core.gpa);
 
     log.debug("discovering camera devices", .{});
     core.webcam_capture = .init();
@@ -652,9 +652,15 @@ pub const ActiveCall = struct {
         return core.hosts.get(ac.host_id).?.shared.voices.get(ac.voice_id).?;
     }
 
-    pub fn screenshareBegin(ac: *ActiveCall, core: *Core, lossless: bool, config: awebo.protocol.media.Config) !void {
+    pub fn screenshareBegin(
+        ac: *ActiveCall,
+        core: *Core,
+        lossless: bool,
+        config: awebo.protocol.media.Config,
+        display_idx: ?usize,
+    ) !void {
         assert(ac.screen == .off);
-        const format = try core.screen_capture.startCapture(lossless, config);
+        const format = try core.screen_capture.startCapture(lossless, config, display_idx);
         core.screen_capture.send.store(true, .unordered);
 
         const host = core.hosts.get(ac.host_id).?;

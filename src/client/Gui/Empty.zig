@@ -74,44 +74,45 @@ fn newHostFloatingWindow(empty: *Empty, core: *Core) !void {
 
     _ = dvui.spacer(@src(), .{ .min_size_content = dvui.Size.all(10) });
 
-    // TODO: This should probably just be a `frame_arena` field on `App` that is cleared before every frame
-    var arena_allocator: std.heap.ArenaAllocator = .init(gpa);
-    defer arena_allocator.deinit();
-    const arena = arena_allocator.allocator();
-
     var enter_pressed = false;
 
     var address: []const u8 = undefined;
-    var address_input = dvui.textEntry(@src(), .{
-        .placeholder = "Server IP Address",
-    }, .{
-        .expand = .horizontal,
-    });
-    enter_pressed = enter_pressed or address_input.enter_pressed;
-    address = try arena.dupe(u8, address_input.getText());
-    if (address.len == 0) address = "127.0.0.1";
-    address_input.deinit();
+    {
+        var address_input = dvui.textEntry(@src(), .{
+            .placeholder = "Server IP Address",
+        }, .{
+            .expand = .horizontal,
+        });
+        enter_pressed = enter_pressed or address_input.enter_pressed;
+        address = address_input.textGet();
+        if (address.len == 0) address = "127.0.0.1";
+        address_input.deinit();
+    }
 
     var username: []const u8 = undefined;
-    var username_input = dvui.textEntry(@src(), .{
-        .placeholder = "Username",
-    }, .{
-        .expand = .horizontal,
-    });
-    enter_pressed = enter_pressed or username_input.enter_pressed;
-    username = try arena.dupe(u8, username_input.getText());
-    username_input.deinit();
+    {
+        var username_input = dvui.textEntry(@src(), .{
+            .placeholder = "Username",
+        }, .{
+            .expand = .horizontal,
+        });
+        enter_pressed = enter_pressed or username_input.enter_pressed;
+        username = username_input.getText();
+        username_input.deinit();
+    }
 
     var password: []const u8 = undefined;
-    var password_input = dvui.textEntry(@src(), .{
-        .placeholder = "Password",
-        .password_char = "*",
-    }, .{
-        .expand = .horizontal,
-    });
-    enter_pressed = enter_pressed or password_input.enter_pressed;
-    password = try arena.dupe(u8, password_input.getText());
-    password_input.deinit();
+    {
+        var password_input = dvui.textEntry(@src(), .{
+            .placeholder = "Password",
+            .password_char = "*",
+        }, .{
+            .expand = .horizontal,
+        });
+        enter_pressed = enter_pressed or password_input.enter_pressed;
+        password = password_input.getText();
+        password_input.deinit();
+    }
 
     if (empty.in_progress_host_join) |*status| {
         const msg = switch (status.get()) {
@@ -134,7 +135,7 @@ fn newHostFloatingWindow(empty: *Empty, core: *Core) !void {
     });
 
     if (clicked or enter_pressed) blk: {
-        std.debug.print("address: '{s}', username: '{s}', password: '{s}'\n", .{ address, username, password });
+        // std.debug.print("address: '{s}', username: '{s}', password: '{s}'\n", .{ address, username, password });
         if (empty.pending_new_host) |p| {
             if (p.status.get() == .ok) {
                 p.destroy(gpa);
@@ -161,7 +162,12 @@ fn newHostFloatingWindow(empty: *Empty, core: *Core) !void {
 
         // TODO: we should not be discarding this.
         empty.in_progress_host_join = .{};
-        _ = try core.hostJoin(address_trimmed, username_trimmed, password, &empty.in_progress_host_join.?);
+        _ = try core.hostJoin(
+            try core.gpa.dupe(u8, address_trimmed),
+            try core.gpa.dupe(u8, username_trimmed),
+            try core.gpa.dupe(u8, password),
+            &empty.in_progress_host_join.?,
+        );
     }
 }
 

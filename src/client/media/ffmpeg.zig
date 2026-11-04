@@ -28,7 +28,7 @@ pub const Codec = struct {
     software: bool = false,
 
     /// Preferred pixel format by the codec which will then be used:
-    /// - as output from camera/screen capture in case of encoding
+    /// - as input from camera/screen capture in case of encoding
     /// - as output to be rendered in case of decoding
     /// This value is hardcoded manually and chosen by crossreferencing the
     /// capabilities of each codec implementation (by reading ffmpeg source
@@ -63,6 +63,7 @@ pub const Codec = struct {
             c.AV_PIX_FMT_YUV420P => .yuv,
             c.AV_PIX_FMT_NV12 => .nv12,
             c.AV_PIX_FMT_BGRA => .bgra,
+            c.AV_PIX_FMT_BGR0 => .bgr0,
             else => unreachable,
         };
     }
@@ -107,6 +108,7 @@ const candidates: struct {
             .{ .name = "h264_amf", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
             .{ .name = "h264_qsv", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
             .{ .name = "h264_vaapi", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_VAAPI },
+            .{ .name = "libx264rgb", .software = true, .kind = .h264, .pix_fmt = c.AV_PIX_FMT_BGR0 },
         },
     },
 };
@@ -210,8 +212,8 @@ pub const Encoder = struct {
         c.av_frame_free(@ptrCast(&e.frame));
     }
 
-    pub fn encode(e: *Encoder, img: VideoStream.Image) !?struct { []const u8, []const u8 } {
-        e.frame.pts = 0;
+    pub fn encode(e: *Encoder, img: VideoStream.Image, delta_from_start_ms: u64) !?struct { []const u8, []const u8 } {
+        e.frame.pts = @intCast(delta_from_start_ms);
         switch (e.codec.pix_fmt) {
             c.AV_PIX_FMT_VIDEOTOOLBOX => {
                 const i = img.videotoolbox;
@@ -237,6 +239,14 @@ pub const Encoder = struct {
             c.AV_PIX_FMT_BGRA => {
                 const i = img.bgra;
                 e.frame.format = c.AV_PIX_FMT_BGRA;
+                e.frame.width = @intCast(i.width);
+                e.frame.height = @intCast(i.height);
+                e.frame.data[0] = i.pixels;
+                e.frame.linesize[0] = @intCast(i.stride);
+            },
+            c.AV_PIX_FMT_BGR0 => {
+                const i = img.bgr0;
+                e.frame.format = c.AV_PIX_FMT_BGR0;
                 e.frame.width = @intCast(i.width);
                 e.frame.height = @intCast(i.height);
                 e.frame.data[0] = i.pixels;

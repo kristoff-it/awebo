@@ -355,7 +355,7 @@ pub fn setupGui(
                 gui.root_module.addImport("win32", win32_dep.module("win32"));
             }
         },
-        .linux => {
+        .linux => blk: {
             const dvui = b.dependency("dvui", .{
                 .target = target,
                 .optimize = optimize,
@@ -368,6 +368,23 @@ pub fn setupGui(
             })) |dep| {
                 gui.root_module.addImport("pulseaudio", dep.module("pulseaudio"));
             }
+
+            const wayland = b.lazyImport(@This(), "wayland") orelse break :blk;
+            const Scanner = wayland.Scanner;
+
+            const scanner = Scanner.create(b, .{});
+            // I'm currently being naughty and using system files for the Wayland protocol definitions.
+            // To avoid this, you should be able to just vendor the required XML files.
+            scanner.addSystemProtocol("staging/ext-image-capture-source/ext-image-capture-source-v1.xml");
+            scanner.addSystemProtocol("staging/ext-image-copy-capture/ext-image-copy-capture-v1.xml");
+            scanner.generate("wl_output", 4);
+            scanner.generate("wl_shm", 2);
+            scanner.generate("ext_output_image_capture_source_manager_v1", 1);
+            scanner.generate("ext_image_copy_capture_manager_v1", 1);
+            const wayland_mod = b.createModule(.{ .root_source_file = scanner.result });
+            gui.root_module.addImport("wayland", wayland_mod);
+            gui.root_module.link_libc = true;
+            gui.root_module.linkSystemLibrary("wayland-client", .{});
         },
         else => {},
     }

@@ -29,6 +29,7 @@ pub const ImageKind = enum(u8) {
     nv12 = 1,
     videotoolbox = 2,
     bgra = 3,
+    bgr0 = 4, // encoder only
 };
 
 pub const Image = union(ImageKind) {
@@ -39,12 +40,15 @@ pub const Image = union(ImageKind) {
         height: u32,
         ptr: *anyopaque,
     },
-    bgra: struct {
+    bgra: BGRx,
+    bgr0: BGRx,
+
+    pub const BGRx = struct {
         width: u32,
         height: u32,
         pixels: [*]u8,
         stride: u32,
-    },
+    };
 
     pub const YuvColor = enum(u8) { bt601v, bt601f, bt709v, bt709f, bt2020v, bt2020f };
     pub const Yuv = extern struct {

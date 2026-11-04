@@ -38,6 +38,9 @@ pub const main = dvui.App.main;
 pub const panic = dvui.App.panic;
 pub const std_options: std.Options = .{
     .logFn = dvui.App.logFn,
+    .log_scope_levels = &.{
+        .{ .scope = .dvui, .level = .err },
+    },
 };
 
 var global_app_singleton: App = undefined;

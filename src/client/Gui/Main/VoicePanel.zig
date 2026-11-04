@@ -9,7 +9,7 @@ const Core = @import("../../Core.zig");
 const VideoPreviewBox = @import("ScreenshareBox.zig");
 const UiData = Core.VideoStream.UiData;
 
-const Resolution = enum { @"1080p", @"720p" };
+const Resolution = enum { @"1440p", @"1080p", @"720p" };
 const Fps = enum { @"30", @"60" };
 
 textureBin: std.ArrayList(*dvui.Texture) = .empty,
@@ -18,6 +18,7 @@ screen_config: struct {
     resolution: Resolution = .@"1080p",
     lossless: bool = false,
     fps: Fps = .@"30",
+    display_idx: usize = 0,
 } = .{},
 subviews: struct {
     screen_preview: VideoPreviewBox = .{},
@@ -159,6 +160,17 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
                             },
                         );
                     },
+                    .bgr0 => |bgra| {
+                        tex.* = try backend.textureCreate(
+                            @ptrCast(bgra.pixels),
+                            .{
+                                .width = @intCast(bgra.width),
+                                .height = @intCast(bgra.height),
+                                .interpolation = .nearest,
+                                .format = .xbgr_32,
+                            },
+                        );
+                    },
                 }
 
                 screen.ui_data = .{
@@ -190,6 +202,9 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
                         try backend.textureUpdate(tex.*, @ptrCast(planes));
                     },
                     .bgra => |bgra| {
+                        try backend.textureUpdate(tex.*, @ptrCast(bgra.pixels));
+                    },
+                    .bgr0 => |bgra| {
                         try backend.textureUpdate(tex.*, @ptrCast(bgra.pixels));
                     },
                 }
@@ -324,6 +339,52 @@ fn configureScreensharePopup(vp: *VoicePanel, ac: *Core.ActiveCall, core: *Core)
         if (dvui.checkbox(@src(), &vp.screen_config.lossless, "", .{})) {}
     }
 
+    const display: ?usize = if (!Core.ScreenCapture.OsInterface.supports_os_picker) blk: {
+        core.screen_capture.os.mutex.lock(core.io) catch |err| switch (err) {
+            error.Canceled => return,
+        };
+        defer core.screen_capture.os.mutex.unlock(core.io);
+
+        const entries = core.screen_capture.os.outputs.values();
+        {
+            var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
+            defer hbox.deinit();
+
+            dvui.labelNoFmt(@src(), "Display:", .{}, .{});
+            const choice: dvui.DropdownChoice(usize) = .{ .choice = &vp.screen_config.display_idx };
+            const selected_index = vp.screen_config.display_idx;
+
+            if (entries.len != 0) {
+                var dd: dvui.DropdownWidget = undefined;
+                dd.init(@src(), .{
+                    .selected_index = selected_index,
+                    .label = entries[0].name orelse "loading...",
+                }, .{});
+
+                if (dd.dropped()) {
+                    for (entries, 0..) |e, i| {
+                        if (dd.addChoiceLabel(e.name orelse "loading...")) {
+                            switch (choice) {
+                                inline else => |ch| ch.* = i,
+                            }
+                        }
+                    }
+                }
+
+                dd.deinit();
+            } else {
+                dvui.labelNoFmt(@src(), "LOADING", .{}, .{});
+            }
+        }
+
+        if (entries.len >= vp.screen_config.display_idx) {
+            const desc = entries[vp.screen_config.display_idx].description orelse "loading...";
+            dvui.labelNoFmt(@src(), desc, .{}, .{});
+        }
+
+        break :blk vp.screen_config.display_idx;
+    } else null;
+
     _ = dvui.separator(@src(), .{ .expand = .horizontal });
 
     {
@@ -331,10 +392,17 @@ fn configureScreensharePopup(vp: *VoicePanel, ac: *Core.ActiveCall, core: *Core)
         defer hbox.deinit();
 
         if (dvui.button(@src(), "Cancel", .{}, .{})) vp.show_screenshare_window = false;
-        if (dvui.button(@src(), "Start Sharing", .{}, .{})) {
+
+        const confirm_text = if (Core.ScreenCapture.OsInterface.supports_os_picker)
+            "Select Display or Window"
+        else
+            "Start Sharing";
+
+        if (dvui.button(@src(), confirm_text, .{}, .{})) {
             vp.show_screenshare_window = false;
 
             const width: u16, const height: u16 = switch (vp.screen_config.resolution) {
+                .@"1440p" => .{ 2560, 1440 },
                 .@"1080p" => .{ 1920, 1080 },
                 .@"720p" => .{ 1280, 720 },
             };
@@ -348,7 +416,7 @@ fn configureScreensharePopup(vp: *VoicePanel, ac: *Core.ActiveCall, core: *Core)
                 .width = width,
                 .height = height,
                 .fps = fps,
-            }) catch @panic("TODO");
+            }, display) catch @panic("TODO");
         }
     }
 }

@@ -17,7 +17,8 @@ pub fn draw(sb: *ScreenshareBox, core: *Core, source: enum { webcam, screen }) !
     if (dvui.timerDoneOrNone(id)) {
         const maybe_frame = switch (source) {
             .screen => core.screen_capture.framePull(),
-            .webcam => core.webcam_capture.swapFrame(null),
+            // .webcam => core.webcam_capture.swapFrame(null),
+            .webcam => return,
         };
 
         if (maybe_frame) |new| {
@@ -48,8 +49,8 @@ pub fn draw(sb: *ScreenshareBox, core: *Core, source: enum { webcam, screen }) !
                     }
                     break :blk .{ ww, hh, planes.ptr };
                 },
-                .bgra => |bgra| {
-                    break :blk .{ bgra.width, bgra.height, bgra.pixels };
+                .bgra, .bgr0 => |bgrx| {
+                    break :blk .{ bgrx.width, bgrx.height, bgrx.pixels };
                 },
             };
 
@@ -63,7 +64,11 @@ pub fn draw(sb: *ScreenshareBox, core: *Core, source: enum { webcam, screen }) !
                         .width = @intCast(width),
                         .height = @intCast(height),
                         .interpolation = .nearest,
-                        .format = if (img == .bgra) .bgra_32 else .fourcc_yv12,
+                        .format = switch (img) {
+                            .bgr0 => .rgbx_32,
+                            .bgra => .bgra_32,
+                            .nv12, .videotoolbox, .yuv => .fourcc_yv12,
+                        },
                     },
                 );
             }
