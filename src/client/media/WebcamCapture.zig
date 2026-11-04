@@ -130,7 +130,7 @@ const MacOsInterface = opaque {
         @export(&swapFrame, .{ .linkage = .strong, .name = "aweboWebcamSwapFrame" });
     }
 
-    pub const MacOsFrame = ScreenCapture.MacOsInterface.MacOsFrame;
+    pub const MacOsFrame = @import("MacOS.zig").Interface.MacOsFrame;
 
     extern fn webcamCaptureManagerInit() *MacOsInterface;
     pub fn init() *MacOsInterface {

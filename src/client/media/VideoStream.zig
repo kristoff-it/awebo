@@ -27,8 +27,9 @@ comptime {
 pub const ImageKind = enum(u8) {
     yuv = 0,
     nv12 = 1,
-    videotoolbox = 2,
+    videotoolbox = 2, // macos
     bgra = 3,
+    vaapi = 4, // linux
 };
 
 pub const Image = union(ImageKind) {
@@ -39,12 +40,19 @@ pub const Image = union(ImageKind) {
         height: u32,
         ptr: *anyopaque,
     },
-    bgra: struct {
+    bgra: BGRx,
+    vaapi: struct {
+        width: u32,
+        height: u32,
+        ptr: *anyopaque,
+    },
+
+    pub const BGRx = struct {
         width: u32,
         height: u32,
         pixels: [*]u8,
         stride: u32,
-    },
+    };
 
     pub const YuvColor = enum(u8) { bt601v, bt601f, bt709v, bt709f, bt2020v, bt2020f };
     pub const Yuv = extern struct {
@@ -430,7 +438,6 @@ const JitterBuffer = struct {
                 return;
             };
 
-            // log.debug("video chunk: {} len: {}", .{ video_header, video_data.len });
             // errdefer |err| log.debug("video stream packet ring returning with error: {t}", .{err});
 
             const empty_slices = pb.emptySlices();
@@ -445,7 +452,6 @@ const JitterBuffer = struct {
             // for (empty_slices.array()) |slice| for (slice) |idx| {
             //     const meta = &pb.meta[idx];
             //     const data = &pb.data[idx];
-
             //     log.debug("[{}] = seq {} chunks: {}, keyframe: {} ", .{
             //         idx,
             //         meta.seq,

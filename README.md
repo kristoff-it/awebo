@@ -59,16 +59,17 @@ zig build gui
 The first time you will be asked to add a remote server, after that the info will be cached in the local config directory.
 See logs to learn how to reset your local cache if needed.
 
-#### NixOS
+#### Linux
 
-If you get a runtime SDL error that there are no devices, try:
-
+On linux you will need the following dependencies:
 ```
-nix-shell -p sdl3
-zig build gui -fsys=sdl3
+nix-shell -p ffmpeg pkg-config sdl3 wayland wayland-protocols wayland-scanner
 ```
 
-You might also need to do the same with `-fsys=pulseaudio`.
+If you don't see any audio device:
+```
+zig build gui -fsys=sdl3 -fsys=pulseaudio
+```
 
 #### Testing with multiple users
 

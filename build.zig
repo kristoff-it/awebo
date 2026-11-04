@@ -233,7 +233,24 @@ pub fn setupGui(
         .c_source_file = b.path("src/client/c.h"),
         .target = target,
         .optimize = optimize,
-        .link_system_libs = &.{
+        .link_system_libs = switch (target.result.os.tag) {
+            .linux => &.{
+                // .{
+                //     .name = "va",
+                //     .options = .{
+                //         .needed = true,
+                //         .preferred_link_mode = .static,
+                //     },
+                // },
+                // .{
+                //     .name = "va-wayland",
+                //     .options = .{
+                //         .needed = true,
+                //         .preferred_link_mode = .static,
+                //     },
+                // },
+            },
+            else => &.{},
             // .{
             //     .name = "avutil",
             //     .options = .{
@@ -253,6 +270,7 @@ pub fn setupGui(
     t.addIncludePath(b.path("src"));
     t.linkLibrary(opus.artifact("opus"));
     t.linkLibrary(opus_tools.artifact("opus-tools"));
+    // t.linkSystemLibrary("va");
 
     // Linking against ffmpeg is currently problematic:
     //
@@ -285,7 +303,7 @@ pub fn setupGui(
     gui.root_module.addImport("miniaudio", miniaudio.module("miniaudio"));
     gui.root_module.addImport("c", t.mod);
 
-    if (target.query.isNativeTriple()) {
+    if (b.systemIntegrationOption("ffmpeg", .{ .default = true })) {
         gui.root_module.linkSystemLibrary("avutil", .{
             .needed = true,
             .preferred_link_mode = .static,
@@ -294,6 +312,13 @@ pub fn setupGui(
             .needed = true,
             .preferred_link_mode = .static,
         });
+
+        if (target.result.os.tag == .linux) {
+            gui.root_module.linkSystemLibrary("swscale", .{
+                .needed = true,
+                .preferred_link_mode = .static,
+            });
+        }
     } else {
         gui.root_module.linkLibrary(ffmpeg.artifact("ffmpeg"));
     }
@@ -355,7 +380,7 @@ pub fn setupGui(
                 gui.root_module.addImport("win32", win32_dep.module("win32"));
             }
         },
-        .linux => {
+        .linux => blk: {
             const dvui = b.dependency("dvui", .{
                 .target = target,
                 .optimize = optimize,
@@ -368,6 +393,27 @@ pub fn setupGui(
             })) |dep| {
                 gui.root_module.addImport("pulseaudio", dep.module("pulseaudio"));
             }
+
+            const wayland = b.lazyImport(@This(), "wayland") orelse break :blk;
+            const Scanner = wayland.Scanner;
+
+            const scanner = Scanner.create(b, .{});
+            // I'm currently being naughty and using system files for the Wayland protocol definitions.
+            // To avoid this, you should be able to just vendor the required XML files.
+            scanner.addSystemProtocol("staging/ext-image-capture-source/ext-image-capture-source-v1.xml");
+            scanner.addSystemProtocol("staging/ext-image-copy-capture/ext-image-copy-capture-v1.xml");
+            scanner.addSystemProtocol("stable/linux-dmabuf/linux-dmabuf-v1.xml");
+            scanner.generate("wl_output", 4);
+            scanner.generate("wl_shm", 2);
+            scanner.generate("ext_output_image_capture_source_manager_v1", 1);
+            scanner.generate("ext_image_copy_capture_manager_v1", 1);
+            scanner.generate("zwp_linux_dmabuf_v1", 1);
+            const wayland_mod = b.createModule(.{ .root_source_file = scanner.result });
+            gui.root_module.addImport("wayland", wayland_mod);
+            gui.root_module.link_libc = true;
+            gui.root_module.linkSystemLibrary("wayland-client", .{});
+            // gui.root_module.linkSystemLibrary("va", .{});
+            // gui.root_module.linkSystemLibrary("va-wayland", .{});
         },
         else => {},
     }

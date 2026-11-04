@@ -119,6 +119,7 @@ pub fn run(io: Io, gpa: Allocator, it: *std.process.Args.Iterator) void {
 
     // set dscp to bump up priority of our packets.
     awebo.network_utils.setUdpDscp(udp);
+    awebo.network_utils.setUdpBufferSize(udp);
 
     var udp_future = io.concurrent(runUdpSocket, .{ io, gpa, udp }) catch |err| fatalIo(err);
     defer {
