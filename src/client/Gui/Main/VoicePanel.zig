@@ -339,7 +339,7 @@ fn configureScreensharePopup(vp: *VoicePanel, ac: *Core.ActiveCall, core: *Core)
         if (dvui.checkbox(@src(), &vp.screen_config.lossless, "", .{})) {}
     }
 
-    const display: ?usize = if (!Core.ScreenCapture.OsInterface.supports_os_picker) blk: {
+    const display: ?usize = if (!Core.ScreenCapture.supports_os_picker) blk: {
         core.screen_capture.os.mutex.lock(core.io) catch |err| switch (err) {
             error.Canceled => return,
         };
@@ -393,7 +393,7 @@ fn configureScreensharePopup(vp: *VoicePanel, ac: *Core.ActiveCall, core: *Core)
 
         if (dvui.button(@src(), "Cancel", .{}, .{})) vp.show_screenshare_window = false;
 
-        const confirm_text = if (Core.ScreenCapture.OsInterface.supports_os_picker)
+        const confirm_text = if (Core.ScreenCapture.supports_os_picker)
             "Select Display or Window"
         else
             "Start Sharing";

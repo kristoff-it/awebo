@@ -6,10 +6,10 @@ const framePush = ScreenCapture.framePush;
 const streamWasInterrupted = ScreenCapture.streamWasInterrupted;
 const VideoStream = @import("VideoStream.zig");
 
-pub const supports_os_picker = true;
-
 /// See 'media/screen-share-macos.m'
 pub const Interface = opaque {
+    pub const supports_os_picker = true;
+
     comptime {
         @export(&framePush, .{ .linkage = .strong, .name = "aweboScreenCapturePushFrame" });
         @export(&streamWasInterrupted, .{ .linkage = .strong, .name = "aweboScreenCaptureUpdate" });
@@ -36,6 +36,7 @@ pub const Interface = opaque {
         pub fn getImage(f: *MacOsFrame) VideoStream.Image {
             const raw = frameGetImage(f);
             return switch (raw.kind) {
+                .bgr0 => unreachable,
                 .videotoolbox => unreachable,
                 //.{
                 // .videotoolbox = .{

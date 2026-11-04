@@ -296,7 +296,7 @@ pub const Decoder = struct {
         busy: std.atomic.Value(bool) = .init(false),
 
         pub fn deinit(self: *Frame) void {
-            self.busy.store(false, .unordered);
+            self.busy.store(false, .monotonic);
             c.av_frame_unref(self.avframe);
         }
 
@@ -324,7 +324,11 @@ pub const Decoder = struct {
                     },
                 },
 
-                else => unreachable,
+                else => |pix_fmt| {
+                    std.debug.panic("found unexpected pix fmt: '{s}'\n", .{
+                        c.av_get_pix_fmt_name(pix_fmt),
+                    });
+                },
             };
         }
     };
@@ -436,19 +440,19 @@ pub const Decoder = struct {
 
         const frame: *Frame = frame: while (true) {
             for (&d.frames) |*f| {
-                if (!f.busy.load(.unordered)) {
-                    f.busy.store(true, .unordered);
+                if (!f.busy.load(.monotonic)) {
+                    f.busy.store(true, .monotonic);
                     break :frame f;
                 }
             }
 
             if (d.video_stream.swapFrontFrame(null)) |f| {
-                if (builtin.mode == .debug) assert(f.busy.load(.unordered));
+                if (builtin.mode == .debug) assert(f.busy.load(.monotonic));
                 break :frame f;
             }
 
             if (d.video_stream.swapBackFrame(null)) |f| {
-                if (builtin.mode == .debug) assert(f.busy.load(.unordered));
+                if (builtin.mode == .debug) assert(f.busy.load(.monotonic));
                 break :frame f;
             }
 

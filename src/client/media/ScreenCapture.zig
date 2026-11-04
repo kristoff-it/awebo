@@ -59,6 +59,12 @@ pub const OsInterface = switch (builtin.target.os.tag) {
     else => *DummyInterface,
 };
 
+pub const supports_os_picker = switch (builtin.target.os.tag) {
+    .macos => MacOsInterface.supports_os_picker,
+    .linux => WaylandInterface.supports_os_picker,
+    else => false,
+};
+
 pub const Frame = switch (builtin.target.os.tag) {
     .macos => MacOsInterface.MacOsFrame,
     .linux => WaylandInterface.WaylandFrame,
@@ -67,7 +73,11 @@ pub const Frame = switch (builtin.target.os.tag) {
 
 pub fn init(sc: *ScreenCapture, io: Io, gpa: Allocator) void {
     sc.* = .{ .new_frame = .init(null), .os = undefined };
-    sc.os.init(io, gpa, sc);
+    switch (builtin.target.os.tag) {
+        .linux => sc.os.init(io, gpa, sc),
+        .macos => MacOsInterface.init(&sc.os, gpa, sc),
+        else => unreachable,
+    }
 
     for (&sc.packets.buffer) |*packet| {
         packet.data = std.ArrayList(u8).initCapacity(gpa, 200_000) catch @panic("oom");
@@ -102,7 +112,7 @@ pub fn startCapture(
         },
     };
 
-    if (OsInterface.supports_os_picker) {
+    if (supports_os_picker) {
         sc.os.showOsPicker(config, sc.state.active.encoder.codec.pixFmtToImageKind());
     } else {
         sc.os.startCapture(config, display_idx.?);
@@ -129,7 +139,7 @@ pub fn stopCapture(sc: *ScreenCapture) void {
 }
 
 // Called by the OS to signal that the stream was interruped externally.
-fn streamWasInterrupted(sc: *ScreenCapture) callconv(.c) void {
+pub fn streamWasInterrupted(sc: *ScreenCapture) callconv(.c) void {
     // todo
     _ = sc;
 }
