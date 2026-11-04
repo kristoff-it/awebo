@@ -30,6 +30,11 @@
             .hash = "zigwin32-25.0.28-preview-6BfVhYKN5AOvXPVJq4bGZ7C5dM3PbUra4xhKAKOFJGcF",
             .lazy = true,
         },
+        .wayland = .{
+            .url = "git+https://codeberg.org/ifreund/zig-wayland#94db7ba4e0a6b4780a16dbc74c7a2c88f1ebf502",
+            .hash = "wayland-0.8.0-dev-lQa1kuf8AQCeoam8G-XPyaIYvIOk3_wgsspwi4nT_L5q",
+            .lazy = true,
+        },
         .known_folders = .{
             .url = "git+https://github.com/ziglibs/known-folders#6da0d0c41b78b9ed2d34fa364fcb81b5ebece6c4",
             .hash = "known_folders-0.0.0-Fy-PJiDLAAB98m3uYUzatrTb2mO2fpvwx2zpSroEtfbO",

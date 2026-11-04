@@ -17,14 +17,15 @@ pub fn draw(sb: *ScreenshareBox, core: *Core, source: enum { webcam, screen }) !
     if (dvui.timerDoneOrNone(id)) {
         const maybe_frame = switch (source) {
             .screen => core.screen_capture.framePull(),
-            .webcam => core.webcam_capture.swapFrame(null),
+            // .webcam => core.webcam_capture.swapFrame(null),
+            .webcam => return,
         };
 
         if (maybe_frame) |new| {
             defer new.deinit();
             const img = new.getImage();
             const width, const height, const planes = blk: switch (img) {
-                .videotoolbox => unreachable,
+                .videotoolbox, .vaapi => unreachable,
                 .yuv => |yuv| {
                     const ww: usize = @intCast(yuv.width);
                     const hh: usize = @intCast(yuv.height);
@@ -43,13 +44,13 @@ pub fn draw(sb: *ScreenshareBox, core: *Core, source: enum { webcam, screen }) !
                     @memcpy(planes[0 .. ww * hh], nv12.y);
                     @memcpy(planes[ww * hh ..], nv12.cbcr);
                     for (0..half) |idx| {
-                        planes[ww * hh ..][idx] = nv12.cbcr[idx * 2];
-                        planes[ww * hh ..][idx * 2] = nv12.cbcr[idx * 2 + 1];
+                        planes[ww * hh ..][idx] = nv12.cbcr[idx * 2 + 1];
+                        planes[ww * hh ..][idx + half] = nv12.cbcr[idx * 2];
                     }
                     break :blk .{ ww, hh, planes.ptr };
                 },
-                .bgra => |bgra| {
-                    break :blk .{ bgra.width, bgra.height, bgra.pixels };
+                .bgra => |bgrx| {
+                    break :blk .{ bgrx.width, bgrx.height, bgrx.pixels };
                 },
             };
 
@@ -63,7 +64,10 @@ pub fn draw(sb: *ScreenshareBox, core: *Core, source: enum { webcam, screen }) !
                         .width = @intCast(width),
                         .height = @intCast(height),
                         .interpolation = .nearest,
-                        .format = if (img == .bgra) .bgra_32 else .fourcc_yv12,
+                        .format = switch (img) {
+                            .bgra => .bgra_32,
+                            .nv12, .videotoolbox, .vaapi, .yuv => .fourcc_yv12,
+                        },
                     },
                 );
             }

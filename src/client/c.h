@@ -12,10 +12,16 @@
 #include "libavcodec/avcodec.h"
 #include "libavutil/avutil.h"
 #include "libavutil/pixdesc.h"
+#include "libswscale/swscale.h"
 #include <errno.h>
 
 #ifdef __APPLE__
 #include <CoreAudio/CoreAudio.h>
+#endif
+
+#ifdef __linux__
+#include <va/va.h>
+#include <va/va_wayland.h>
 #endif
 
 // @cInclude("libavutil/frame.h");

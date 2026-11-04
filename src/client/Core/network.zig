@@ -18,8 +18,8 @@ pub const debug = if (builtin.mode != .debug) void else struct {
     pub var send_bad_capture_packet: std.atomic.Value(bool) = .init(false);
     pub var drop_next_media_packets: std.atomic.Value(usize) = .init(0);
     var remaining_packets_to_drop: usize = 0;
-    var dred_decoder: *opus.DredDecoder = undefined;
-    var dred_state: *opus.DredState = undefined;
+    // var dred_decoder: *opus.DredDecoder = undefined;
+    // var dred_state: *opus.DredState = undefined;
 };
 
 pub const HostConnectMode = union(enum) {
@@ -370,6 +370,7 @@ pub fn runHostMediaManager(
 
     // set dscp to bump up priority of our packets.
     awebo.network_utils.setUdpDscp(sock);
+    awebo.network_utils.setUdpBufferSize(sock);
 
     const Select = Io.Select(union(enum) {
         receive: @typeInfo(@TypeOf(runHostMediaReceiver)).@"fn".return_type.?,
@@ -447,15 +448,17 @@ pub fn runHostMediaReceiver(
                     caller.audio.packets.writePacket(io, voice.restart, header.sequence, data);
 
                     if (opus.packetHasLbrr(data) catch false) {
-                        try core.putEvent(.{ .network = .{
-                            .host_id = host_id,
-                            .cmd = .{
-                                .caller_speaking = .{
-                                    .time_ns = core.now(),
-                                    .caller = cid,
+                        try core.putEvent(.{
+                            .network = .{
+                                .host_id = host_id,
+                                .cmd = .{
+                                    .caller_speaking = .{
+                                        .time_ns = core.now(),
+                                        .caller = cid,
+                                    },
                                 },
                             },
-                        } });
+                        });
                     }
                 },
                 .screen => {
@@ -486,8 +489,8 @@ pub fn runHostMediaSender(
     awebo.network_utils.setCurrentThreadRealtime(20);
 
     if (debug != void) {
-        debug.dred_decoder = try .create();
-        debug.dred_state = try .create();
+        // debug.dred_decoder = try .create();
+        // debug.dred_state = try .create();
     }
 
     var sequence: u32 = 0;
@@ -537,15 +540,17 @@ pub fn runHostMediaSender(
 
             core.audio.capture_packets.commitRead(read);
             try sock.send(io, server, packet);
-            if (!read.packet.silence) try core.putEvent(.{ .network = .{
-                .host_id = host_id,
-                .cmd = .{
-                    .caller_speaking = .{
-                        .time_ns = core.now(),
-                        .caller = null,
+            if (!read.packet.silence) try core.putEvent(.{
+                .network = .{
+                    .host_id = host_id,
+                    .cmd = .{
+                        .caller_speaking = .{
+                            .time_ns = core.now(),
+                            .caller = null,
+                        },
                     },
                 },
-            } });
+            });
         }
 
         while (core.screen_capture.packets.beginRead()) |read| {

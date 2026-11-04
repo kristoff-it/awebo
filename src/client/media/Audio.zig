@@ -257,7 +257,7 @@ pub const Caller = struct {
                     if (remaining.len >= opus.PACKET_SAMPLE_COUNT) {
                         const written = caller.decoder.decodeMissing(remaining, false);
                         assert(written == opus.PACKET_SAMPLE_COUNT);
-                        assert(written > remaining.len);
+                        assert(written >= remaining.len);
                         remaining = remaining[opus.PACKET_SAMPLE_COUNT..];
                         continue;
                     } else {
@@ -397,68 +397,69 @@ pub fn captureTestStop(audio: *Audio) void {
 fn capturePush(audio: *Audio, frames: [*]const f32, frame_count: u32) callconv(.c) void {
     const capture = &audio.capture_stream.channels[0];
     capture.writeSliceAssumeCapacity(frames[0..frame_count]);
-    if (capture.len() < opus.PACKET_SAMPLE_COUNT) return;
 
     var pcm: [opus.PACKET_SAMPLE_COUNT]f32 = undefined;
-    capture.readFirstAssumeCount(
-        &pcm,
-        opus.PACKET_SAMPLE_COUNT,
-    );
+    while (capture.len() >= opus.PACKET_SAMPLE_COUNT) {
+        capture.readFirstAssumeCount(
+            &pcm,
+            opus.PACKET_SAMPLE_COUNT,
+        );
 
-    const noise_gate = audio.capture_noise_gate.load(.unordered);
+        const noise_gate = audio.capture_noise_gate.load(.unordered);
 
-    const silence = switch (noise_gate) {
-        .denoiser => blk: {
-            for (&pcm) |*s| {
-                s.* *= 32768;
-            }
-            const voice1 = audio.capture_denoiser.processFrame(
-                pcm[0..rnnoise.FRAME_SIZE],
-                pcm[0..rnnoise.FRAME_SIZE],
-            );
-            const voice2 = audio.capture_denoiser.processFrame(
-                pcm[rnnoise.FRAME_SIZE..],
-                pcm[rnnoise.FRAME_SIZE..],
-            );
+        const silence = switch (noise_gate) {
+            .denoiser => blk: {
+                for (&pcm) |*s| {
+                    s.* *= 32768;
+                }
+                const voice1 = audio.capture_denoiser.processFrame(
+                    pcm[0..rnnoise.FRAME_SIZE],
+                    pcm[0..rnnoise.FRAME_SIZE],
+                );
+                const voice2 = audio.capture_denoiser.processFrame(
+                    pcm[rnnoise.FRAME_SIZE..],
+                    pcm[rnnoise.FRAME_SIZE..],
+                );
 
-            for (&pcm) |*s| {
-                s.* /= 32768;
-            }
+                for (&pcm) |*s| {
+                    s.* /= 32768;
+                }
 
-            break :blk voice1 < 0.7 and voice2 < 0.7;
-        },
-        .threshold => blk: {
-            const threshold = audio.capture_threshold.load(.unordered);
-            const power = computePower(&pcm);
+                break :blk voice1 < 0.7 and voice2 < 0.7;
+            },
+            .threshold => blk: {
+                const threshold = audio.capture_threshold.load(.unordered);
+                const power = computePower(&pcm);
 
-            if (power < threshold) {
-                audio.capture_silence_count += 1;
-            } else {
-                audio.capture_silence_count = 0;
-            }
+                if (power < threshold) {
+                    audio.capture_silence_count += 1;
+                } else {
+                    audio.capture_silence_count = 0;
+                }
 
-            const silence = audio.capture_silence_count > 10;
-            if (silence) {
-                @memset(&pcm, 0);
-            }
+                const silence = audio.capture_silence_count > 10;
+                if (silence) {
+                    @memset(&pcm, 0);
+                }
 
-            break :blk silence;
-        },
-    };
+                break :blk silence;
+            },
+        };
 
-    const write = audio.capture_packets.beginWrite() orelse {
-        log.err("capture buffer is full, network thread is lagging behind!", .{});
-        return;
-    };
+        const write = audio.capture_packets.beginWrite() orelse {
+            log.err("capture buffer is full, network thread is lagging behind!", .{});
+            return;
+        };
 
-    write.packet.silence = silence;
-    write.packet.len = audio.capture_encoder.encodeFloat(&pcm, &write.packet.data) catch |err| {
-        log.err("opus encoder error: {t}", .{err});
-        capture.read_index = 0;
-        capture.write_index = 0;
-    };
+        write.packet.silence = silence;
+        write.packet.len = audio.capture_encoder.encodeFloat(&pcm, &write.packet.data) catch |err| {
+            log.err("opus encoder error: {t}", .{err});
+            capture.read_index = 0;
+            capture.write_index = 0;
+        };
 
-    audio.capture_packets.commitWrite(write);
+        audio.capture_packets.commitWrite(write);
+    }
 }
 
 /// Called by the OS interface whenever a device is added, removed, or its
@@ -1067,7 +1068,6 @@ const JitterBuffer = struct {
         switch (jb.state) {
             .starting => return .starting,
             .buffering => {
-                jb.expected_next_seq += 1;
                 return .missing;
             },
             .playing => {},
@@ -1083,6 +1083,7 @@ const JitterBuffer = struct {
         //         const next_meta = jb.packets.meta[n];
         //         log.debug("[{}] = {} -> (res {} seq {})", .{ idx, n, next_meta.restart, next_meta.seq });
         //     };
+        //     log.debug("--- jb.expected_next_seq: {}", .{jb.expected_next_seq});
         // }
 
         var idx: usize = 0;

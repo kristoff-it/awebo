@@ -131,7 +131,7 @@ pub const OpenPath = packed struct {
         const header: Header = .{
             .stream_id = .{
                 .client_id = client_id,
-                .kind = @enumFromInt(0),
+                .kind = @fromBackingInt(@intCast(0)),
             },
             .sequence = 0,
         };

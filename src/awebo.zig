@@ -146,6 +146,53 @@ pub const network_utils = struct {
             std.log.debug("failed to enable TCP_NODELAY: {t}", .{err});
         };
     }
+
+    pub fn setUdpBufferSize(socket: Io.net.Socket) void {
+        const size: c_int = 1024 * 1024 * 16;
+        switch (builtin.target.os.tag) {
+            else => @compileError("TODO: implement support for this OS"),
+            .linux => {
+                setsockopt(
+                    socket.handle,
+                    std.os.linux.SOL.SOCKET,
+                    std.os.linux.SO.RCVBUF,
+                    &std.mem.toBytes(size),
+                ) catch |err| {
+                    std.log.err("unable to set UDP RCVBUF: {t}", .{err});
+                };
+                setsockopt(
+                    socket.handle,
+                    std.os.linux.SOL.SOCKET,
+                    std.os.linux.SO.SNDBUF,
+                    &std.mem.toBytes(size),
+                ) catch |err| {
+                    std.log.err("unable to set UDP SNDBUF: {t}", .{err});
+                };
+            },
+            .macos => {
+                setsockopt(
+                    socket.handle,
+                    std.c.SOL.SOCKET,
+                    std.c.SO.RCVBUF,
+                    &std.mem.toBytes(size),
+                ) catch |err| {
+                    std.log.err("unable to set UDP RCVBUF: {t}", .{err});
+                };
+                setsockopt(
+                    socket.handle,
+                    std.c.SOL.SOCKET,
+                    std.c.SO.SNDBUF,
+                    &std.mem.toBytes(size),
+                ) catch |err| {
+                    std.log.err("unable to set UDP SNDBUF: {t}", .{err});
+                };
+            },
+            .windows => {
+                @compileError("TODO");
+            },
+        }
+    }
+
     pub fn setUdpDscp(socket: Io.net.Socket) void {
         const lvl: c_int = 46 << 2;
         switch (builtin.target.os.tag) {

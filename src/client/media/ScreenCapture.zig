@@ -11,6 +11,8 @@ const Core = @import("../Core.zig");
 const PacketRing = @import("packet_ring.zig").PacketRing;
 const ffmpeg = @import("ffmpeg.zig");
 const VideoStream = @import("VideoStream.zig");
+const MacOsInterface = @import("MacOS.zig").Interface;
+const WaylandInterface = @import("Wayland.zig");
 
 pub const State = union(enum) {
     off,
@@ -49,20 +51,34 @@ sequence: u32 = 0,
 packets: PacketRing(Packet, 8) = .empty,
 state: State = .off,
 send: std.atomic.Value(bool) = .init(false),
+os: OsInterface,
 
-/// Os interface
-os: switch (builtin.target.os.tag) {
+pub const OsInterface = switch (builtin.target.os.tag) {
     .macos => *MacOsInterface,
+    .linux => WaylandInterface,
     else => *DummyInterface,
-},
+};
+
+pub const supports_os_picker = switch (builtin.target.os.tag) {
+    .macos => MacOsInterface.supports_os_picker,
+    .linux => WaylandInterface.supports_os_picker,
+    else => false,
+};
 
 pub const Frame = switch (builtin.target.os.tag) {
     .macos => MacOsInterface.MacOsFrame,
+    .linux => WaylandInterface.WaylandFrame,
     else => DummyInterface.DummyFrame,
 };
 
-pub fn init(sc: *ScreenCapture, gpa: Allocator) void {
-    sc.* = .{ .new_frame = .init(null), .os = .init(sc) };
+pub fn init(sc: *ScreenCapture, io: Io, gpa: Allocator) void {
+    sc.* = .{ .new_frame = .init(null), .os = undefined };
+    switch (builtin.target.os.tag) {
+        .linux => sc.os.init(io, gpa, sc),
+        .macos => MacOsInterface.init(&sc.os, gpa, sc),
+        else => unreachable,
+    }
+
     for (&sc.packets.buffer) |*packet| {
         packet.data = std.ArrayList(u8).initCapacity(gpa, 200_000) catch @panic("oom");
     }
@@ -81,7 +97,12 @@ pub fn deinit(sc: *ScreenCapture) void {
     sc.os.deinit();
 }
 
-pub fn startCapture(sc: *ScreenCapture, lossless: bool, config: media.Config) !media.Format {
+pub fn startCapture(
+    sc: *ScreenCapture,
+    lossless: bool,
+    config: media.Config,
+    display_idx: ?usize,
+) !media.Format {
     assert(sc.state == .off);
     sc.reset();
     sc.state = .{
@@ -90,7 +111,13 @@ pub fn startCapture(sc: *ScreenCapture, lossless: bool, config: media.Config) !m
             .encoder = try .init(lossless, config),
         },
     };
-    sc.os.showOsPicker(config, sc.state.active.encoder.codec.pixFmtToImageKind());
+
+    if (supports_os_picker) {
+        sc.os.showOsPicker(config, sc.state.active.encoder.codec.pixFmtToImageKind());
+    } else {
+        sc.os.startCapture(config, display_idx.?);
+    }
+
     return .{
         .config = config,
         .codec = sc.state.active.encoder.codec.kind,
@@ -112,7 +139,7 @@ pub fn stopCapture(sc: *ScreenCapture) void {
 }
 
 // Called by the OS to signal that the stream was interruped externally.
-fn streamWasInterrupted(sc: *ScreenCapture) callconv(.c) void {
+pub fn streamWasInterrupted(sc: *ScreenCapture) callconv(.c) void {
     // todo
     _ = sc;
 }
@@ -133,8 +160,8 @@ pub fn framePush(sc: *ScreenCapture, frame: *Frame, delta_from_start_ms: u64) ca
                     .height = sc.state.active.config.height,
                     .ptr = frame,
                 },
-            }) catch unreachable,
-            else => sc.state.active.encoder.encode(frame.getImage()) catch unreachable,
+            }, delta_from_start_ms) catch unreachable,
+            else => sc.state.active.encoder.encode(frame.getImage(), delta_from_start_ms) catch unreachable,
         } orelse break :blk;
         const delta: u32 = @intCast(delta_from_start_ms - sc.last_keyframe_ms);
         const keyframe = extradata.len > 0;
@@ -208,7 +235,7 @@ pub fn encodedVideoFramePush(
     });
 
     media.write.int(u32, pw.packet.data.items.ptr + framing_size, delta);
-    media.write.int(u32, pw.packet.data.items.ptr + framing_size + delta_size, @intCast(extradata.len));
+    media.write.int(u16, pw.packet.data.items.ptr + framing_size + delta_size, @intCast(extradata.len));
     @memcpy(pw.packet.data.items.ptr + framing_size + delta_size + extradata_size_size, extradata);
 
     const start = framing_size + delta_size + extradata_size_size + extradata.len;
@@ -256,99 +283,6 @@ pub fn encodedVideoFramePush(
 
     sc.packets.commitWrite(pw);
 }
-
-/// See 'media/screen-share-macos.m'
-pub const MacOsInterface = opaque {
-    comptime {
-        @export(&framePush, .{ .linkage = .strong, .name = "aweboScreenCapturePushFrame" });
-        @export(&streamWasInterrupted, .{ .linkage = .strong, .name = "aweboScreenCaptureUpdate" });
-    }
-
-    pub const MacOsFrame = opaque {
-        extern fn frameDeinit(*MacOsFrame) void;
-        pub fn deinit(f: *MacOsFrame) void {
-            frameDeinit(f);
-        }
-
-        pub const RawImage = extern struct {
-            width: u32,
-            height: u32,
-            ptr1: ?*anyopaque,
-            ptr2: ?*anyopaque,
-            ptr3: ?*anyopaque,
-            stride1: u32,
-            stride2: u32,
-            stride3: u32,
-            kind: VideoStream.ImageKind,
-        };
-        extern fn frameGetImage(*MacOsFrame) RawImage;
-        pub fn getImage(f: *MacOsFrame) VideoStream.Image {
-            const raw = frameGetImage(f);
-            return switch (raw.kind) {
-                .videotoolbox => unreachable,
-                //.{
-                // .videotoolbox = .{
-                //     .width = raw.width,
-                //     .height = raw.height,
-                //     .ptr = @ptrCast(raw.ptr1),
-                // },
-                //},
-                .nv12 => .{
-                    .nv12 = .{
-                        .width = raw.width,
-                        .height = raw.height,
-                        .y = @ptrCast(raw.ptr1),
-                        .y_stride = raw.stride1,
-                        .cbcr = @ptrCast(raw.ptr2),
-                        .cbcr_stride = raw.stride2,
-                        .color = .bt709f,
-                    },
-                },
-                .yuv => .{
-                    .yuv = .{
-                        .width = raw.width,
-                        .height = raw.height,
-                        .y = @ptrCast(raw.ptr1),
-                        .y_stride = raw.stride1,
-                        .cb = @ptrCast(raw.ptr2),
-                        .cb_stride = raw.stride2,
-                        .cr = @ptrCast(raw.ptr3),
-                        .cr_stride = raw.stride2,
-                        .color = .bt709f,
-                    },
-                },
-                .bgra => .{
-                    .bgra = .{
-                        .width = raw.width,
-                        .height = raw.height,
-                        .pixels = @ptrCast(raw.ptr1),
-                        .stride = raw.stride1,
-                    },
-                },
-            };
-        }
-    };
-
-    extern fn screenCaptureManagerInit(sc: *ScreenCapture) *MacOsInterface;
-    pub fn init(sc: *ScreenCapture) *MacOsInterface {
-        return screenCaptureManagerInit(sc);
-    }
-
-    extern fn screenCaptureManagerDeinit(*MacOsInterface) void;
-    pub fn deinit(mi: *MacOsInterface) void {
-        screenCaptureManagerDeinit(mi);
-    }
-
-    extern fn screenCaptureManagerShowPicker(*MacOsInterface, u32, u32, u8, u8) void;
-    pub fn showOsPicker(mi: *MacOsInterface, config: media.Config, img_kind: VideoStream.ImageKind) void {
-        screenCaptureManagerShowPicker(mi, config.width, config.height, config.fps, @backingInt(img_kind));
-    }
-
-    extern fn screenCaptureManagerStopCapture(*MacOsInterface) void;
-    pub fn stopCapture(mi: *MacOsInterface) void {
-        screenCaptureManagerStopCapture(mi);
-    }
-};
 
 pub const DummyInterface = opaque {
     pub fn init(sc: *ScreenCapture) *DummyInterface {

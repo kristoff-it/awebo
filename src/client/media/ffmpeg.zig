@@ -28,7 +28,7 @@ pub const Codec = struct {
     software: bool = false,
 
     /// Preferred pixel format by the codec which will then be used:
-    /// - as output from camera/screen capture in case of encoding
+    /// - as input from camera/screen capture in case of encoding
     /// - as output to be rendered in case of decoding
     /// This value is hardcoded manually and chosen by crossreferencing the
     /// capabilities of each codec implementation (by reading ffmpeg source
@@ -60,6 +60,7 @@ pub const Codec = struct {
     pub fn pixFmtToImageKind(codec: *const Codec) VideoStream.ImageKind {
         return switch (codec.pix_fmt) {
             c.AV_PIX_FMT_VIDEOTOOLBOX => .videotoolbox,
+            c.AV_PIX_FMT_VAAPI => .vaapi,
             c.AV_PIX_FMT_YUV420P => .yuv,
             c.AV_PIX_FMT_NV12 => .nv12,
             c.AV_PIX_FMT_BGRA => .bgra,
@@ -103,10 +104,11 @@ const candidates: struct {
             .{ .name = "hevc_qsv", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_NV12 },
             .{ .name = "hevc_vaapi", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_VAAPI },
             //h264
-            .{ .name = "h264_nvenc", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
-            .{ .name = "h264_amf", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
-            .{ .name = "h264_qsv", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
-            .{ .name = "h264_vaapi", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_VAAPI },
+            // .{ .name = "h264_nvenc", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
+            // .{ .name = "h264_amf", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
+            // .{ .name = "h264_qsv", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
+            // .{ .name = "h264_vaapi", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_VAAPI },
+            .{ .name = "libx264", .software = true, .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
         },
     },
 };
@@ -169,6 +171,41 @@ pub const Encoder = struct {
 
                     ctx.hw_frames_ctx = c.av_buffer_ref(frame_ctx_ref);
                 },
+                c.AV_PIX_FMT_VAAPI => {
+                    // var device_ctx: *c.AVBufferRef = undefined;
+                    // {
+                    //     const ret = c.av_hwdevice_ctx_create(
+                    //         @ptrCast(&device_ctx),
+                    //         c.AV_HWDEVICE_TYPE_VAAPI,
+                    //         null,
+                    //         null,
+                    //         0,
+                    //     );
+
+                    //     if (ret < 0) {
+                    //         std.log.debug("failed hwdevice ctx init: {s}", .{err2str(ret)});
+                    //         return error.FailedHardwareInit;
+                    //     }
+                    // }
+
+                    // const frame_ctx_ref: *c.AVBufferRef = c.av_hwframe_ctx_alloc(device_ctx) orelse
+                    //     return error.OutOfMemory;
+
+                    // const frame_ctx: *c.AVHWFramesContext = @ptrCast(@alignCast(frame_ctx_ref.data));
+                    // frame_ctx.format = c.AV_PIX_FMT_VAAPI;
+                    // frame_ctx.sw_format = c.AV_PIX_FMT_NV12;
+                    // frame_ctx.width = config.width;
+                    // frame_ctx.height = config.height;
+                    // frame_ctx.initial_pool_size = 0;
+                    // const ret = c.av_hwframe_ctx_init(frame_ctx_ref);
+
+                    // if (ret < 0) {
+                    //     std.log.debug("failed hwframes ctx init: {s}", .{err2str(ret)});
+                    //     return error.FailedHardwareInit;
+                    // }
+
+                    // ctx.hw_frames_ctx = c.av_buffer_ref(frame_ctx_ref);
+                },
                 else => {},
             }
 
@@ -210,12 +247,23 @@ pub const Encoder = struct {
         c.av_frame_free(@ptrCast(&e.frame));
     }
 
-    pub fn encode(e: *Encoder, img: VideoStream.Image) !?struct { []const u8, []const u8 } {
-        e.frame.pts = 0;
+    pub fn encode(e: *Encoder, img: VideoStream.Image, delta_from_start_ms: u64) !?struct { []const u8, []const u8 } {
+        e.frame.pts = @intCast(delta_from_start_ms);
         switch (e.codec.pix_fmt) {
             c.AV_PIX_FMT_VIDEOTOOLBOX => {
                 const i = img.videotoolbox;
                 e.frame.format = c.AV_PIX_FMT_VIDEOTOOLBOX;
+                e.frame.width = @intCast(i.width);
+                e.frame.height = @intCast(i.height);
+                e.frame.data[3] = @ptrCast(i.ptr);
+                e.frame.buf[0] = c.av_buffer_create(@ptrCast(i.ptr), 0, &struct {
+                    fn noop(_: ?*anyopaque, _: ?[*]u8) callconv(.c) void {}
+                }.noop, @ptrCast(i.ptr), c.AV_BUFFER_FLAG_READONLY);
+                e.frame.hw_frames_ctx = c.av_buffer_ref(e.ctx.hw_frames_ctx);
+            },
+            c.AV_PIX_FMT_VAAPI => {
+                const i = img.vaapi;
+                e.frame.format = c.AV_PIX_FMT_VAAPI;
                 e.frame.width = @intCast(i.width);
                 e.frame.height = @intCast(i.height);
                 e.frame.data[3] = @ptrCast(i.ptr);
@@ -286,7 +334,7 @@ pub const Decoder = struct {
         busy: std.atomic.Value(bool) = .init(false),
 
         pub fn deinit(self: *Frame) void {
-            self.busy.store(false, .unordered);
+            self.busy.store(false, .monotonic);
             c.av_frame_unref(self.avframe);
         }
 
@@ -314,7 +362,11 @@ pub const Decoder = struct {
                     },
                 },
 
-                else => unreachable,
+                else => |pix_fmt| {
+                    std.debug.panic("found unexpected pix fmt: '{s}'\n", .{
+                        c.av_get_pix_fmt_name(pix_fmt),
+                    });
+                },
             };
         }
     };
@@ -412,10 +464,14 @@ pub const Decoder = struct {
     }
 
     pub fn decodeFrame(d: *Decoder, framed_data: []u8, keyframe: bool) !u32 {
-        _ = keyframe;
         const delta: u32 = media.read.int(u32, framed_data[0..@sizeOf(u32)]);
         const extradata_size = media.read.int(u16, framed_data[@sizeOf(u32)..][0..@sizeOf(u16)]);
         const encoded = framed_data[@sizeOf(u32) + @sizeOf(u16) + extradata_size ..];
+
+        std.log.debug("keyframe: {} extradata_size: {}", .{ keyframe, extradata_size });
+        if (extradata_size > 0) std.log.debug("decoding frame - extradata: [{x}]", .{
+            framed_data[@sizeOf(u32) + @sizeOf(u16) ..][0..extradata_size],
+        });
 
         d.packet.data = @constCast(encoded.ptr);
         d.packet.size = @intCast(encoded.len);
@@ -426,19 +482,19 @@ pub const Decoder = struct {
 
         const frame: *Frame = frame: while (true) {
             for (&d.frames) |*f| {
-                if (!f.busy.load(.unordered)) {
-                    f.busy.store(true, .unordered);
+                if (!f.busy.load(.monotonic)) {
+                    f.busy.store(true, .monotonic);
                     break :frame f;
                 }
             }
 
             if (d.video_stream.swapFrontFrame(null)) |f| {
-                if (builtin.mode == .debug) assert(f.busy.load(.unordered));
+                if (builtin.mode == .debug) assert(f.busy.load(.monotonic));
                 break :frame f;
             }
 
             if (d.video_stream.swapBackFrame(null)) |f| {
-                if (builtin.mode == .debug) assert(f.busy.load(.unordered));
+                if (builtin.mode == .debug) assert(f.busy.load(.monotonic));
                 break :frame f;
             }
 
