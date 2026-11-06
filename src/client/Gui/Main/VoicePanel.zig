@@ -113,7 +113,7 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
             if (screen.ui_data == null) {
                 const tex: *dvui.Texture = try core.gpa.create(dvui.Texture);
                 switch (img) {
-                    .videotoolbox => unreachable,
+                    .videotoolbox, .vaapi => unreachable,
                     .yuv => |yuv| {
                         const ww: usize = @intCast(yuv.width);
                         const hh: usize = @intCast(yuv.height);
@@ -160,17 +160,6 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
                             },
                         );
                     },
-                    .bgr0 => |bgra| {
-                        tex.* = try backend.textureCreate(
-                            @ptrCast(bgra.pixels),
-                            .{
-                                .width = @intCast(bgra.width),
-                                .height = @intCast(bgra.height),
-                                .interpolation = .nearest,
-                                .format = .xbgr_32,
-                            },
-                        );
-                    },
                 }
 
                 screen.ui_data = .{
@@ -181,7 +170,7 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
             } else {
                 const tex: *dvui.Texture = @ptrCast(@alignCast(screen.ui_data.?.data.?));
                 switch (img) {
-                    .videotoolbox => unreachable,
+                    .videotoolbox, .vaapi => unreachable,
                     .yuv => |yuv| {
                         const ww: usize = @intCast(yuv.width);
                         const hh: usize = @intCast(yuv.height);
@@ -202,9 +191,6 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
                         try backend.textureUpdate(tex.*, @ptrCast(planes));
                     },
                     .bgra => |bgra| {
-                        try backend.textureUpdate(tex.*, @ptrCast(bgra.pixels));
-                    },
-                    .bgr0 => |bgra| {
                         try backend.textureUpdate(tex.*, @ptrCast(bgra.pixels));
                     },
                 }

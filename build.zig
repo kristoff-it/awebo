@@ -234,6 +234,20 @@ pub fn setupGui(
         .target = target,
         .optimize = optimize,
         .link_system_libs = &.{
+            .{
+                .name = "va",
+                .options = .{
+                    .needed = true,
+                    .preferred_link_mode = .static,
+                },
+            },
+            .{
+                .name = "va-wayland",
+                .options = .{
+                    .needed = true,
+                    .preferred_link_mode = .static,
+                },
+            },
             // .{
             //     .name = "avutil",
             //     .options = .{
@@ -253,6 +267,7 @@ pub fn setupGui(
     t.addIncludePath(b.path("src"));
     t.linkLibrary(opus.artifact("opus"));
     t.linkLibrary(opus_tools.artifact("opus-tools"));
+    // t.linkSystemLibrary("va");
 
     // Linking against ffmpeg is currently problematic:
     //
@@ -291,6 +306,10 @@ pub fn setupGui(
             .preferred_link_mode = .static,
         });
         gui.root_module.linkSystemLibrary("avcodec", .{
+            .needed = true,
+            .preferred_link_mode = .static,
+        });
+        gui.root_module.linkSystemLibrary("swscale", .{
             .needed = true,
             .preferred_link_mode = .static,
         });
@@ -377,14 +396,18 @@ pub fn setupGui(
             // To avoid this, you should be able to just vendor the required XML files.
             scanner.addSystemProtocol("staging/ext-image-capture-source/ext-image-capture-source-v1.xml");
             scanner.addSystemProtocol("staging/ext-image-copy-capture/ext-image-copy-capture-v1.xml");
+            scanner.addSystemProtocol("stable/linux-dmabuf/linux-dmabuf-v1.xml");
             scanner.generate("wl_output", 4);
             scanner.generate("wl_shm", 2);
             scanner.generate("ext_output_image_capture_source_manager_v1", 1);
             scanner.generate("ext_image_copy_capture_manager_v1", 1);
+            scanner.generate("zwp_linux_dmabuf_v1", 1);
             const wayland_mod = b.createModule(.{ .root_source_file = scanner.result });
             gui.root_module.addImport("wayland", wayland_mod);
             gui.root_module.link_libc = true;
             gui.root_module.linkSystemLibrary("wayland-client", .{});
+            // gui.root_module.linkSystemLibrary("va", .{});
+            // gui.root_module.linkSystemLibrary("va-wayland", .{});
         },
         else => {},
     }

@@ -1,6 +1,8 @@
 const Interface = @This();
 
+const builtin = @import("builtin");
 const std = @import("std");
+const assert = std.debug.assert;
 const Io = std.Io;
 const wayland = @import("wayland");
 const wl = wayland.client.wl;
@@ -13,6 +15,8 @@ const framePush = ScreenCapture.framePush;
 const streamWasInterrupted = ScreenCapture.streamWasInterrupted;
 const VideoStream = @import("VideoStream.zig");
 const log = std.log.scoped(.wayland_screen_capture);
+
+const c = @import("c");
 
 pub const supports_os_picker = false;
 
@@ -59,21 +63,25 @@ frames: [2]WaylandFrame = undefined,
 pub const WaylandFrame = struct {
     height: u32,
     width: u32,
-    bytes: [*]u8,
+    wl_buffer_bytes: [*]u8,
     wl_buffer: *wl.Buffer,
-    busy: bool = false,
+    busy: std.atomic.Value(bool) = .init(false),
+    nv12_buffer_bytes: [*]u8,
 
     pub fn deinit(f: *WaylandFrame) void {
-        f.busy = false;
+        f.busy.store(false, .monotonic);
     }
 
     pub fn getImage(f: *WaylandFrame) VideoStream.Image {
         return .{
-            .bgr0 = .{
+            .nv12 = .{
                 .height = f.height,
                 .width = f.width,
-                .stride = f.width * 4,
-                .pixels = f.bytes,
+                .y = f.nv12_buffer_bytes,
+                .y_stride = f.width,
+                .cbcr = f.nv12_buffer_bytes[f.height * f.width ..],
+                .cbcr_stride = f.width,
+                .color = .bt709f,
             },
         };
     }
@@ -90,7 +98,7 @@ pub fn init(i: *Interface, io: Io, gpa: Allocator, _: *ScreenCapture) void {
 }
 
 pub fn deinit(i: *Interface) void {
-    i.event_loop.cancel() catch {};
+    i.event_loop.cancel(i.io) catch {};
     i.display.disconnect();
     i.outputs.deinit(i.gpa);
     i.shm_formats.deinit(i.gpa);
@@ -244,18 +252,52 @@ pub fn captureSessionLoop(i: *Interface, config: media.Config, display_idx: usiz
     );
     defer shm_buf2.destroy();
 
+    const src_pix_fmt = switch (shm_format) {
+        .xrgb8888 => c.AV_PIX_FMT_RGB0,
+        .argb8888 => c.AV_PIX_FMT_BGRA,
+        .xbgr8888 => c.AV_PIX_FMT_BGR0,
+        else => unreachable,
+    };
+
+    const sws_context = c.sws_getContext(
+        //src
+        @intCast(i.buf_width),
+        @intCast(i.buf_height),
+        src_pix_fmt,
+
+        //dest
+        @intCast(config.width),
+        @intCast(config.height),
+        c.AV_PIX_FMT_NV12,
+        c.SWS_FAST_BILINEAR,
+
+        //filters
+        null,
+        null,
+        null,
+    ) orelse {
+        std.debug.panic("ffmpeg sws context creation failed", .{});
+    };
+
+    const c_height: u32 = config.height;
+    const c_width: u32 = config.width;
+    const nv12_bufs = try i.gpa.alloc(u8, 2 * ((c_height * c_width) + (c_width * c_height / 2)));
+    defer i.gpa.free(nv12_bufs);
+
     i.frames = .{
         .{
-            .height = i.buf_height,
-            .width = i.buf_width,
-            .bytes = buf_mapped.ptr,
+            .height = config.height,
+            .width = config.width,
+            .wl_buffer_bytes = buf_mapped.ptr,
             .wl_buffer = shm_buf1,
+            .nv12_buffer_bytes = nv12_bufs[0..].ptr,
         },
         .{
-            .height = i.buf_height,
-            .width = i.buf_width,
-            .bytes = buf_mapped[@divExact(buf_size, 2)..].ptr,
+            .height = config.height,
+            .width = config.width,
+            .wl_buffer_bytes = buf_mapped[@divExact(buf_size, 2)..].ptr,
             .wl_buffer = shm_buf2,
+            .nv12_buffer_bytes = nv12_bufs[@divExact(nv12_bufs.len, 2)..].ptr,
         },
     };
 
@@ -271,7 +313,8 @@ pub fn captureSessionLoop(i: *Interface, config: media.Config, display_idx: usiz
         try std.Io.Timeout.sleep(.{ .deadline = capture_at.withClock(.awake) }, i.io);
 
         log.debug("capture frame @ {d}!", .{delta_from_start_ms});
-        const awebo_frame = if (!i.frames[0].busy) &i.frames[0] else &i.frames[1];
+        const awebo_frame = if (!i.frames[0].busy.load(.monotonic)) &i.frames[0] else &i.frames[1];
+        if (builtin.mode == .debug) assert(awebo_frame.busy.load(.monotonic) == false);
 
         const frame = try capture_session.createFrame();
         defer frame.destroy();
@@ -294,22 +337,43 @@ pub fn captureSessionLoop(i: *Interface, config: media.Config, display_idx: usiz
         if (i.display.flush() != .SUCCESS) @panic("flush failed");
         try i.frame_ready.wait(i.io);
 
+        const rgb_planes: [4:null]?[*]const u8 = .{ awebo_frame.wl_buffer_bytes, null, null, null };
+        const rgb_strides: [4]c_int = .{ @intCast(i.buf_width * 4), 0, 0, 0 };
+        const nv12_planes: [4:null]?[*]u8 = .{
+            awebo_frame.nv12_buffer_bytes[0..],
+            awebo_frame.nv12_buffer_bytes[c_height * c_width ..],
+            null,
+            null,
+        };
+        const nv12_strides: [4]c_int = .{ @intCast(config.width), @intCast(config.width), 0, 0 };
+
+        _ = c.sws_scale(
+            sws_context,
+            &rgb_planes,
+            &rgb_strides,
+            0,
+            @intCast(i.buf_height),
+            &nv12_planes,
+            &nv12_strides,
+        );
+
         const sc: *ScreenCapture = @fieldParentPtr("os", i);
 
-        awebo_frame.busy = true;
+        awebo_frame.busy.store(true, .monotonic);
         sc.framePush(awebo_frame, delta_from_start_ms);
     }
 }
 
 /// Unsupported by this implementation.
-pub fn showOsPicker(mi: *Interface, config: media.Config, img_kind: VideoStream.ImageKind) void {
-    _ = .{ mi, config, img_kind };
+pub fn showOsPicker(i: *Interface, config: media.Config, img_kind: VideoStream.ImageKind) void {
+    _ = .{ i, config, img_kind };
     @compileError("unsupported by this implementation");
 }
 
-pub fn stopCapture(mi: *Interface) void {
-    // screenCaptureManagerStopCapture(mi);
-    _ = mi;
+pub fn stopCapture(i: *Interface) void {
+    log.debug("stop capture requested", .{});
+    i.capture_session_loop.cancel(i.io) catch {};
+    log.debug("capture canceled", .{});
 }
 
 fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, i: *Interface) void {

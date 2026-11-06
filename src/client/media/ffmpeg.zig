@@ -60,10 +60,10 @@ pub const Codec = struct {
     pub fn pixFmtToImageKind(codec: *const Codec) VideoStream.ImageKind {
         return switch (codec.pix_fmt) {
             c.AV_PIX_FMT_VIDEOTOOLBOX => .videotoolbox,
+            c.AV_PIX_FMT_VAAPI => .vaapi,
             c.AV_PIX_FMT_YUV420P => .yuv,
             c.AV_PIX_FMT_NV12 => .nv12,
             c.AV_PIX_FMT_BGRA => .bgra,
-            c.AV_PIX_FMT_BGR0 => .bgr0,
             else => unreachable,
         };
     }
@@ -104,11 +104,11 @@ const candidates: struct {
             .{ .name = "hevc_qsv", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_NV12 },
             .{ .name = "hevc_vaapi", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_VAAPI },
             //h264
-            .{ .name = "h264_nvenc", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
-            .{ .name = "h264_amf", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
-            .{ .name = "h264_qsv", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
-            .{ .name = "h264_vaapi", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_VAAPI },
-            .{ .name = "libx264rgb", .software = true, .kind = .h264, .pix_fmt = c.AV_PIX_FMT_BGR0 },
+            // .{ .name = "h264_nvenc", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
+            // .{ .name = "h264_amf", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
+            // .{ .name = "h264_qsv", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
+            // .{ .name = "h264_vaapi", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_VAAPI },
+            .{ .name = "libx264", .software = true, .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
         },
     },
 };
@@ -171,6 +171,41 @@ pub const Encoder = struct {
 
                     ctx.hw_frames_ctx = c.av_buffer_ref(frame_ctx_ref);
                 },
+                c.AV_PIX_FMT_VAAPI => {
+                    // var device_ctx: *c.AVBufferRef = undefined;
+                    // {
+                    //     const ret = c.av_hwdevice_ctx_create(
+                    //         @ptrCast(&device_ctx),
+                    //         c.AV_HWDEVICE_TYPE_VAAPI,
+                    //         null,
+                    //         null,
+                    //         0,
+                    //     );
+
+                    //     if (ret < 0) {
+                    //         std.log.debug("failed hwdevice ctx init: {s}", .{err2str(ret)});
+                    //         return error.FailedHardwareInit;
+                    //     }
+                    // }
+
+                    // const frame_ctx_ref: *c.AVBufferRef = c.av_hwframe_ctx_alloc(device_ctx) orelse
+                    //     return error.OutOfMemory;
+
+                    // const frame_ctx: *c.AVHWFramesContext = @ptrCast(@alignCast(frame_ctx_ref.data));
+                    // frame_ctx.format = c.AV_PIX_FMT_VAAPI;
+                    // frame_ctx.sw_format = c.AV_PIX_FMT_NV12;
+                    // frame_ctx.width = config.width;
+                    // frame_ctx.height = config.height;
+                    // frame_ctx.initial_pool_size = 0;
+                    // const ret = c.av_hwframe_ctx_init(frame_ctx_ref);
+
+                    // if (ret < 0) {
+                    //     std.log.debug("failed hwframes ctx init: {s}", .{err2str(ret)});
+                    //     return error.FailedHardwareInit;
+                    // }
+
+                    // ctx.hw_frames_ctx = c.av_buffer_ref(frame_ctx_ref);
+                },
                 else => {},
             }
 
@@ -226,6 +261,17 @@ pub const Encoder = struct {
                 }.noop, @ptrCast(i.ptr), c.AV_BUFFER_FLAG_READONLY);
                 e.frame.hw_frames_ctx = c.av_buffer_ref(e.ctx.hw_frames_ctx);
             },
+            c.AV_PIX_FMT_VAAPI => {
+                const i = img.vaapi;
+                e.frame.format = c.AV_PIX_FMT_VAAPI;
+                e.frame.width = @intCast(i.width);
+                e.frame.height = @intCast(i.height);
+                e.frame.data[3] = @ptrCast(i.ptr);
+                e.frame.buf[0] = c.av_buffer_create(@ptrCast(i.ptr), 0, &struct {
+                    fn noop(_: ?*anyopaque, _: ?[*]u8) callconv(.c) void {}
+                }.noop, @ptrCast(i.ptr), c.AV_BUFFER_FLAG_READONLY);
+                e.frame.hw_frames_ctx = c.av_buffer_ref(e.ctx.hw_frames_ctx);
+            },
             c.AV_PIX_FMT_NV12 => {
                 const i = img.nv12;
                 e.frame.format = c.AV_PIX_FMT_NV12;
@@ -239,14 +285,6 @@ pub const Encoder = struct {
             c.AV_PIX_FMT_BGRA => {
                 const i = img.bgra;
                 e.frame.format = c.AV_PIX_FMT_BGRA;
-                e.frame.width = @intCast(i.width);
-                e.frame.height = @intCast(i.height);
-                e.frame.data[0] = i.pixels;
-                e.frame.linesize[0] = @intCast(i.stride);
-            },
-            c.AV_PIX_FMT_BGR0 => {
-                const i = img.bgr0;
-                e.frame.format = c.AV_PIX_FMT_BGR0;
                 e.frame.width = @intCast(i.width);
                 e.frame.height = @intCast(i.height);
                 e.frame.data[0] = i.pixels;

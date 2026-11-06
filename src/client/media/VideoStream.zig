@@ -27,9 +27,9 @@ comptime {
 pub const ImageKind = enum(u8) {
     yuv = 0,
     nv12 = 1,
-    videotoolbox = 2,
+    videotoolbox = 2, // macos
     bgra = 3,
-    bgr0 = 4, // encoder only
+    vaapi = 4, // linux
 };
 
 pub const Image = union(ImageKind) {
@@ -41,7 +41,11 @@ pub const Image = union(ImageKind) {
         ptr: *anyopaque,
     },
     bgra: BGRx,
-    bgr0: BGRx,
+    vaapi: struct {
+        width: u32,
+        height: u32,
+        ptr: *anyopaque,
+    },
 
     pub const BGRx = struct {
         width: u32,
