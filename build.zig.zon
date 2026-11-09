@@ -54,6 +54,7 @@
         .ffmpeg = .{
             .url = "git+https://github.com/allyourcodebase/ffmpeg#334f343113ae77b8522de8e117c0c946decc15a2",
             .hash = "ffmpeg-8.1.1-6-zT7QA0j0UQQo_DEGnhkpNwIqHV7FLgglTQg-geJcF7LS",
+            .lazy = true,
         },
         .translate_c = .{
             .url = "git+https://codeberg.org/ziglang/translate-c?ref=zig-0.17.x#cfac21f3199b2b02ce3fd7db652aa456421fe4ab",

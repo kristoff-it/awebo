@@ -222,11 +222,6 @@ pub fn setupGui(
         .optimize = dep_optimize,
     });
 
-    const ffmpeg = b.dependency("ffmpeg", .{
-        .target = target,
-        .optimize = dep_optimize,
-    });
-
     const translate_c = b.dependency("translate_c", .{ .optimize = .fast });
     const Translator = @import("translate_c").Translator;
     const t: Translator = .init(translate_c, .{
@@ -254,6 +249,19 @@ pub fn setupGui(
     t.linkLibrary(opus.artifact("opus"));
     t.linkLibrary(opus_tools.artifact("opus-tools"));
 
+    const options = b.addOptions();
+    options.addOption(Context, "context", .client);
+    options.addOption(bool, "local_cache", local_cache);
+    options.addOption(bool, "dummy", dummy);
+    gui.root_module.addOptions("options", options);
+    gui.root_module.addImport("appicon", appicon);
+    gui.root_module.addImport("folders", folders.module("known-folders"));
+    gui.root_module.addImport("zeit", zeit.module("zeit"));
+    // gui.root_module.addImport("opus", opus.module("opus"));
+    gui.root_module.addImport("rnnoise", rnnoise.module("rnnoise"));
+    gui.root_module.addImport("miniaudio", miniaudio.module("miniaudio"));
+    gui.root_module.addImport("c", t.mod);
+
     // Linking against ffmpeg is currently problematic:
     //
     // - AYC/ffmpeg currently doesn't build hw accelerated
@@ -270,22 +278,7 @@ pub fn setupGui(
     // more capable, we should switch to linking against avcodec
     // directly in the Translator. And once ayc/ffmpeg is good
     // enough, we should switch to it altogether.
-    t.addIncludePath(ffmpeg.path("."));
-
-    const options = b.addOptions();
-    options.addOption(Context, "context", .client);
-    options.addOption(bool, "local_cache", local_cache);
-    options.addOption(bool, "dummy", dummy);
-    gui.root_module.addOptions("options", options);
-    gui.root_module.addImport("appicon", appicon);
-    gui.root_module.addImport("folders", folders.module("known-folders"));
-    gui.root_module.addImport("zeit", zeit.module("zeit"));
-    // gui.root_module.addImport("opus", opus.module("opus"));
-    gui.root_module.addImport("rnnoise", rnnoise.module("rnnoise"));
-    gui.root_module.addImport("miniaudio", miniaudio.module("miniaudio"));
-    gui.root_module.addImport("c", t.mod);
-
-    if (target.query.isNativeTriple()) {
+    if (b.systemIntegrationOption("ffmpeg", .{ .default = target.query.isNativeTriple() })) {
         gui.root_module.linkSystemLibrary("avutil", .{
             .needed = true,
             .preferred_link_mode = .static,
@@ -295,6 +288,11 @@ pub fn setupGui(
             .preferred_link_mode = .static,
         });
     } else {
+        const ffmpeg = b.dependency("ffmpeg", .{
+            .target = target,
+            .optimize = dep_optimize,
+        });
+        t.addIncludePath(ffmpeg.path("."));
         gui.root_module.linkLibrary(ffmpeg.artifact("ffmpeg"));
     }
 
