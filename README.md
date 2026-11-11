@@ -61,14 +61,10 @@ See logs to learn how to reset your local cache if needed.
 
 #### Linux
 
-On linux you will need the following dependencies:
+On linux you will need the following dependencies.
+On my machine (NixOS), without `pulseaudio` I see no audio devices.
 ```
-nix-shell -p ffmpeg pkg-config sdl3 wayland wayland-protocols wayland-scanner
-```
-
-If you don't see any audio device:
-```
-zig build gui -fsys=sdl3 -fsys=pulseaudio
+nix-shell -p ffmpeg wayland pulseaudio
 ```
 
 #### Testing with multiple users

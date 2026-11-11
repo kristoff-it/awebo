@@ -379,7 +379,10 @@ pub fn setupGui(
             const wayland = b.lazyImport(@This(), "wayland") orelse break :blk;
             const Scanner = wayland.Scanner;
 
-            const scanner = Scanner.create(b, .{});
+            const scanner = Scanner.create(b, .{
+                .wayland_xml = b.path("src/client/media/Wayland/wayland.xml"),
+                .wayland_protocols = b.path("src/client/media/Wayland/protocols"),
+            });
             // I'm currently being naughty and using system files for the Wayland protocol definitions.
             // To avoid this, you should be able to just vendor the required XML files.
             scanner.addSystemProtocol("staging/ext-image-capture-source/ext-image-capture-source-v1.xml");

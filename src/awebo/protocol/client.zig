@@ -21,6 +21,10 @@ pub const Id = packed struct(u30) {
     pub fn format(id: Id, w: *Io.Writer) !void {
         try w.print("{f}-{}", .{ id.user_id, id.slot });
     }
+
+    pub fn eql(lhs: Id, rhs: Id) bool {
+        return @backingInt(lhs) == @backingInt(rhs);
+    }
 };
 
 pub const OriginId = u64;

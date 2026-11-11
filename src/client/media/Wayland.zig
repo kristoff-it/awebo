@@ -323,6 +323,10 @@ pub fn captureSessionLoop(i: *Interface, config: media.Config, display_idx: usiz
                 }
             }
 
+            // The GUI might not be rendering for performance optimization reasons
+            // (e.g. it's not visible), so we might need to yank that frame back.
+            if (sc.framePull()) |f| break :frame f;
+
             log.warn("both frames were busy and neither could be retreived!", .{});
         };
 

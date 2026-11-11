@@ -69,6 +69,8 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
     var any_stream = false;
 
     for (ac.callers.keys(), ac.callers.values()) |id, *caller| {
+        if (ac.caller_id) |self_cid| if (self_cid.eql(id)) continue;
+
         const screen = caller.screen orelse {
             // render caller with sessions that we are not watching
             const caller_meta = h.client.callers.get(id).?;
@@ -77,6 +79,7 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
             var session_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
                 .expand = .horizontal,
                 .border = .all(1),
+                .id_extra = id.toInt(),
             });
             defer session_box.deinit();
 
@@ -344,7 +347,7 @@ fn configureScreensharePopup(vp: *VoicePanel, ac: *Core.ActiveCall, core: *Core)
                 var dd: dvui.DropdownWidget = undefined;
                 dd.init(@src(), .{
                     .selected_index = selected_index,
-                    .label = entries[0].name orelse "loading...",
+                    .label = entries[selected_index].name orelse "loading...",
                 }, .{});
 
                 if (dd.dropped()) {
