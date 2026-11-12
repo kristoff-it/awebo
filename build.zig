@@ -375,12 +375,6 @@ pub fn setupGui(
                 .backend = .sdl3,
             });
             gui.root_module.addImport("dvui", dvui.module("dvui_sdl3"));
-            if (b.lazyDependency("pulseaudio", .{
-                .target = target,
-                .optimize = dep_optimize,
-            })) |dep| {
-                gui.root_module.addImport("pulseaudio", dep.module("pulseaudio"));
-            }
 
             const wayland = b.lazyImport(@This(), "wayland") orelse break :blk;
             const Scanner = wayland.Scanner;
@@ -542,14 +536,7 @@ pub fn setupTui(
                 tui.root_module.addImport("win32", win32_dep.module("win32"));
             }
         },
-        .linux => {
-            if (b.lazyDependency("pulseaudio", .{
-                .target = target,
-                .optimize = dep_optimize,
-            })) |dep| {
-                tui.root_module.addImport("pulseaudio", dep.module("pulseaudio"));
-            }
-        },
+        .linux => {},
         else => {},
     }
 

@@ -12,11 +12,6 @@
             .url = "git+https://github.com/david-vanderson/dvui#4ed19f847fd0ec6ec97f9600316d86c0e0cd255c",
             .hash = "dvui-0.6.0-dev-AQFJmaGoBAG4gedKz36Pkv4RuRs86V5BjXavPsYijdkp",
         },
-        .pulseaudio = .{
-            .url = "git+https://github.com/andrewrk/pulseaudio#b6ff9a7da57592609adbfad000039b0c01f26344",
-            .hash = "pulseaudio-16.1.1-10-mk_62DNlNwCDcTJ5iGhTxeCoetuAFKE1FrYNw5AErtX-",
-            .lazy = true,
-        },
         .opus = .{
             .url = "git+https://github.com/allyourcodebase/opus?ref=0.17-dev#7fc2bef07389ad5731d670099774e8368f83f61b",
             .hash = "opus-0.0.2-vuF-cPiQAABH1lEhaTs-C3DF8-YrJ4AAcKInLdVTwKKP",
