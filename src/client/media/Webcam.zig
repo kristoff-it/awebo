@@ -3,7 +3,7 @@ const WebcamCapture = @This();
 const builtin = @import("builtin");
 const std = @import("std");
 const Core = @import("../Core.zig");
-const ScreenCapture = @import("ScreenCapture.zig");
+const ScreenCapture = @import("Screen.zig");
 const log = std.log.scoped(.webcam_capture);
 
 /// True when the user initiated webcam sharing
@@ -130,7 +130,7 @@ const MacOsInterface = opaque {
         @export(&swapFrame, .{ .linkage = .strong, .name = "aweboWebcamSwapFrame" });
     }
 
-    pub const MacOsFrame = @import("MacOS.zig").Interface.MacOsFrame;
+    pub const MacOsFrame = @import("Screen/MacOS.zig").Interface.MacOsFrame;
 
     extern fn webcamCaptureManagerInit() *MacOsInterface;
     pub fn init() *MacOsInterface {

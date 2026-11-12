@@ -11,8 +11,8 @@ const Core = @import("../Core.zig");
 const PacketRing = @import("packet_ring.zig").PacketRing;
 const ffmpeg = @import("ffmpeg.zig");
 const VideoStream = @import("VideoStream.zig");
-const MacOsInterface = @import("MacOS.zig").Interface;
-const WaylandInterface = @import("Wayland.zig");
+const MacOsInterface = @import("Screen/MacOS.zig").Interface;
+const WaylandInterface = @import("Screen/Wayland.zig");
 
 pub const State = union(enum) {
     off,

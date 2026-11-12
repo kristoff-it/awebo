@@ -17,8 +17,8 @@ const Chat = Channel.Chat;
 const Voice = Channel.Voice;
 const network = @import("Core/network.zig");
 const persistence = @import("Core/persistence.zig");
-pub const ScreenCapture = @import("media/ScreenCapture.zig");
-pub const WebcamCapture = @import("media/WebcamCapture.zig");
+pub const ScreenCapture = @import("media/Screen.zig");
+pub const WebcamCapture = @import("media/Webcam.zig");
 pub const Audio = @import("media/Audio.zig");
 pub const VideoStream = @import("media/VideoStream.zig");
 

@@ -1,10 +1,10 @@
 const std = @import("std");
-const awebo = @import("../../awebo.zig");
+const awebo = @import("../../../awebo.zig");
 const media = awebo.protocol.media;
-const ScreenCapture = @import("ScreenCapture.zig");
+const ScreenCapture = @import("../Screen.zig");
 const framePush = ScreenCapture.framePush;
 const streamWasInterrupted = ScreenCapture.streamWasInterrupted;
-const VideoStream = @import("VideoStream.zig");
+const VideoStream = @import("../VideoStream.zig");
 
 /// See 'media/screen-share-macos.m'
 pub const Interface = opaque {

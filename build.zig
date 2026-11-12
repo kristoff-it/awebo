@@ -122,6 +122,7 @@ pub fn setupServer(
     const zqlite = b.dependency("zqlite", .{
         .target = target,
         .optimize = dep_optimize,
+        .sqlite3 = sqlite_flags_server,
     });
 
     const zeit = b.dependency("zeit", .{
@@ -129,7 +130,7 @@ pub fn setupServer(
         .optimize = dep_optimize,
     });
 
-    const translate_c = b.dependency("translate_c", .{ .optimize = .fast });
+    const translate_c = b.dependency("translate_c", .{});
     const Translator = @import("translate_c").Translator;
     const t: Translator = .init(translate_c, .{
         .c_source_file = b.path("src/server/c.h"),
@@ -146,10 +147,9 @@ pub fn setupServer(
 
     server.root_module.addOptions("options", options);
     server.root_module.addImport("folders", folders.module("known-folders"));
+    server.root_module.addImport("zqlite", zqlite.module("zqlite"));
     server.root_module.addImport("zeit", zeit.module("zeit"));
     server.root_module.addImport("c", t.mod);
-
-    addSqlite(server, zqlite, .server);
 
     const server_test = b.addTest(.{
         .name = "server-test",
@@ -210,6 +210,7 @@ pub fn setupGui(
     const zqlite = b.dependency("zqlite", .{
         .target = target,
         .optimize = dep_optimize,
+        .sqlite3 = sqlite_flags_client,
     });
 
     const zeit = b.dependency("zeit", .{
@@ -222,7 +223,7 @@ pub fn setupGui(
         .optimize = dep_optimize,
     });
 
-    const translate_c = b.dependency("translate_c", .{ .optimize = .fast });
+    const translate_c = b.dependency("translate_c", .{});
     const Translator = @import("translate_c").Translator;
     const t: Translator = .init(translate_c, .{
         .c_source_file = b.path("src/client/c.h"),
@@ -275,6 +276,7 @@ pub fn setupGui(
     gui.root_module.addImport("appicon", appicon);
     gui.root_module.addImport("folders", folders.module("known-folders"));
     gui.root_module.addImport("zeit", zeit.module("zeit"));
+    gui.root_module.addImport("zqlite", zqlite.module("zqlite"));
     // gui.root_module.addImport("opus", opus.module("opus"));
     gui.root_module.addImport("rnnoise", rnnoise.module("rnnoise"));
     gui.root_module.addImport("miniaudio", miniaudio.module("miniaudio"));
@@ -300,8 +302,6 @@ pub fn setupGui(
         t.addIncludePath(ffmpeg.path("."));
         gui.root_module.linkLibrary(ffmpeg.artifact("ffmpeg"));
     }
-
-    addSqlite(gui, zqlite, .client);
 
     switch (target.result.os.tag) {
         .macos => {
@@ -333,8 +333,8 @@ pub fn setupGui(
                     // "src/client/media/macos/audio.m",
                     // "src/client/media/macos/video.m",
                     // "src/client/media/macos/video-format.m",
-                    "src/client/media/macos/screen-capture.m",
-                    "src/client/media/macos/webcam-capture.m",
+                    "src/client/media/Screen/macos/screen-capture.m",
+                    "src/client/media/Webcam/macos/webcam-capture.m",
                 },
                 .flags = &[_][]const u8{
                     "-pthread",
@@ -376,8 +376,8 @@ pub fn setupGui(
             const Scanner = wayland.Scanner;
 
             const scanner = Scanner.create(b, .{
-                .wayland_xml = b.path("src/client/media/Wayland/wayland.xml"),
-                .wayland_protocols = b.path("src/client/media/Wayland/protocols"),
+                .wayland_xml = b.path("src/client/media/Screen/Wayland/wayland.xml"),
+                .wayland_protocols = b.path("src/client/media/Screen/Wayland/protocols"),
             });
             // I'm currently being naughty and using system files for the Wayland protocol definitions.
             // To avoid this, you should be able to just vendor the required XML files.
@@ -460,6 +460,7 @@ pub fn setupTui(
     const zqlite = b.dependency("zqlite", .{
         .target = target,
         .optimize = dep_optimize,
+        .sqlite3 = sqlite_flags_client,
     });
 
     const zeit = b.dependency("zeit", .{
@@ -480,6 +481,7 @@ pub fn setupTui(
     tui.root_module.addOptions("options", options);
     tui.root_module.addImport("vaxis", vaxis.module("vaxis"));
     tui.root_module.addImport("folders", folders.module("known-folders"));
+    tui.root_module.addImport("zqlite", zqlite.module("zqlite"));
     tui.root_module.addImport("zeit", zeit.module("zeit"));
     tui.root_module.addImport("opus", opus.module("opus"));
     tui.root_module.addImport("rnnoise", rnnoise.module("rnnoise"));
@@ -488,7 +490,7 @@ pub fn setupTui(
     tui.root_module.linkLibrary(ffmpeg.artifact("ffmpeg"));
     // tui.root_module.linkSystemLibrary("avutil", .{ .needed = true });
     // tui.root_module.linkSystemLibrary("avcodec", .{ .needed = true });
-    addSqlite(tui, zqlite, .client);
+
     switch (target.result.os.tag) {
         .macos => {
             const xcode_frameworks = b.dependency("xcode_frameworks", .{});
@@ -580,38 +582,6 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.O
     }
 }
 
-fn addSqlite(
-    exe: *std.Build.Step.Compile,
-    zqlite: *std.Build.Dependency,
-    comptime context: enum { server, client },
-) void {
-    exe.root_module.addImport("zqlite", zqlite.module("zqlite"));
-    exe.root_module.addCSourceFile(.{
-        .file = zqlite.path("lib/sqlite3.c"),
-        .flags = &[_][]const u8{
-            "-DSQLITE_DQS=0",
-            "-DSQLITE_DEFAULT_WAL_SYNCHRONOUS=1",
-            "-DSQLITE_USE_ALLOCA=1",
-            "-DSQLITE_THREADSAFE=1",
-            "-DSQLITE_TEMP_STORE=3",
-            "-DSQLITE_ENABLE_API_ARMOR=1",
-            "-DSQLITE_ENABLE_UNLOCK_NOTIFY",
-            "-DSQLITE_DEFAULT_FILE_PERMISSIONS=0600",
-            "-DSQLITE_OMIT_DECLTYPE=1",
-            "-DSQLITE_OMIT_DEPRECATED=1",
-            "-DSQLITE_OMIT_LOAD_EXTENSION=1",
-            "-DSQLITE_OMIT_PROGRESS_CALLBACK=1",
-            "-DSQLITE_OMIT_SHARED_CACHE",
-            "-DSQLITE_OMIT_TRACE=1",
-            "-DSQLITE_OMIT_UTF16=1",
-            "-DHAVE_USLEEP=0",
-        } ++ if (context == .server) .{
-            "-DSQLITE_ENABLE_FTS5=1",
-        } else .{},
-    });
-    exe.root_module.link_libc = true;
-}
-
 fn runArtifact(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -692,3 +662,26 @@ fn sipsCommand(
     run.setCwd(wf.getDirectory());
     return run.addOutputFileArg(out_path);
 }
+
+const sqlite_flags_client: []const []const u8 = &.{
+    "-DSQLITE_DQS=0",
+    "-DSQLITE_DEFAULT_WAL_SYNCHRONOUS=1",
+    "-DSQLITE_USE_ALLOCA=1",
+    "-DSQLITE_THREADSAFE=1",
+    "-DSQLITE_TEMP_STORE=3",
+    "-DSQLITE_ENABLE_API_ARMOR=1",
+    "-DSQLITE_ENABLE_UNLOCK_NOTIFY",
+    "-DSQLITE_DEFAULT_FILE_PERMISSIONS=0600",
+    "-DSQLITE_OMIT_DECLTYPE=1",
+    "-DSQLITE_OMIT_DEPRECATED=1",
+    "-DSQLITE_OMIT_LOAD_EXTENSION=1",
+    "-DSQLITE_OMIT_PROGRESS_CALLBACK=1",
+    "-DSQLITE_OMIT_SHARED_CACHE",
+    "-DSQLITE_OMIT_TRACE=1",
+    "-DSQLITE_OMIT_UTF16=1",
+    "-DHAVE_USLEEP=0",
+};
+
+const sqlite_flags_server: []const []const u8 = sqlite_flags_client ++ @as([]const []const u8, &.{
+    "-DSQLITE_ENABLE_FTS5=1",
+});

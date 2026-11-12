@@ -8,12 +8,12 @@ const wayland = @import("wayland");
 const wl = wayland.client.wl;
 const wl_ext = wayland.client.ext;
 const Allocator = std.mem.Allocator;
-const awebo = @import("../../awebo.zig");
+const awebo = @import("../../../awebo.zig");
 const media = awebo.protocol.media;
-const ScreenCapture = @import("ScreenCapture.zig");
+const ScreenCapture = @import("../Screen.zig");
 const framePush = ScreenCapture.framePush;
 const streamWasInterrupted = ScreenCapture.streamWasInterrupted;
-const VideoStream = @import("VideoStream.zig");
+const VideoStream = @import("../VideoStream.zig");
 const log = std.log.scoped(.wayland_screen_capture);
 
 const c = @import("c");
