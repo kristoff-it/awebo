@@ -283,17 +283,13 @@ pub fn setupGui(
     if (b.systemIntegrationOption("ffmpeg", .{ .default = true })) {
         gui.root_module.linkSystemLibrary("avutil", .{
             .needed = true,
-            .preferred_link_mode = .static,
         });
         gui.root_module.linkSystemLibrary("avcodec", .{
             .needed = true,
-            .preferred_link_mode = .static,
         });
-
         if (target.result.os.tag == .linux) {
             gui.root_module.linkSystemLibrary("swscale", .{
                 .needed = true,
-                .preferred_link_mode = .static,
             });
         }
     } else {
