@@ -15,6 +15,12 @@ pub fn build(b: *std.Build) void {
     //     break :blk b.resolveTargetQuery(query);
     // } else target;
 
+    const incremental = b.option(
+        bool,
+        "incremental",
+        "Use incremental compilation for the server and clients",
+    ) orelse false;
+
     const dep_optimize = b.option(
         std.builtin.OptimizeMode,
         "dep-optimize",
@@ -57,10 +63,10 @@ pub fn build(b: *std.Build) void {
         "Use dummy OS interfaces for A/V in client",
     ) orelse false;
 
-    const server, const server_test = setupServer(b, target, optimize, dep_optimize, slow, echo, server_version);
+    const server, const server_test = setupServer(b, target, optimize, dep_optimize, slow, echo, server_version, incremental);
     b.installArtifact(server);
 
-    const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, client_local_cache, client_dummy);
+    const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, client_local_cache, client_dummy, incremental);
     b.installArtifact(gui);
 
     _ = server_test;
@@ -104,6 +110,7 @@ pub fn setupServer(
     slow: bool,
     echo: bool,
     version: []const u8,
+    incremental: bool,
 ) struct { *std.Build.Step.Compile, *std.Build.Step.Compile } {
     const server = b.addExecutable(.{
         .name = "awebo-server",
@@ -113,6 +120,7 @@ pub fn setupServer(
             .optimize = optimize,
         }),
     });
+    if (incremental) server.incremental = true;
 
     const folders = b.dependency("known_folders", .{
         .target = target,
@@ -166,6 +174,7 @@ pub fn setupGui(
     dep_optimize: std.builtin.OptimizeMode,
     local_cache: bool,
     dummy: bool,
+    incremental: bool,
 ) struct { *std.Build.Step.Compile, *std.Build.Step.Compile } {
     const appicon = b.createModule(.{
         .root_source_file = b.path("src/client/assets/AppIcon.png"),
@@ -179,6 +188,7 @@ pub fn setupGui(
             .optimize = optimize,
         }),
     });
+    if (incremental) gui.incremental = true;
 
     const opus = b.dependency("opus", .{
         .target = target,
@@ -415,6 +425,7 @@ pub fn setupTui(
     version: []const u8,
     local_cache: bool,
     dummy: bool,
+    incremental: bool,
 ) struct { *std.Build.Step.Compile, *std.Build.Step.Compile } {
     const tui = b.addExecutable(.{
         .name = "awebo-tui",
@@ -424,6 +435,7 @@ pub fn setupTui(
             .optimize = optimize,
         }),
     });
+    if (incremental) tui.incremental = true;
 
     const vaxis = b.dependency("vaxis", .{
         .target = target,
@@ -562,10 +574,10 @@ pub fn setupCi(b: *std.Build, step: *std.Build.Step, dep_optimize: std.builtin.O
         const target = b.resolveTargetQuery(t);
         const optimize = .debug;
 
-        const server, const server_test = setupServer(b, target, optimize, dep_optimize, false, false, zon.version);
-        const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, false, false);
+        const server, const server_test = setupServer(b, target, optimize, dep_optimize, false, false, zon.version, false);
+        const gui, const gui_test = setupGui(b, target, optimize, dep_optimize, false, false, false);
         // const tui, const tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false, false);
-        const dummy_gui, const dummy_gui_test = setupGui(b, target, optimize, dep_optimize, false, true);
+        const dummy_gui, const dummy_gui_test = setupGui(b, target, optimize, dep_optimize, false, true, false);
         // const dummy_tui, const dummy_tui_test = setupTui(b, target, optimize, dep_optimize, zon.version, false, true);
 
         step.dependOn(&b.addInstallArtifact(server, .{}).step);
