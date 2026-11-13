@@ -20,8 +20,9 @@
 #endif
 
 #ifdef __linux__
-// #include <va/va.h>
-// #include <va/va_wayland.h>
+    #include <linux/videodev2.h>
+    // #include <va/va.h>
+    // #include <va/va_wayland.h>
 #endif
 
 // @cInclude("libavutil/frame.h");

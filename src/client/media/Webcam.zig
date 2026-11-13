@@ -2,8 +2,11 @@ const WebcamCapture = @This();
 
 const builtin = @import("builtin");
 const std = @import("std");
+const Io = std.Io;
 const Core = @import("../Core.zig");
 const ScreenCapture = @import("Screen.zig");
+const MacOsInterface = @import("Webcam/MacOs.zig").Interface;
+const LinuxInterface = @import("Webcam/Linux.zig").Interface;
 const log = std.log.scoped(.webcam_capture);
 
 /// True when the user initiated webcam sharing
@@ -32,6 +35,7 @@ new_frame: std.atomic.Value(?*Frame),
 /// Os interface
 os: switch (builtin.target.os.tag) {
     .macos => *MacOsInterface,
+    .linux => *LinuxInterface,
     else => *DummyInterface,
 },
 
@@ -44,6 +48,13 @@ pub const Webcam = struct {
     id: [:0]const u8,
     name: [:0]const u8,
     connected: bool,
+    os: OsWebcam,
+};
+
+pub const OsWebcam = switch (builtin.target.os.tag) {
+    .macos => void,
+    .linux => LinuxInterface.Webcam,
+    else => void,
 };
 
 /// Must call start() next to subscribe to device update notifications.
@@ -73,7 +84,10 @@ pub fn deinit(wc: *WebcamCapture) void {
 }
 
 pub fn discoverDevicesAndListen(wc: *WebcamCapture) void {
-    wc.os.discoverDevicesAndListen(wc);
+    const core: *Core = @alignCast(@fieldParentPtr("webcam_capture", wc));
+    wc.os.discoverDevicesAndListen(core.io, wc) catch {
+        @panic("error while discovering webcams");
+    };
 }
 
 pub fn startCapture(wc: *WebcamCapture) void {
@@ -91,72 +105,49 @@ pub fn swapFrame(sc: *WebcamCapture, new: ?*Frame) callconv(.c) ?*Frame {
     return sc.new_frame.swap(new, .acq_rel);
 }
 
-/// Function with C callconv that OS APIs can call to update the device list.
-/// Uses fieldParentPtr to lock *Core while modifying the data.
-/// `raw_id` and `raw_name` will be duped when inserting the device for the first time.
-fn upsertDevice(
+/// C-ABI compatible wrapper around 'upsertDevice' for C libraries.
+/// Requires OsWebcam to be C-compatible.
+fn upsertDeviceC(
     wc: *WebcamCapture,
     raw_id: [*:0]const u8,
     raw_name: [*:0]const u8,
     connected: bool,
+    os: OsWebcam,
 ) callconv(.c) void {
+    upsertDevice(wc, std.mem.span(raw_id), std.mem.span(raw_name), connected, os);
+}
+
+/// Called by OS implementations to update the device list.
+/// Uses fieldParentPtr to lock *Core while modifying the data.
+/// `raw_id` and `raw_name` will be duped when inserting the device for the first time.
+pub fn upsertDevice(
+    wc: *WebcamCapture,
+    id: []const u8,
+    name: []const u8,
+    connected: bool,
+    os: OsWebcam,
+) void {
     const core: *Core = @alignCast(@fieldParentPtr("webcam_capture", wc));
     var locked = Core.lockState(core);
     defer locked.unlock();
 
-    const id = std.mem.span(raw_id);
     const gop = wc.devices.getOrPut(core.gpa, id) catch oom();
 
-    log.debug("upserting Webcam(id: '{s}', name: '{s}', active: {})", .{ id, raw_name, connected });
+    log.debug("upserting Webcam(id: '{s}', name: '{s}', active: {})", .{ id, name, connected });
 
     if (!gop.found_existing) {
-        const name = std.mem.span(raw_name);
         const key = core.gpa.dupeSentinel(u8, id, 0) catch oom();
         gop.key_ptr.* = key;
         gop.value_ptr.* = .{
             .id = key,
             .name = core.gpa.dupeSentinel(u8, name, 0) catch oom(),
             .connected = connected,
+            .os = os,
         };
     } else {
         gop.value_ptr.connected = connected;
     }
 }
-
-/// See `media/webcam-capture-macos.m`
-const MacOsInterface = opaque {
-    comptime {
-        @export(&upsertDevice, .{ .linkage = .strong, .name = "aweboWebcamUpsert" });
-        @export(&swapFrame, .{ .linkage = .strong, .name = "aweboWebcamSwapFrame" });
-    }
-
-    pub const MacOsFrame = @import("Screen/MacOS.zig").Interface.MacOsFrame;
-
-    extern fn webcamCaptureManagerInit() *MacOsInterface;
-    pub fn init() *MacOsInterface {
-        return webcamCaptureManagerInit();
-    }
-
-    extern fn webcamCaptureManagerDeinit(*MacOsInterface) void;
-    pub fn deinit(mi: *MacOsInterface) void {
-        return webcamCaptureManagerDeinit(mi);
-    }
-
-    extern fn webcamDiscoverDevicesAndListen(*MacOsInterface, *WebcamCapture) void;
-    pub fn discoverDevicesAndListen(mi: *MacOsInterface, wc: *WebcamCapture) void {
-        webcamDiscoverDevicesAndListen(mi, wc);
-    }
-
-    extern fn webcamStartCapture(*MacOsInterface, id: ?[*:0]const u8, width: c_int, height: c_int, fps: c_int) bool;
-    pub fn startCapture(mi: *MacOsInterface, id: ?[*:0]const u8, width: i32, height: i32, fps: i32) bool {
-        return webcamStartCapture(mi, id, width, height, fps);
-    }
-
-    extern fn webcamStopCapture(*MacOsInterface) void;
-    pub fn stopCapture(mi: *MacOsInterface) void {
-        webcamStopCapture(mi);
-    }
-};
 
 const DummyInterface = opaque {
     pub const DummyFrame = ScreenCapture.DummyInterface.DummyFrame;
@@ -174,7 +165,7 @@ const DummyInterface = opaque {
         var buf: [256]u8 = undefined;
         for (0..5) |i| {
             const id = std.fmt.bufPrintSentinel(&buf, "ID Dummy Device #{}", .{i}, 0) catch unreachable;
-            wc.upsertDevice(id.ptr, id[3..].ptr, true);
+            wc.upsertDevice(id.ptr, id[3..].ptr, true, {});
         }
     }
 
