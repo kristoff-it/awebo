@@ -18,18 +18,15 @@ share_intent: bool = false,
 selected: ?[:0]const u8,
 
 /// Keyed by the device unique ID.
-devices: std.StringArrayHashMapUnmanaged(Webcam),
+devices: std.StringArrayHashMapUnmanaged(Device),
 
-/// While capturing, this value is atomically replaced
-/// with a new frame by the OS.
-/// Should be processed by the UI to show a preview of
-/// the current stream, if desireable.
-/// The application can ignore this value, in which case
-/// the OS is expected to clean it up but, if used, the
-/// client is expected to:
+/// While capturing, this value is atomically replaced with a new frame by
+/// the OS. Should be processed by the UI to show a preview of the current
+/// stream, if desireable. The application can ignore this value, in which
+/// case the OS is expected to clean it up but, if used, the client is
+/// expected to:
 /// 1. call swapFrame() to swap the value with null
-/// 2. if it got a new frame, quickly copy pixel data
-///    out and call deinit.
+/// 2. if it got a new frame, quickly copy pixel data out and call deinit.
 new_frame: std.atomic.Value(?*Frame),
 
 /// Os interface
@@ -44,15 +41,15 @@ pub const Frame = switch (builtin.target.os.tag) {
     else => DummyInterface.DummyFrame,
 };
 
-pub const Webcam = struct {
+pub const Device = struct {
     id: [:0]const u8,
     name: [:0]const u8,
     connected: bool,
-    os: OsWebcam,
+    os: OsDevice,
 };
 
-pub const OsWebcam = switch (builtin.target.os.tag) {
-    .macos => void,
+pub const OsDevice = switch (builtin.target.os.tag) {
+    .macos => extern struct {},
     .linux => LinuxInterface.Webcam,
     else => void,
 };
@@ -91,8 +88,8 @@ pub fn discoverDevicesAndListen(wc: *WebcamCapture) void {
 }
 
 pub fn startCapture(wc: *WebcamCapture) void {
-    const id = if (wc.selected) |s| s.ptr else null;
-    _ = wc.os.startCapture(id, 1920, 1080, 30);
+    const device = if (wc.selected) |s| wc.devices.getPtr(s) else null;
+    _ = wc.os.startCapture(device, 1920, 1080, 30);
 }
 
 pub fn stopCapture(wc: *WebcamCapture) void {
@@ -106,26 +103,26 @@ pub fn swapFrame(sc: *WebcamCapture, new: ?*Frame) callconv(.c) ?*Frame {
 }
 
 /// C-ABI compatible wrapper around 'upsertDevice' for C libraries.
-/// Requires OsWebcam to be C-compatible.
-fn upsertDeviceC(
+/// Requires OsDevice to be C-compatible.
+pub fn upsertDeviceC(
     wc: *WebcamCapture,
     raw_id: [*:0]const u8,
     raw_name: [*:0]const u8,
     connected: bool,
-    os: OsWebcam,
+    os: OsDevice,
 ) callconv(.c) void {
     upsertDevice(wc, std.mem.span(raw_id), std.mem.span(raw_name), connected, os);
 }
 
 /// Called by OS implementations to update the device list.
 /// Uses fieldParentPtr to lock *Core while modifying the data.
-/// `raw_id` and `raw_name` will be duped when inserting the device for the first time.
+/// `id` and `name` will be duped when inserting the device for the first time.
 pub fn upsertDevice(
     wc: *WebcamCapture,
     id: []const u8,
     name: []const u8,
     connected: bool,
-    os: OsWebcam,
+    os: OsDevice,
 ) void {
     const core: *Core = @alignCast(@fieldParentPtr("webcam_capture", wc));
     var locked = Core.lockState(core);
@@ -146,6 +143,7 @@ pub fn upsertDevice(
         };
     } else {
         gop.value_ptr.connected = connected;
+        gop.value_ptr.os = os;
     }
 }
 
@@ -160,7 +158,8 @@ const DummyInterface = opaque {
         _ = mi;
     }
 
-    pub fn discoverDevicesAndListen(mi: *DummyInterface, wc: *WebcamCapture) void {
+    pub fn discoverDevicesAndListen(mi: *DummyInterface, io: Io, wc: *WebcamCapture) void {
+        _ = io;
         _ = mi;
         var buf: [256]u8 = undefined;
         for (0..5) |i| {

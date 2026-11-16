@@ -17,8 +17,8 @@ pub fn draw(sb: *ScreenshareBox, core: *Core, source: enum { webcam, screen }) !
     if (dvui.timerDoneOrNone(id)) {
         const maybe_frame = switch (source) {
             .screen => core.screen_capture.framePull(),
-            // .webcam => core.webcam_capture.swapFrame(null),
-            .webcam => return,
+            .webcam => core.webcam_capture.swapFrame(null),
+            // .webcam => return,
         };
 
         if (maybe_frame) |new| {

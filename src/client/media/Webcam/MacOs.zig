@@ -1,10 +1,11 @@
 const std = @import("std");
+const Io = std.Io;
 const WebcamCapture = @import("../Webcam.zig");
 
 /// See `media/webcam-capture-macos.m`
-const Interface = opaque {
+pub const Interface = opaque {
     comptime {
-        @export(&WebcamCapture.upsertDevice, .{ .linkage = .strong, .name = "aweboWebcamUpsert" });
+        @export(&WebcamCapture.upsertDeviceC, .{ .linkage = .strong, .name = "aweboWebcamUpsert" });
         @export(&WebcamCapture.swapFrame, .{ .linkage = .strong, .name = "aweboWebcamSwapFrame" });
     }
 
@@ -21,12 +22,14 @@ const Interface = opaque {
     }
 
     extern fn webcamDiscoverDevicesAndListen(*Interface, *WebcamCapture) void;
-    pub fn discoverDevicesAndListen(mi: *Interface, wc: *WebcamCapture) void {
+    pub fn discoverDevicesAndListen(mi: *Interface, io: Io, wc: *WebcamCapture) !void {
+        _ = io;
         webcamDiscoverDevicesAndListen(mi, wc);
     }
 
     extern fn webcamStartCapture(*Interface, id: ?[*:0]const u8, width: c_int, height: c_int, fps: c_int) bool;
-    pub fn startCapture(mi: *Interface, id: ?[*:0]const u8, width: i32, height: i32, fps: i32) bool {
+    pub fn startCapture(mi: *Interface, device: ?*WebcamCapture.Device, width: i32, height: i32, fps: i32) bool {
+        const id = if (device) |d| d.id.ptr else null;
         return webcamStartCapture(mi, id, width, height, fps);
     }
 

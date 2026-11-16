@@ -113,12 +113,14 @@ pub const Interface = opaque {
         }
     }
 
-    pub fn startCapture(i: *Interface, id: ?[*:0]const u8, width: i32, height: i32, fps: i32) bool {
+    pub fn startCapture(i: *Interface, device: ?*WebcamCapture.Device, width: i32, height: i32, fps: i32) bool {
         _ = i;
-        _ = id;
         _ = width;
         _ = height;
         _ = fps;
+
+        _ = device;
+
         return true;
     }
 

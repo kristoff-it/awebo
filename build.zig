@@ -299,10 +299,21 @@ pub fn setupGui(
         gui.root_module.linkSystemLibrary("avcodec", .{
             .needed = true,
         });
-        if (target.result.os.tag == .linux) {
-            gui.root_module.linkSystemLibrary("swscale", .{
-                .needed = true,
-            });
+
+        switch (target.result.os.tag) {
+            else => {},
+            .linux => {
+                gui.root_module.linkSystemLibrary("swscale", .{
+                    .needed = true,
+                });
+            },
+            .macos => {
+                const ffmpeg = b.dependency("ffmpeg", .{
+                    .target = target,
+                    .optimize = dep_optimize,
+                });
+                t.addIncludePath(ffmpeg.path("."));
+            },
         }
     } else {
         const ffmpeg = b.dependency("ffmpeg", .{
