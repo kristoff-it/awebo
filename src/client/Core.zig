@@ -48,7 +48,7 @@ active_call: ?ActiveCall = null,
 
 audio: Audio,
 screen_capture: ScreenCapture = undefined,
-webcam_capture: WebcamCapture,
+webcam_capture: WebcamCapture = undefined,
 
 // this is only set to pass the message to `chat_panel`
 search_messages_reply: ?awebo.protocol.server.SearchMessagesReply = null,
@@ -163,7 +163,7 @@ pub fn run(core: *Core) void {
     core.screen_capture.init(core.io, core.gpa);
 
     log.debug("discovering camera devices", .{});
-    core.webcam_capture = .init();
+    core.webcam_capture.init();
     core.webcam_capture.discoverDevicesAndListen();
     defer core.webcam_capture.deinit();
 

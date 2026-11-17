@@ -68,7 +68,7 @@ pub const WaylandFrame = struct {
     busy: std.atomic.Value(bool) = .init(false),
     nv12_buffer_bytes: [*]u8,
 
-    pub fn deinit(f: *WaylandFrame) void {
+    pub fn release(f: *WaylandFrame) void {
         f.busy.store(false, .monotonic);
     }
 

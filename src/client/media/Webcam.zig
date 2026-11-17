@@ -6,7 +6,7 @@ const Io = std.Io;
 const Core = @import("../Core.zig");
 const ScreenCapture = @import("Screen.zig");
 const MacOsInterface = @import("Webcam/MacOs.zig").Interface;
-const LinuxInterface = @import("Webcam/Linux.zig").Interface;
+const LinuxInterface = @import("Webcam/Linux.zig");
 const log = std.log.scoped(.webcam_capture);
 
 /// True when the user initiated webcam sharing
@@ -27,17 +27,18 @@ devices: std.StringArrayHashMapUnmanaged(Device),
 /// expected to:
 /// 1. call swapFrame() to swap the value with null
 /// 2. if it got a new frame, quickly copy pixel data out and call deinit.
-new_frame: std.atomic.Value(?*Frame),
+new_frame: std.atomic.Value(?*Frame) = .init(null),
 
 /// Os interface
 os: switch (builtin.target.os.tag) {
     .macos => *MacOsInterface,
-    .linux => *LinuxInterface,
+    .linux => LinuxInterface,
     else => *DummyInterface,
 },
 
 pub const Frame = switch (builtin.target.os.tag) {
     .macos => MacOsInterface.MacOsFrame,
+    .linux => LinuxInterface.LinuxFrame,
     else => DummyInterface.DummyFrame,
 };
 
@@ -56,13 +57,14 @@ pub const OsDevice = switch (builtin.target.os.tag) {
 
 /// Must call start() next to subscribe to device update notifications.
 /// WebcamCapture must be kept stored in Core as it uses fieldParentPtr to access it.
-pub fn init() WebcamCapture {
-    return .{
+pub fn init(wc: *WebcamCapture) void {
+    wc.* = .{
         .selected = null,
         .devices = .empty,
-        .new_frame = .init(null),
-        .os = .init(),
+        .os = undefined,
     };
+
+    wc.os.init();
 }
 
 pub fn deinit(wc: *WebcamCapture) void {
@@ -81,24 +83,31 @@ pub fn deinit(wc: *WebcamCapture) void {
 }
 
 pub fn discoverDevicesAndListen(wc: *WebcamCapture) void {
-    const core: *Core = @alignCast(@fieldParentPtr("webcam_capture", wc));
-    wc.os.discoverDevicesAndListen(core.io, wc) catch {
+    wc.os.discoverDevicesAndListen() catch {
         @panic("error while discovering webcams");
     };
 }
 
 pub fn startCapture(wc: *WebcamCapture) void {
     const device = if (wc.selected) |s| wc.devices.getPtr(s) else null;
-    _ = wc.os.startCapture(device, 1920, 1080, 30);
+    wc.os.startCapture(device, 1920, 1080, 30) catch {
+        // do something
+    };
 }
 
 pub fn stopCapture(wc: *WebcamCapture) void {
     wc.os.stopCapture();
 }
 
-/// Function with C callconv that the OS can invoke whenever
-/// a new screen capture frame is ready.
-pub fn swapFrame(sc: *WebcamCapture, new: ?*Frame) callconv(.c) ?*Frame {
+pub fn framePull(sc: *WebcamCapture) ?*Frame {
+    return sc.frameSwap(null);
+}
+
+pub fn framePush(sc: *WebcamCapture, new: ?*Frame) void {
+    if (sc.frameSwap(new)) |old| old.release();
+}
+
+fn frameSwap(sc: *WebcamCapture, new: ?*Frame) ?*Frame {
     return sc.new_frame.swap(new, .acq_rel);
 }
 

@@ -133,7 +133,7 @@ pub fn stopCapture(sc: *ScreenCapture) void {
     sc.stop_mutex.lockUncancelable(core.io);
     defer sc.stop_mutex.unlock(core.io);
 
-    if (sc.frameSwap(null)) |frame| frame.deinit();
+    if (sc.frameSwap(null)) |frame| frame.release();
     sc.state.active.encoder.deinit();
     sc.state = .off;
 }
@@ -148,7 +148,7 @@ pub fn streamWasInterrupted(sc: *ScreenCapture) callconv(.c) void {
 pub fn framePush(sc: *ScreenCapture, frame: *Frame, delta_from_start_ms: u64) callconv(.c) void {
     const core: *Core = @alignCast(@fieldParentPtr("screen_capture", sc));
     if (!sc.stop_mutex.tryLock()) {
-        frame.deinit();
+        frame.release();
         return;
     }
     defer sc.stop_mutex.unlock(core.io);
@@ -170,7 +170,7 @@ pub fn framePush(sc: *ScreenCapture, frame: *Frame, delta_from_start_ms: u64) ca
     }
     if (sc.frameSwap(frame)) |old| {
         std.log.debug("gui thread dropped a frame!", .{});
-        old.deinit();
+        old.release();
     }
 }
 
@@ -305,7 +305,7 @@ pub const DummyInterface = opaque {
     }
 
     pub const DummyFrame = struct {
-        pub fn deinit(f: *DummyFrame) void {
+        pub fn release(f: *DummyFrame) void {
             _ = f;
         }
 
