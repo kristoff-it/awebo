@@ -61,7 +61,9 @@ pub const ServerOnly = struct {
     };
 
     fn deinit(self: @This(), gpa: Allocator) void {
-        gpa.free(self.pswd_hash);
+        // Only free if the hash was dynamically allocated.
+        // An empty string means we chose not to store it.
+        if (self.pswd_hash.len > 0) gpa.free(self.pswd_hash);
     }
 };
 
