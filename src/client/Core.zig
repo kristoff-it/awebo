@@ -50,6 +50,8 @@ audio: Audio,
 screen_capture: ScreenCapture = undefined,
 webcam_capture: WebcamCapture = undefined,
 
+error_messages: std.ArrayList([]const u8) = .empty,
+
 // this is only set to pass the message to `chat_panel`
 search_messages_reply: ?awebo.protocol.server.SearchMessagesReply = null,
 
@@ -227,6 +229,26 @@ pub fn run(core: *Core) void {
             .audio_ready => {
                 log.info("audio ready", .{});
             },
+            .capture_failed => |kind| {
+                if (core.active_call) |*ac| {
+                    switch (kind) {
+                        .screen => {
+                            if (ac.screen != .off) ac.screenshareEnd(core) catch oom();
+                            core.error_messages.append(
+                                core.gpa,
+                                "screen share was interrupted because of an error (see logs for more info)",
+                            ) catch oom();
+                        },
+                        .camera => {
+                            if (ac.camera != .off) ac.cameraShareEnd(core) catch oom();
+                            core.error_messages.append(
+                                core.gpa,
+                                "camera share was interrupted because of an error (see logs for more info)",
+                            ) catch oom();
+                        },
+                    }
+                }
+            },
         }
 
         core.refresh(core, @src(), null);
@@ -236,6 +258,7 @@ pub fn run(core: *Core) void {
 pub const Event = union(enum) {
     network: Network,
     audio_ready: void,
+    capture_failed: enum { screen, camera },
 
     pub const Network = struct {
         host_id: awebo.Host.ClientOnly.Id,
@@ -482,7 +505,13 @@ fn callersUpdate(core: *Core, host_id: HostId, cu: awebo.protocol.server.Callers
             caller.state.muted_server = audio.muted_server;
         },
         .share_begin => |share| h.client.callers.addStream(
-            .{ .client_id = cu.id, .kind = .screen },
+            .{
+                .client_id = cu.id,
+                .kind = switch (share.kind) {
+                    .screen => .screen,
+                    .camera => .camera,
+                },
+            },
             share.format,
         ),
         .share_watch_join => |swj| h.client.callers.addViewer(
@@ -494,7 +523,13 @@ fn callersUpdate(core: *Core, host_id: HostId, cu: awebo.protocol.server.Callers
             cu.id,
             swl.stream,
         ),
-        .share_end => h.client.callers.removeStream(core.gpa, .{ .client_id = cu.id, .kind = .screen }),
+        .share_end => |kind| h.client.callers.removeStream(core.gpa, .{
+            .client_id = cu.id,
+            .kind = switch (kind) {
+                .screen => .screen,
+                .camera => .camera,
+            },
+        }),
         .leave => {
             h.client.callers.remove(core.gpa, cu.id) catch oom();
         },
@@ -633,7 +668,7 @@ pub const ActiveCall = struct {
     pub const ActiveCaller = struct {
         audio: *Audio.Caller,
         screen: ?*VideoStream = null,
-        // camera: *Video.Caller,
+        camera: ?*VideoStream = null,
     };
 
     pub const ShareStatus = enum {
@@ -676,6 +711,7 @@ pub const ActiveCall = struct {
     }
 
     pub fn screenCaptureServerReply(ac: *ActiveCall, core: *Core, ok: bool) void {
+        if (true) @panic("todo");
         if (ac.screen != .requesting_permission) {
             // We are not trying to start a screenshare, ignore.
             return;
@@ -689,6 +725,63 @@ pub const ActiveCall = struct {
         }
     }
 
+    pub fn screenshareEnd(ac: *ActiveCall, core: *Core) !void {
+        assert(ac.screen != .off);
+        core.screen_capture.stopCapture();
+        ac.screen = .off;
+
+        const host = core.hosts.get(ac.host_id).?;
+        const msg: awebo.protocol.client.CallShareEnd = .{
+            .kind = .screen,
+        };
+        const bytes = try msg.serializeAlloc(core.gpa);
+        try host.client.status.synced.tcp.queue.putOne(core.io, bytes);
+    }
+
+    pub fn cameraShareBegin(ac: *ActiveCall, core: *Core) !void {
+        assert(ac.camera == .off);
+        core.webcam_capture.send.store(true, .unordered);
+        const format = try core.webcam_capture.startCapture();
+
+        const host = core.hosts.get(ac.host_id).?;
+        const msg: awebo.protocol.client.CallShareBegin = .{
+            .origin = now(core),
+            .format = format,
+            .kind = .camera,
+        };
+        const bytes = try msg.serializeAlloc(core.gpa);
+        try host.client.status.synced.tcp.queue.putOne(core.io, bytes);
+        ac.camera = .requesting_permission;
+    }
+
+    pub fn cameraShareServerReply(ac: *ActiveCall, core: *Core, ok: bool) void {
+        if (true) @panic("todo");
+        if (ac.camera != .requesting_permission) {
+            // We are not trying to start a camera share, ignore.
+            return;
+        }
+
+        if (ok) {
+            ac.camera = .sharing;
+            core.webcam_capture.send.store(true, .unordered);
+        } else {
+            @panic("TODO");
+        }
+    }
+
+    pub fn cameraShareEnd(ac: *ActiveCall, core: *Core) !void {
+        assert(ac.camera != .off);
+        core.webcam_capture.stopCapture();
+        ac.camera = .off;
+
+        const host = core.hosts.get(ac.host_id).?;
+        const msg: awebo.protocol.client.CallShareEnd = .{
+            .kind = .camera,
+        };
+        const bytes = try msg.serializeAlloc(core.gpa);
+        try host.client.status.synced.tcp.queue.putOne(core.io, bytes);
+    }
+
     pub fn shareSessionJoin(
         ac: *ActiveCall,
         core: *Core,
@@ -696,11 +789,19 @@ pub const ActiveCall = struct {
         kind: proto.media.StreamKind,
         format: awebo.protocol.media.Format,
     ) !void {
-        assert(kind == .screen);
         const streamer = ac.callers.getPtr(id).?;
-        assert(streamer.screen == null);
 
-        streamer.screen = try .create(core, format);
+        switch (kind) {
+            else => unreachable,
+            .screen => {
+                assert(streamer.screen == null);
+                streamer.screen = try .create(core, format);
+            },
+            .camera => {
+                assert(streamer.camera == null);
+                streamer.camera = try .create(core, format);
+            },
+        }
 
         const host = core.hosts.get(ac.host_id).?;
         const msg: awebo.protocol.client.CallShareWatch = .{
@@ -719,30 +820,35 @@ pub const ActiveCall = struct {
         id: proto.client.Id,
         kind: proto.media.StreamKind,
     ) !void {
-        caller.screen.?.destroy(core.gpa);
-        caller.screen = null;
+        switch (kind) {
+            else => unreachable,
+            .screen => {
+                caller.screen.?.destroy(core.gpa);
+                caller.screen = null;
 
-        const host = core.hosts.get(ac.host_id).?;
-        const msg: awebo.protocol.client.CallShareWatch = .{
-            .origin = now(core),
-            .stream = .{ .client_id = id, .kind = kind },
-            .action = .leave,
-        };
-        const bytes = try msg.serializeAlloc(core.gpa);
-        try host.client.status.synced.tcp.queue.putOne(core.io, bytes);
-    }
+                const host = core.hosts.get(ac.host_id).?;
+                const msg: awebo.protocol.client.CallShareWatch = .{
+                    .origin = now(core),
+                    .stream = .{ .client_id = id, .kind = kind },
+                    .action = .leave,
+                };
+                const bytes = try msg.serializeAlloc(core.gpa);
+                try host.client.status.synced.tcp.queue.putOne(core.io, bytes);
+            },
+            .camera => {
+                caller.camera.?.destroy(core.gpa);
+                caller.camera = null;
 
-    pub fn screenshareEnd(ac: *ActiveCall, core: *Core) !void {
-        assert(ac.screen != .off);
-        core.screen_capture.stopCapture();
-        ac.screen = .off;
-
-        const host = core.hosts.get(ac.host_id).?;
-        const msg: awebo.protocol.client.CallShareEnd = .{
-            .kind = .screen,
-        };
-        const bytes = try msg.serializeAlloc(core.gpa);
-        try host.client.status.synced.tcp.queue.putOne(core.io, bytes);
+                const host = core.hosts.get(ac.host_id).?;
+                const msg: awebo.protocol.client.CallShareWatch = .{
+                    .origin = now(core),
+                    .stream = .{ .client_id = id, .kind = kind },
+                    .action = .leave,
+                };
+                const bytes = try msg.serializeAlloc(core.gpa);
+                try host.client.status.synced.tcp.queue.putOne(core.io, bytes);
+            },
+        }
     }
 
     pub fn callersUpdate(
@@ -751,7 +857,7 @@ pub const ActiveCall = struct {
         h: *Host,
         cu: awebo.protocol.server.CallersUpdate,
     ) void {
-        // We don't deinit CU because the transfer ownership of the only allocated field
+        // We don't deinit CU because we transfer ownership of the only allocated field
         // defer cu.deinit();
 
         switch (cu.action) {
@@ -774,11 +880,20 @@ pub const ActiveCall = struct {
             .share_watch_leave => {},
             .share_end => |kind| {
                 log.debug("share end user: {f}", .{cu.id});
-                assert(kind == .screen); // TODO
                 if (ac.callers.getPtr(cu.id)) |caller| {
-                    if (caller.screen) |s| {
-                        s.destroy(core.gpa);
-                        caller.screen = null;
+                    switch (kind) {
+                        .screen => {
+                            if (caller.screen) |s| {
+                                s.destroy(core.gpa);
+                                caller.screen = null;
+                            }
+                        },
+                        .camera => {
+                            if (caller.camera) |c| {
+                                c.destroy(core.gpa);
+                                caller.camera = null;
+                            }
+                        },
                     }
                 }
             },

@@ -29,6 +29,28 @@ pub fn draw(main: *Main, core: *Core, active_scene: *Gui.ActiveScene) !void {
     const h = core.hosts.get(core.active_host).?;
     const frozen = h.client.status != .synced;
 
+    if (core.error_messages.items.len > 0) {
+        const fw = dvui.floatingWindow(@src(), .{ .modal = true }, .{
+            .padding = dvui.Rect.all(10),
+        });
+        defer fw.deinit();
+
+        fw.dragAreaSet(dvui.windowHeader("Error Message(s)", "", null));
+
+        const vbox = dvui.box(@src(), .{ .dir = .vertical }, .{});
+        defer vbox.deinit();
+
+        for (core.error_messages.items, 0..) |msg, idx| {
+            dvui.labelNoFmt(@src(), msg, .{}, .{
+                .id_extra = idx,
+            });
+        }
+
+        if (dvui.button(@src(), "OK", .{}, .{})) {
+            core.error_messages.clearRetainingCapacity();
+        }
+    }
+
     main.subviews.host_bar.draw(core);
 
     {

@@ -165,7 +165,7 @@ pub fn sync(host: *Host, gpa: Allocator, delta: *const HostSync) void {
         qs.upsert_user.run(@src(), db, .{
             .id = new_user.id,
             .created = 0,
-            .update_uid = @intFromEnum(new_user.id), // hack
+            .update_uid = @backingInt(new_user.id), // hack
             .invited_by = new_user.invited_by,
             .power = new_user.power,
             .handle = new_user.handle,
@@ -491,77 +491,100 @@ pub const Callers = struct {
 
     pub fn addStream(
         callers: *Callers,
-        stream_id: proto.media.StreamId,
+        sid: proto.media.StreamId,
         format: proto.media.Format,
     ) void {
-        const caller = callers.get(stream_id.client_id) orelse {
-            log.debug("unable to find caller {f} for update: {}", .{ stream_id, format });
+        const caller = callers.get(sid.client_id) orelse {
+            log.debug("unable to find caller {f} for update: {}", .{ sid, format });
             return;
         };
 
-        assert(stream_id.kind == .screen); // TODO
-        assert(caller.state.share.screen == null);
-        caller.state.share.screen = .{ .format = format };
+        switch (sid.kind) {
+            else => @panic("bad message"),
+            .screen => {
+                assert(caller.state.share.screen == null);
+                caller.state.share.screen = .{ .format = format };
+            },
+            .camera => {
+                assert(caller.state.share.camera == null);
+                caller.state.share.camera = format;
+            },
+        }
     }
 
-    pub fn removeStream(callers: *Callers, gpa: Allocator, stream_id: proto.media.StreamId) void {
-        const caller = callers.get(stream_id.client_id) orelse {
-            log.debug("unable to find caller {f} for stream removal", .{stream_id});
+    pub fn removeStream(callers: *Callers, gpa: Allocator, sid: proto.media.StreamId) void {
+        const caller = callers.get(sid.client_id) orelse {
+            log.debug("unable to find caller {f} for stream removal", .{sid});
             return;
         };
 
-        assert(stream_id.kind == .screen); // TODO
-        const screen = &caller.state.share.screen.?;
-        for (screen.viewers.map.keys()) |viewer| {
-            callers.removeViewer(viewer, stream_id);
-        }
+        switch (sid.kind) {
+            else => @panic("bad message"),
+            .screen => {
+                const screen = &caller.state.share.screen.?;
+                for (screen.viewers.map.keys()) |viewer| {
+                    callers.removeViewer(viewer, sid);
+                }
 
-        screen.deinit(gpa);
-        caller.state.share.screen = null;
+                screen.deinit(gpa);
+                caller.state.share.screen = null;
+            },
+            .camera => {
+                caller.state.share.camera = null;
+            },
+        }
     }
 
     pub fn addViewer(
         callers: *Callers,
         gpa: Allocator,
         viewer: Caller.Id,
-        stream: proto.media.StreamId,
+        sid: proto.media.StreamId,
     ) !void {
+        assert(sid.kind == .screen);
+
         const caller = callers.get(viewer) orelse {
-            log.debug("unable to find caller {f} to become a viewer of {f}", .{ viewer, stream });
+            log.debug("unable to find caller {f} to become a viewer of {f}", .{ viewer, sid });
             return;
         };
 
-        const streamer = callers.get(stream.client_id) orelse {
-            log.debug("unable to find streamer for viewer update: {f}", .{stream});
+        const streamer = callers.get(sid.client_id) orelse {
+            log.debug("unable to find streamer for viewer update: {f}", .{sid});
             return;
         };
 
         const screen = &(streamer.state.share.screen orelse {
-            log.debug("unable to find streamer session for update: {f}", .{stream});
+            log.debug("unable to find streamer session for update: {f}", .{sid});
             return;
         });
 
-        try caller.state.watching.map.putNoClobber(gpa, stream, {});
+        try caller.state.watching.map.putNoClobber(gpa, sid, {});
         try screen.viewers.map.putNoClobber(gpa, viewer, {});
     }
 
-    pub fn removeViewer(callers: *Callers, viewer: Caller.Id, stream: proto.media.StreamId) void {
-        const caller = callers.get(viewer) orelse {
-            log.debug("unable to find caller {f} to remove a viewer of {f}", .{ viewer, stream });
-            return;
-        };
+    pub fn removeViewer(callers: *Callers, viewer: Caller.Id, sid: proto.media.StreamId) void {
+        switch (sid.kind) {
+            .voice, .reserved => unreachable,
+            .camera => {},
+            .screen => {
+                const caller = callers.get(viewer) orelse {
+                    log.debug("unable to find caller {f} to remove a viewer of {f}", .{ viewer, sid });
+                    return;
+                };
 
-        const streamer = callers.get(stream.client_id) orelse {
-            log.debug("unable to find streamer for viewer removal update: {f}", .{stream});
-            return;
-        };
+                const streamer = callers.get(sid.client_id) orelse {
+                    log.debug("unable to find streamer for viewer removal update: {f}", .{sid});
+                    return;
+                };
 
-        const screen = &(streamer.state.share.screen orelse {
-            log.debug("unable to find streamer session for viewer removal update: {f}", .{stream});
-            return;
-        });
-        assert(caller.state.watching.map.swapRemove(stream));
-        assert(screen.viewers.map.swapRemove(viewer));
+                const screen = &(streamer.state.share.screen orelse {
+                    log.debug("unable to find streamer session for viewer removal update: {f}", .{sid});
+                    return;
+                });
+                assert(caller.state.watching.map.swapRemove(sid));
+                assert(screen.viewers.map.swapRemove(viewer));
+            },
+        }
     }
 };
 

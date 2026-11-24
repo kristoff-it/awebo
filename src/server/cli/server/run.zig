@@ -502,6 +502,26 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
                     if (screen.keyframe) "k" else "",
                 });
             },
+            .camera => {
+                const sender_state = room.get(sender).?;
+                if (sender_state.share.camera == null) {
+                    server_log.debug(
+                        "client without camera sharing session is sending media packets, forcing disconnection",
+                        .{},
+                    );
+                    sender.deinit(io, gpa, state);
+                    continue;
+                }
+
+                const camera, _ = awebo.protocol.media.Video.parse(body) orelse continue;
+                server_log.debug("Camera({f} seq: {} chunk: [{}/{}]{s})", .{
+                    header.stream_id.client_id,
+                    header.sequence,
+                    camera.chunk_id,
+                    camera.total_chunks,
+                    if (camera.keyframe) "k" else "",
+                });
+            },
         }
 
         var batch: [64]Io.net.OutgoingMessage = undefined;
@@ -512,12 +532,7 @@ fn runUdpSocket(io: Io, gpa: Allocator, udp: Io.net.Socket) !void {
                 continue;
             });
 
-            // it might be better to use the streamer's 'wiewers' set, but
-            // that set contains client_ids not client pointers so with
-            // that approach it might be better to create a
-            // 'viewers_server' separate set that exists server-side only.
-            if (header.stream_id.kind == .screen and !caller_state.watching.map.contains(header.stream_id)) continue;
-
+            if (header.stream_id.kind != .voice and !caller_state.watching.map.contains(header.stream_id)) continue;
             if (!options.echo) {
                 if (client.authenticated.? == sender.authenticated.?) {
                     server_log.debug("same user, skipping", .{});
@@ -965,20 +980,39 @@ const Client = struct {
                 return;
             };
 
-            assert(cmd.kind == .screen); // TODO
-            if (caller_state.share.screen != null) {
-                // Client is in a corrupted state.
-                client.deinit(io, gpa, state);
-                return;
+            switch (cmd.kind) {
+                else => {
+                    // client should not be attempting any other value
+                    client.deinit(io, gpa, state);
+                    return;
+                },
+                .screen => {
+                    if (caller_state.share.screen != null) {
+                        // Client is in a corrupted state.
+                        client.deinit(io, gpa, state);
+                        return;
+                    }
+                    caller_state.share.screen = .{ .format = cmd.format };
+                },
+                .camera => {
+                    if (caller_state.share.camera != null) {
+                        // Client is in a corrupted state.
+                        client.deinit(io, gpa, state);
+                        return;
+                    }
+                    caller_state.share.camera = cmd.format;
+                },
             }
-
-            caller_state.share.screen = .{ .format = cmd.format };
 
             const cu: awebo.protocol.server.CallersUpdate = .{
                 .id = client.authenticated.?,
                 .action = .{
                     .share_begin = .{
-                        .kind = .screen, // TODO
+                        .kind = switch (cmd.kind) {
+                            .camera => .camera,
+                            .screen => .screen,
+                            else => unreachable,
+                        },
                         .format = cmd.format,
                     },
                 },
@@ -1041,7 +1075,58 @@ const Client = struct {
                     client.deinit(io, gpa, state);
                     return;
                 },
-                .camera => unreachable, // TODO
+                .camera => {
+                    switch (cmd.action) {
+                        .join => {
+                            if (caller_state.watching.map.contains(cmd.stream)) {
+                                log.debug("client trying to join a stream that it's already watching'", .{});
+                                client.deinit(io, gpa, state);
+                                return;
+                            }
+
+                            const streamer_client = state.clients.tcp_index.get(cmd.stream.client_id) orelse {
+                                log.debug("client trying to join a stream of a disconnected user", .{});
+                                return;
+                            };
+
+                            const streamer_state = room.getPtr(streamer_client) orelse {
+                                log.debug("client tried to watch a stream for a user that is not in the call", .{});
+                                return;
+                            };
+
+                            if (streamer_state.share.camera == null) {
+                                log.debug("client tried to watch a stream that doesn't exist'", .{});
+                                return;
+                            }
+
+                            try caller_state.watching.map.put(gpa, cmd.stream, {});
+                        },
+                        .leave => {
+                            if (!caller_state.watching.map.contains(cmd.stream)) {
+                                log.debug("client trying to leave a stream that it's not watching'", .{});
+                                client.deinit(io, gpa, state);
+                                return;
+                            }
+
+                            const streamer_client = state.clients.tcp_index.get(cmd.stream.client_id) orelse {
+                                log.debug("client trying to leave a stream of a disconnected user", .{});
+                                return;
+                            };
+
+                            const streamer_state = room.getPtr(streamer_client) orelse {
+                                log.debug("client tried to leave a stream for a user that is not in the call", .{});
+                                return;
+                            };
+
+                            if (streamer_state.share.screen == null) {
+                                log.debug("client tried to leave a stream that doesn't exist'", .{});
+                                return;
+                            }
+
+                            assert(caller_state.watching.map.swapRemove(cmd.stream));
+                        },
+                    }
+                },
                 .screen => {
                     switch (cmd.action) {
                         .join => {
@@ -1097,6 +1182,8 @@ const Client = struct {
                     }
                 },
             }
+
+            if (cmd.stream.kind == .camera) return;
 
             const cu: awebo.protocol.server.CallersUpdate = .{
                 .id = client.authenticated.?,
@@ -1165,22 +1252,38 @@ const Client = struct {
                 return;
             };
 
-            assert(cmd.kind == .screen); // TODO
-            if (caller_state.share.screen) |*screen| {
-                screen.deinit(gpa);
-                caller_state.share.screen = null;
-                for (room.values()) |*viewer_state| {
-                    _ = viewer_state.watching.map.swapRemove(.{
-                        .client_id = client.authenticated.?,
-                        .kind = .screen,
-                    });
-                }
-            } else return; // nooop
+            switch (cmd.kind) {
+                .screen => {
+                    if (caller_state.share.screen) |*screen| {
+                        screen.deinit(gpa);
+                        caller_state.share.screen = null;
+                        for (room.values()) |*viewer_state| {
+                            _ = viewer_state.watching.map.swapRemove(.{
+                                .client_id = client.authenticated.?,
+                                .kind = .screen,
+                            });
+                        }
+                    } else return; // nooop
+                },
+                .camera => {
+                    if (caller_state.share.camera == null) return; //noop
+                    caller_state.share.camera = null;
+                    for (room.values()) |*viewer_state| {
+                        _ = viewer_state.watching.map.swapRemove(.{
+                            .client_id = client.authenticated.?,
+                            .kind = .camera,
+                        });
+                    }
+                },
+            }
 
             const cu: awebo.protocol.server.CallersUpdate = .{
                 .id = client.authenticated.?,
                 .action = .{
-                    .share_end = .screen, // TODO
+                    .share_end = switch (cmd.kind) {
+                        .screen => .screen,
+                        .camera => .camera,
+                    },
                 },
             };
 
@@ -1713,8 +1816,11 @@ var ___state: struct {
         const bytes = cu.serializeAlloc(gpa) catch @panic("oom");
         state.tcpBroadcast(io, gpa, bytes);
 
-        _ = state.clients.udp_index.remove(client.udp.?.addr);
-        client.udp = null;
+        if (client.udp) |udp| {
+            _ = state.clients.udp_index.remove(udp.addr);
+            client.udp = null;
+        }
+
         return true;
     }
 

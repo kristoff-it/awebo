@@ -572,7 +572,7 @@ fn renderAVDebugWindow(cl: *ChannelList, core: *Core) void {
             _ = core.webcam_capture.stopCapture();
         } else {
             cl.debug.webcam = true;
-            _ = core.webcam_capture.startCapture();
+            _ = core.webcam_capture.startCapture() catch {};
         }
     }
 
@@ -588,7 +588,7 @@ fn renderAVDebugWindow(cl: *ChannelList, core: *Core) void {
         @import("../../Core/network.zig").debug.send_bad_capture_packet.store(true, .release);
     }
 
-    if (cl.debug.webcam) cl.debug.webcam_box.draw(core, .webcam) catch unreachable;
+    if (cl.debug.webcam) cl.debug.webcam_box.draw(core, .camera) catch unreachable;
 }
 
 fn denyPopup(cl: *ChannelList) void {

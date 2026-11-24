@@ -81,28 +81,32 @@ const candidates: struct {
         .lossy = &.{
             // .{ .name = "hevc_videotoolbox", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_NV12 },
             // .{ .name = "h264_videotoolbox", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
-            .{ .name = "hevc_videotoolbox", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_VIDEOTOOLBOX },
-            .{ .name = "h264_videotoolbox", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_VIDEOTOOLBOX },
+            // .{ .name = "hevc_videotoolbox", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_VIDEOTOOLBOX },
+            // .{ .name = "h264_videotoolbox", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_VIDEOTOOLBOX },
             // No fallback, all supported macOS devices should have at least one of these available.
+
+            // We're temporarily only using h264 software until we figure out how to display
+            // DMA textures via DVUI.
+            .{ .name = "libx264", .software = true, .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
         },
     },
     .linux, .windows => .{
         .lossless = &.{
             //ffv1
-            .{ .name = "ffv1_vulkan", .kind = .ffv1, .pix_fmt = c.AV_PIX_FMT_VULKAN },
+            // .{ .name = "ffv1_vulkan", .kind = .ffv1, .pix_fmt = c.AV_PIX_FMT_VULKAN },
             .{ .name = "ffv1", .kind = .ffv1, .pix_fmt = c.AV_PIX_FMT_YUV420P },
         },
         .lossy = &.{
             //av1
-            .{ .name = "av1_nvenc", .kind = .av1, .pix_fmt = c.AV_PIX_FMT_NV12 },
-            .{ .name = "av1_amf", .kind = .av1, .pix_fmt = c.AV_PIX_FMT_NV12 },
-            .{ .name = "av1_qsv", .kind = .av1, .pix_fmt = c.AV_PIX_FMT_NV12 },
-            .{ .name = "av1_vaapi", .kind = .av1, .pix_fmt = c.AV_PIX_FMT_VAAPI },
+            // .{ .name = "av1_nvenc", .kind = .av1, .pix_fmt = c.AV_PIX_FMT_NV12 },
+            // .{ .name = "av1_amf", .kind = .av1, .pix_fmt = c.AV_PIX_FMT_NV12 },
+            // .{ .name = "av1_qsv", .kind = .av1, .pix_fmt = c.AV_PIX_FMT_NV12 },
+            // .{ .name = "av1_vaapi", .kind = .av1, .pix_fmt = c.AV_PIX_FMT_VAAPI },
             //hevc
-            .{ .name = "hevc_nvenc", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_NV12 },
-            .{ .name = "hevc_amf", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_NV12 },
-            .{ .name = "hevc_qsv", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_NV12 },
-            .{ .name = "hevc_vaapi", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_VAAPI },
+            // .{ .name = "hevc_nvenc", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_NV12 },
+            // .{ .name = "hevc_amf", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_NV12 },
+            // .{ .name = "hevc_qsv", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_NV12 },
+            // .{ .name = "hevc_vaapi", .kind = .hevc, .pix_fmt = c.AV_PIX_FMT_VAAPI },
             //h264
             // .{ .name = "h264_nvenc", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
             // .{ .name = "h264_amf", .kind = .h264, .pix_fmt = c.AV_PIX_FMT_NV12 },
@@ -213,12 +217,17 @@ pub const Encoder = struct {
             ctx.height = @intCast(config.height);
             ctx.time_base = .{ .num = 1, .den = config.fps };
             ctx.framerate = .{ .num = config.fps, .den = 1 };
-            ctx.bit_rate = 3_500_000;
+            ctx.bit_rate = 1_500_000;
             ctx.pix_fmt = candidate.pix_fmt;
             ctx.flags = c.AV_CODEC_FLAG_LOW_DELAY | c.AV_CODEC_FLAG_GLOBAL_HEADER;
             ctx.flags2 = c.AV_CODEC_FLAG2_FAST;
             ctx.gop_size = config.fps * 2;
             ctx.max_b_frames = 0;
+
+            if (std.mem.eql(u8, candidate.name, "libx264")) {
+                _ = c.av_opt_set(ctx.priv_data, "preset", "ultrafast", 0);
+                _ = c.av_opt_set(ctx.priv_data, "tune", "zerolatency", 0);
+            }
             // ctx.color_range = c.AVCOL_RANGE_JPEG;
 
             // _ = c.av_opt_set_int(ctx, "loglevel", c.AV_LOG_FATAL, 0);
@@ -411,7 +420,7 @@ pub const Decoder = struct {
         ctx.flags = c.AV_CODEC_FLAG_LOW_DELAY;
         ctx.flags2 = c.AV_CODEC_FLAG2_FAST;
         ctx.thread_type = c.FF_THREAD_SLICE;
-        ctx.thread_count = 0;
+        ctx.thread_count = 8;
 
         const wide_extradata = c.av_mallocz(extradata_size + c.AV_INPUT_BUFFER_PADDING_SIZE) orelse
             return error.OutOfMemory;
@@ -468,10 +477,11 @@ pub const Decoder = struct {
         const extradata_size = media.read.int(u16, framed_data[@sizeOf(u32)..][0..@sizeOf(u16)]);
         const encoded = framed_data[@sizeOf(u32) + @sizeOf(u16) + extradata_size ..];
 
-        std.log.debug("keyframe: {} extradata_size: {}", .{ keyframe, extradata_size });
-        if (extradata_size > 0) std.log.debug("decoding frame - extradata: [{x}]", .{
-            framed_data[@sizeOf(u32) + @sizeOf(u16) ..][0..extradata_size],
-        });
+        _ = keyframe;
+        // std.log.debug("keyframe: {} extradata_size: {}", .{ keyframe, extradata_size });
+        // if (extradata_size > 0) std.log.debug("decoding frame - extradata: [{x}]", .{
+        //     framed_data[@sizeOf(u32) + @sizeOf(u16) ..][0..extradata_size],
+        // });
 
         d.packet.data = @constCast(encoded.ptr);
         d.packet.size = @intCast(encoded.len);
@@ -521,7 +531,7 @@ pub const Decoder = struct {
 };
 
 // ffmpeg has a crappy untranslatable macro for this.
-inline fn err2str(errnum: c_int) [c.AV_ERROR_MAX_STRING_SIZE:0]u8 {
+pub inline fn err2str(errnum: c_int) [c.AV_ERROR_MAX_STRING_SIZE:0]u8 {
     var buf: [c.AV_ERROR_MAX_STRING_SIZE:0]u8 = @splat(0);
     _ = c.av_make_error_string(&buf, buf.len, errnum);
     return buf;

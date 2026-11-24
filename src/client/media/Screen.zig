@@ -192,12 +192,24 @@ pub fn encodedVideoFramePush(
     if (!sc.send.load(.unordered)) return;
 
     const core: *Core = @alignCast(@fieldParentPtr("screen_capture", sc));
-    const pw = sc.packets.beginWrite() orelse {
+    pushPacket(core.gpa, &sc.sequence, &sc.packets, .screen, data, extradata, delta);
+}
+
+pub fn pushPacket(
+    gpa: Allocator,
+    sequence: *u32,
+    packets: *PacketRing(Packet, 8),
+    kind: awebo.protocol.media.StreamKind,
+    data: []const u8,
+    extradata: []const u8,
+    delta: u32,
+) void {
+    const pw = packets.beginWrite() orelse {
         std.log.debug("dropping screencapture frame, network thread is too slow!", .{});
         return;
     };
 
-    sc.sequence += 1;
+    sequence.* += 1;
     pw.packet.data.clearRetainingCapacity();
 
     const header_size = @sizeOf(media.Header);
@@ -212,19 +224,19 @@ pub fn encodedVideoFramePush(
     const total_chunks = full_chunks + if (last_chunk_data > 0) 1 else @as(usize, 0);
     const total_size_framed = (total_chunks * framing_size) + total_size;
     const keyframe = extradata.len > 0;
-    pw.packet.data.ensureUnusedCapacity(core.gpa, total_size_framed) catch @panic("oom");
+    pw.packet.data.ensureUnusedCapacity(gpa, total_size_framed) catch @panic("oom");
     pw.packet.data.items.len = total_size_framed;
 
-    std.log.debug("packet {} total size {} framed size {} extradata: [{x}]", .{
-        sc.sequence,
-        total_size,
-        total_size_framed,
-        extradata,
-    });
+    // std.log.debug("packet {} total size {} framed size {} extradata: [{x}]", .{
+    //     sequence.*,
+    //     total_size,
+    //     total_size_framed,
+    //     extradata,
+    // });
 
     const header: media.Header = .{
-        .stream_id = .{ .client_id = .{ .slot = 0, .user_id = .invalid }, .kind = .screen },
-        .sequence = sc.sequence,
+        .stream_id = .{ .client_id = .{ .slot = 0, .user_id = .invalid }, .kind = kind },
+        .sequence = sequence.*,
     };
 
     media.write.packedStruct(media.Header, pw.packet.data.items.ptr, header);
@@ -281,7 +293,7 @@ pub fn encodedVideoFramePush(
     pw.packet.last_chunk_data = last_chunk_data;
     assert(full_chunks > 0 or last_chunk_data > 0);
 
-    sc.packets.commitWrite(pw);
+    packets.commitWrite(pw);
 }
 
 pub const DummyInterface = opaque {

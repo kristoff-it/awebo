@@ -3,22 +3,21 @@ const WebcamCapture = @This();
 const builtin = @import("builtin");
 const std = @import("std");
 const Io = std.Io;
+const awebo = @import("../../awebo.zig");
 const Core = @import("../Core.zig");
 const ScreenCapture = @import("Screen.zig");
+const PacketRing = @import("packet_ring.zig").PacketRing;
 const MacOsInterface = @import("Webcam/MacOs.zig").Interface;
 const LinuxInterface = @import("Webcam/Linux.zig");
 const log = std.log.scoped(.webcam_capture);
 
-/// True when the user initiated webcam sharing
-share_intent: bool = false,
-
 /// The unique id of the device currently selected.
 /// Null means system default.
 /// The device might not be connected.
-selected: ?[:0]const u8,
+selected: ?[:0]const u8 = null,
 
 /// Keyed by the device unique ID.
-devices: std.StringArrayHashMapUnmanaged(Device),
+devices: std.StringArrayHashMapUnmanaged(Device) = .empty,
 
 /// While capturing, this value is atomically replaced with a new frame by
 /// the OS. Should be processed by the UI to show a preview of the current
@@ -28,6 +27,11 @@ devices: std.StringArrayHashMapUnmanaged(Device),
 /// 1. call swapFrame() to swap the value with null
 /// 2. if it got a new frame, quickly copy pixel data out and call deinit.
 new_frame: std.atomic.Value(?*Frame) = .init(null),
+
+/// True when we should be sending packets over the network.
+send: std.atomic.Value(bool) = .init(false),
+packets: PacketRing(ScreenCapture.Packet, 8) = .empty,
+sequence: u32 = 0,
 
 /// Os interface
 os: switch (builtin.target.os.tag) {
@@ -58,13 +62,13 @@ pub const OsDevice = switch (builtin.target.os.tag) {
 /// Must call start() next to subscribe to device update notifications.
 /// WebcamCapture must be kept stored in Core as it uses fieldParentPtr to access it.
 pub fn init(wc: *WebcamCapture) void {
-    wc.* = .{
-        .selected = null,
-        .devices = .empty,
-        .os = undefined,
-    };
-
+    wc.* = .{ .os = undefined };
     wc.os.init();
+
+    const core: *Core = @alignCast(@fieldParentPtr("webcam_capture", wc));
+    for (&wc.packets.buffer) |*packet| {
+        packet.data = std.ArrayList(u8).initCapacity(core.gpa, 200_000) catch @panic("oom");
+    }
 }
 
 pub fn deinit(wc: *WebcamCapture) void {
@@ -88,10 +92,12 @@ pub fn discoverDevicesAndListen(wc: *WebcamCapture) void {
     };
 }
 
-pub fn startCapture(wc: *WebcamCapture) void {
+pub fn startCapture(wc: *WebcamCapture) !awebo.protocol.media.Format {
     const device = if (wc.selected) |s| wc.devices.getPtr(s) else null;
-    wc.os.startCapture(device, 1920, 1080, 30) catch {
-        // do something
+    try wc.os.startCapture(device, 1920, 1080, 30);
+    return .{
+        .config = .{ .fps = 30, .width = 1920, .height = 1080 },
+        .codec = .h264,
     };
 }
 

@@ -8,7 +8,7 @@ const Core = @import("../../Core.zig");
 
 texture: ?dvui.Texture = null,
 
-pub fn draw(sb: *ScreenshareBox, core: *Core, comptime source: enum { webcam, screen }) !void {
+pub fn draw(sb: *ScreenshareBox, core: *Core, comptime source: enum { camera, screen }) !void {
     const extra = @backingInt(source);
 
     const id = dvui.Id.extendId(null, @src(), extra);
@@ -17,11 +17,12 @@ pub fn draw(sb: *ScreenshareBox, core: *Core, comptime source: enum { webcam, sc
     if (dvui.timerDoneOrNone(id)) {
         const maybe_frame = switch (source) {
             .screen => core.screen_capture.framePull(),
-            .webcam => core.webcam_capture.framePull(),
+            .camera => core.webcam_capture.framePull(),
         };
 
         if (maybe_frame) |new| {
             defer new.release();
+
             const img = new.getImage();
             const width, const height, const planes = blk: switch (img) {
                 .videotoolbox, .vaapi => unreachable,

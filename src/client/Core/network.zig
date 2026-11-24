@@ -8,6 +8,8 @@ const opus = @import("../media/Audio/opus.zig");
 const persistence = @import("../Core/persistence.zig");
 const Core = @import("../Core.zig");
 const Media = @import("../Media.zig");
+const PacketRing = @import("../media/packet_ring.zig").PacketRing;
+const ScreenCapture = @import("../media/Screen.zig");
 const HostView = Core.HostView;
 const TcpMessage = awebo.protocol.TcpMessage;
 const ClientRequestReply = awebo.protocol.server.ClientRequestReply;
@@ -469,6 +471,14 @@ pub fn runHostMediaReceiver(
                         // and some udp packets were still in-flight.
                     }
                 },
+                .camera => {
+                    if (caller.camera) |camera| {
+                        camera.pushChunk(header.sequence, body);
+                    } else {
+                        // drop packet, the client must have left the session
+                        // and some udp packets were still in-flight.
+                    }
+                },
                 else => @panic("TODO: implement support for other streams!"),
             }
         }
@@ -553,48 +563,53 @@ pub fn runHostMediaSender(
             });
         }
 
-        while (core.screen_capture.packets.beginRead()) |read| {
-            nothing_found = false;
+        for ([2]*PacketRing(ScreenCapture.Packet, 8){
+            &core.screen_capture.packets,
+            &core.webcam_capture.packets,
+        }) |packets| {
+            while (packets.beginRead()) |read| {
+                nothing_found = false;
 
-            var batch: [64]Io.net.OutgoingMessage = undefined;
-            var batch_idx: usize = 0;
+                var batch: [64]Io.net.OutgoingMessage = undefined;
+                var batch_idx: usize = 0;
 
-            for (0..read.packet.full_chunks) |chunk_id| {
-                batch[batch_idx] = .{
-                    .address = server,
-                    .data_ptr = read.packet.data.items[chunk_id * 1280 ..].ptr,
-                    .data_len = 1280,
-                };
-                batch_idx += 1;
+                for (0..read.packet.full_chunks) |chunk_id| {
+                    batch[batch_idx] = .{
+                        .address = server,
+                        .data_ptr = read.packet.data.items[chunk_id * 1280 ..].ptr,
+                        .data_len = 1280,
+                    };
+                    batch_idx += 1;
 
-                if (batch_idx == batch.len) {
-                    sock.sendMany(io, &batch, .{}) catch |err| {
+                    if (batch_idx == batch.len) {
+                        sock.sendMany(io, &batch, .{}) catch |err| {
+                            log.debug("sendmany error: {t}", .{err});
+                            return;
+                        };
+                        batch_idx = 0;
+                    }
+                }
+
+                assert(batch_idx < batch.len); // guaranteed we have space for one more message
+
+                if (read.packet.last_chunk_data > 0) {
+                    batch[batch_idx] = .{
+                        .address = server,
+                        .data_ptr = read.packet.data.items[read.packet.data.items.len..].ptr - (read.packet.last_chunk_data + udp_video_framing),
+                        .data_len = read.packet.last_chunk_data + udp_video_framing,
+                    };
+                    batch_idx += 1;
+                }
+
+                if (batch_idx > 0) {
+                    sock.sendMany(io, batch[0..batch_idx], .{}) catch |err| {
                         log.debug("sendmany error: {t}", .{err});
                         return;
                     };
-                    batch_idx = 0;
                 }
+
+                packets.commitRead(read);
             }
-
-            assert(batch_idx < batch.len); // guaranteed we have space for one more message
-
-            if (read.packet.last_chunk_data > 0) {
-                batch[batch_idx] = .{
-                    .address = server,
-                    .data_ptr = read.packet.data.items[read.packet.data.items.len..].ptr - (read.packet.last_chunk_data + udp_video_framing),
-                    .data_len = read.packet.last_chunk_data + udp_video_framing,
-                };
-                batch_idx += 1;
-            }
-
-            if (batch_idx > 0) {
-                sock.sendMany(io, batch[0..batch_idx], .{}) catch |err| {
-                    log.debug("sendmany error: {t}", .{err});
-                    return;
-                };
-            }
-
-            core.screen_capture.packets.commitRead(read);
         }
 
         // nothing to read, sleep

@@ -22,6 +22,7 @@ screen_config: struct {
 } = .{},
 subviews: struct {
     screen_preview: VideoPreviewBox = .{},
+    camera_preview: VideoPreviewBox = .{},
 } = .{},
 
 pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
@@ -52,6 +53,14 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
         return;
     }
 
+    const webcam_label = if (ac.camera == .off) "Webcam ON" else "Webcam OFF";
+    if (dvui.button(@src(), webcam_label, .{}, .{})) {
+        switch (ac.camera) {
+            .off => try ac.cameraShareBegin(core),
+            .requesting_permission, .sharing => try ac.cameraShareEnd(core),
+        }
+    }
+
     const screenshare_label = if (ac.screen == .off) "Screenshare ON" else "Screenshare OFF";
     if (dvui.button(@src(), screenshare_label, .{}, .{})) {
         switch (ac.screen) {
@@ -70,132 +79,153 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
 
     for (ac.callers.keys(), ac.callers.values()) |id, *caller| {
         if (ac.caller_id) |self_cid| if (self_cid.eql(id)) continue;
+        const caller_meta = h.client.callers.get(id).?;
 
-        const screen = caller.screen orelse {
-            // render caller with sessions that we are not watching
-            const caller_meta = h.client.callers.get(id).?;
-            const screen = caller_meta.state.share.screen orelse continue;
+        for (
+            [2]?*Core.VideoStream{ caller.screen, caller.camera },
+            [2]awebo.protocol.media.StreamKind{ .screen, .camera },
+        ) |maybe_stream, kind| {
+            const stream = maybe_stream orelse {
+                // render caller with sessions that we are not watching
+                const stream_format = switch (kind) {
+                    else => unreachable,
+                    .screen => if (caller_meta.state.share.screen) |s| s.format else continue,
+                    .camera => caller_meta.state.share.camera orelse continue,
+                };
 
-            var session_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
-                .expand = .horizontal,
-                .border = .all(1),
-                .id_extra = id.toInt(),
-            });
-            defer session_box.deinit();
+                var session_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
+                    .expand = .horizontal,
+                    .border = .all(1),
+                    .id_extra = (id.toInt() << 1) + @backingInt(kind),
+                });
+                defer session_box.deinit();
 
-            const u = h.users.get(id.user_id).?;
-            dvui.label(@src(), "{s} screenshare ({}x{}@{}, {t})", .{
-                u.display_name,
-                screen.format.config.width,
-                screen.format.config.height,
-                screen.format.config.fps,
-                screen.format.codec,
-            }, .{
-                .id_extra = id.toInt(),
-                .style = .window,
-            });
-
-            if (dvui.button(@src(), "Watch", .{}, .{ .id_extra = id.toInt() })) {
-                try ac.shareSessionJoin(core, id, .screen, screen.format);
-            }
-
-            continue;
-        };
-        any_stream = true;
-
-        const maybe_frame = screen.swapFrontFrame(null);
-
-        if (maybe_frame) |new| {
-            defer new.deinit();
-            const img = new.getImage();
-
-            std.log.debug("swap!", .{});
-
-            var backend = dvui.currentWindow().backend;
-
-            if (screen.ui_data == null) {
-                const tex: *dvui.Texture = try core.gpa.create(dvui.Texture);
-                switch (img) {
-                    .videotoolbox, .vaapi => unreachable,
-                    .yuv => |yuv| {
-                        const ww: usize = @intCast(yuv.width);
-                        const hh: usize = @intCast(yuv.height);
-                        const half: usize = ((hh + 1) / 2) * ((ww + 1) / 2);
-                        var planes = dvui.currentWindow().arena().alloc(u8, ww * hh + 2 * half) catch @panic("OOM");
-                        @memcpy(planes[0 .. ww * hh], yuv.y);
-                        @memcpy(planes[ww * hh ..][0..half], yuv.cr);
-                        @memcpy(planes[ww * hh + half ..][0..half], yuv.cb);
-                        tex.* = try backend.textureCreate(
-                            @ptrCast(planes),
-                            .{
-                                .width = @intCast(yuv.width),
-                                .height = @intCast(yuv.height),
-                                .interpolation = .nearest,
-                                .format = .fourcc_yv12,
-                            },
-                        );
+                const u = h.users.get(id.user_id).?;
+                switch (kind) {
+                    else => unreachable,
+                    .screen => {
+                        dvui.label(@src(), "{s} screenshare ({}x{}@{}, {t})", .{
+                            u.display_name,
+                            stream_format.config.width,
+                            stream_format.config.height,
+                            stream_format.config.fps,
+                            stream_format.codec,
+                        }, .{
+                            .id_extra = (id.toInt() << 1) + @backingInt(kind),
+                            .style = .window,
+                        });
                     },
-                    .nv12 => |nv12| {
-                        const ww: usize = @intCast(nv12.width);
-                        const hh: usize = @intCast(nv12.height);
-                        const half: usize = ((hh + 1) / 2) * ((ww + 1) / 2);
-                        var planes = dvui.currentWindow().arena().alloc(u8, ww * hh + 2 * half) catch @panic("OOM");
-                        @memcpy(planes[0 .. ww * hh], nv12.y);
-                        @memcpy(planes[ww * hh ..], nv12.cbcr);
-                        tex.* = try backend.textureCreate(
-                            @ptrCast(planes),
-                            .{
-                                .width = @intCast(nv12.width),
-                                .height = @intCast(nv12.height),
-                                .interpolation = .nearest,
-                                .format = .fourcc_yv12,
-                            },
-                        );
-                    },
-                    .bgra => |bgra| {
-                        tex.* = try backend.textureCreate(
-                            @ptrCast(bgra.pixels),
-                            .{
-                                .width = @intCast(bgra.width),
-                                .height = @intCast(bgra.height),
-                                .interpolation = .nearest,
-                                .format = .bgra_32,
-                            },
-                        );
+                    .camera => {
+                        dvui.label(@src(), "{s} camera", .{u.display_name}, .{
+                            .id_extra = (id.toInt() << 1) + @backingInt(kind),
+                            .style = .window,
+                        });
                     },
                 }
 
-                screen.ui_data = .{
-                    .context = screen,
-                    .data = tex,
-                    .deinit = deinitTexture,
-                };
-            } else {
-                const tex: *dvui.Texture = @ptrCast(@alignCast(screen.ui_data.?.data.?));
-                switch (img) {
-                    .videotoolbox, .vaapi => unreachable,
-                    .yuv => |yuv| {
-                        const ww: usize = @intCast(yuv.width);
-                        const hh: usize = @intCast(yuv.height);
-                        const half: usize = ((hh + 1) / 2) * ((ww + 1) / 2);
-                        var planes = dvui.currentWindow().arena().alloc(u8, ww * hh + 2 * half) catch @panic("OOM");
-                        @memcpy(planes[0 .. ww * hh], yuv.y);
-                        @memcpy(planes[ww * hh ..][0..half], yuv.cr);
-                        @memcpy(planes[ww * hh + half ..][0..half], yuv.cb);
-                        try backend.textureUpdate(tex.*, @ptrCast(planes));
-                    },
-                    .nv12 => |nv12| {
-                        const ww: usize = @intCast(nv12.width);
-                        const hh: usize = @intCast(nv12.height);
-                        const half: usize = ((hh + 1) / 2) * ((ww + 1) / 2);
-                        var planes = dvui.currentWindow().arena().alloc(u8, ww * hh + 2 * half) catch @panic("OOM");
-                        @memcpy(planes[0 .. ww * hh], nv12.y);
-                        @memcpy(planes[ww * hh ..], nv12.cbcr);
-                        try backend.textureUpdate(tex.*, @ptrCast(planes));
-                    },
-                    .bgra => |bgra| {
-                        try backend.textureUpdate(tex.*, @ptrCast(bgra.pixels));
-                    },
+                if (dvui.button(@src(), "Watch", .{}, .{ .id_extra = (id.toInt() << 1) + @backingInt(kind) })) {
+                    try ac.shareSessionJoin(core, id, kind, stream_format);
+                }
+
+                continue;
+            };
+
+            any_stream = true;
+
+            const maybe_frame = stream.swapFrontFrame(null);
+
+            if (maybe_frame) |new| {
+                defer new.deinit();
+                const img = new.getImage();
+
+                // std.log.debug("swap!", .{});
+
+                var backend = dvui.currentWindow().backend;
+
+                if (stream.ui_data == null) {
+                    const tex: *dvui.Texture = try core.gpa.create(dvui.Texture);
+                    switch (img) {
+                        .videotoolbox, .vaapi => unreachable,
+                        .yuv => |yuv| {
+                            const ww: usize = @intCast(yuv.width);
+                            const hh: usize = @intCast(yuv.height);
+                            const half: usize = ((hh + 1) / 2) * ((ww + 1) / 2);
+                            var planes = dvui.currentWindow().arena().alloc(u8, ww * hh + 2 * half) catch @panic("OOM");
+                            @memcpy(planes[0 .. ww * hh], yuv.y);
+                            @memcpy(planes[ww * hh ..][0..half], yuv.cr);
+                            @memcpy(planes[ww * hh + half ..][0..half], yuv.cb);
+                            tex.* = try backend.textureCreate(
+                                @ptrCast(planes),
+                                .{
+                                    .width = @intCast(yuv.width),
+                                    .height = @intCast(yuv.height),
+                                    .interpolation = .nearest,
+                                    .format = .fourcc_yv12,
+                                },
+                            );
+                        },
+                        .nv12 => |nv12| {
+                            const ww: usize = @intCast(nv12.width);
+                            const hh: usize = @intCast(nv12.height);
+                            const half: usize = ((hh + 1) / 2) * ((ww + 1) / 2);
+                            var planes = dvui.currentWindow().arena().alloc(u8, ww * hh + 2 * half) catch @panic("OOM");
+                            @memcpy(planes[0 .. ww * hh], nv12.y);
+                            @memcpy(planes[ww * hh ..], nv12.cbcr);
+                            tex.* = try backend.textureCreate(
+                                @ptrCast(planes),
+                                .{
+                                    .width = @intCast(nv12.width),
+                                    .height = @intCast(nv12.height),
+                                    .interpolation = .nearest,
+                                    .format = .fourcc_yv12,
+                                },
+                            );
+                        },
+                        .bgra => |bgra| {
+                            tex.* = try backend.textureCreate(
+                                @ptrCast(bgra.pixels),
+                                .{
+                                    .width = @intCast(bgra.width),
+                                    .height = @intCast(bgra.height),
+                                    .interpolation = .nearest,
+                                    .format = .bgra_32,
+                                },
+                            );
+                        },
+                    }
+
+                    stream.ui_data = .{
+                        .context = stream,
+                        .data = tex,
+                        .deinit = deinitTexture,
+                    };
+                } else {
+                    const tex: *dvui.Texture = @ptrCast(@alignCast(stream.ui_data.?.data.?));
+                    switch (img) {
+                        .videotoolbox, .vaapi => unreachable,
+                        .yuv => |yuv| {
+                            const ww: usize = @intCast(yuv.width);
+                            const hh: usize = @intCast(yuv.height);
+                            const half: usize = ((hh + 1) / 2) * ((ww + 1) / 2);
+                            var planes = dvui.currentWindow().arena().alloc(u8, ww * hh + 2 * half) catch @panic("OOM");
+                            @memcpy(planes[0 .. ww * hh], yuv.y);
+                            @memcpy(planes[ww * hh ..][0..half], yuv.cr);
+                            @memcpy(planes[ww * hh + half ..][0..half], yuv.cb);
+                            try backend.textureUpdate(tex.*, @ptrCast(planes));
+                        },
+                        .nv12 => |nv12| {
+                            const ww: usize = @intCast(nv12.width);
+                            const hh: usize = @intCast(nv12.height);
+                            const half: usize = ((hh + 1) / 2) * ((ww + 1) / 2);
+                            var planes = dvui.currentWindow().arena().alloc(u8, ww * hh + 2 * half) catch @panic("OOM");
+                            @memcpy(planes[0 .. ww * hh], nv12.y);
+                            @memcpy(planes[ww * hh ..], nv12.cbcr);
+                            try backend.textureUpdate(tex.*, @ptrCast(planes));
+                        },
+                        .bgra => |bgra| {
+                            try backend.textureUpdate(tex.*, @ptrCast(bgra.pixels));
+                        },
+                    }
                 }
             }
         }
@@ -205,20 +235,76 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
         try vp.subviews.screen_preview.draw(core, .screen);
     }
 
+    if (ac.camera != .off) {
+        try vp.subviews.camera_preview.draw(core, .camera);
+    }
+
     if (!any_stream) return;
 
-    for (ac.callers.keys(), ac.callers.values()) |id, *caller| {
-        const src = @src();
-        const extraf: f32 = @floatFromInt(id.toInt());
+    const timer_id = dvui.Id.extendId(null, @src(), 0);
+    const millis_per_frame = std.time.ms_per_s / 60;
+    const millis = @divFloor(dvui.frameTimeNS(), 1_000_000);
+    const left = @as(i32, @intCast(@rem(millis, millis_per_frame)));
+    const wait = 1000 * (millis_per_frame - left);
+    dvui.timer(timer_id, wait);
 
-        const screen = caller.screen orelse continue;
+    for (ac.callers.keys(), ac.callers.values(), 0..) |id, *caller, idx| {
+        const extraf: f32 = @floatFromInt(idx);
 
-        if (screen.decoder == null) {
+        for (
+            [2]?*Core.VideoStream{ caller.screen, caller.camera },
+            [2]awebo.protocol.media.StreamKind{ .screen, .camera },
+        ) |maybe_stream, kind| {
+            const stream = maybe_stream orelse continue;
+
+            if (stream.decoder == null) {
+                const preview_width_pixels = 160 * 3;
+                const width_ratio = 1920 / preview_width_pixels;
+                const preview_height_pixels = 1080 / width_ratio;
+                const w = dvui.floatingWindow(@src(), .{}, .{
+                    .id_extra = (id.toInt() << 1) + @backingInt(kind),
+                    .gravity_x = 1.0 - 0.5 * extraf,
+                    .gravity_y = 1.0 - 0.5 * extraf,
+                    // .background = false,
+                    .border = null,
+                    .padding = .all(0),
+                    .margin = .all(0),
+                    .expand = .ratio,
+                    .min_size_content = .{
+                        .w = @floatFromInt(preview_width_pixels),
+                        .h = @floatFromInt(preview_height_pixels),
+                    },
+                });
+                defer w.deinit();
+
+                dvui.labelNoFmt(@src(), "LOADING", .{}, .{
+                    .font = dvui.Font.theme(.title).larger(8),
+                    .id_extra = (id.toInt() << 1) + @backingInt(kind),
+                    .gravity_x = 0.5,
+                    .gravity_y = 0.5,
+                });
+
+                if (dvui.button(@src(), "Close", .{}, .{
+                    .id_extra = (id.toInt() << 1) + @backingInt(kind),
+                    .gravity_x = 1,
+                    .gravity_y = 1,
+                })) {
+                    try ac.shareSessionLeave(core, caller, id, kind);
+                }
+
+                continue;
+            }
+
+            const tex: *dvui.Texture = @ptrCast(@alignCast(if (stream.ui_data) |ui| ui.data.? else {
+                std.log.debug("no texture", .{});
+                continue;
+            }));
             const preview_width_pixels = 160 * 3;
-            const width_ratio = 1920 / preview_width_pixels;
-            const preview_height_pixels = 1080 / width_ratio;
-            const w = dvui.floatingWindow(src, .{}, .{
-                .id_extra = id.toInt(),
+            const width_ratio = tex.width / preview_width_pixels;
+            const preview_height_pixels = tex.height / width_ratio;
+
+            const w = dvui.floatingWindow(@src(), .{}, .{
+                .id_extra = (id.toInt() << 1) + @backingInt(kind),
                 .gravity_x = 1.0 - 0.5 * extraf,
                 .gravity_y = 1.0 - 0.5 * extraf,
                 // .background = false,
@@ -233,54 +319,15 @@ pub fn draw(vp: *VoicePanel, core: *Core, frozen: bool) !void {
             });
             defer w.deinit();
 
-            dvui.labelNoFmt(@src(), "LOADING", .{}, .{
-                .font = dvui.Font.theme(.title).larger(8),
-                .id_extra = id.toInt(),
-                .gravity_x = 0.5,
-                .gravity_y = 0.5,
-            });
+            try dvui.renderTexture(tex.*, w.wd.contentRectScale(), .{});
 
             if (dvui.button(@src(), "Close", .{}, .{
+                .id_extra = (id.toInt() << 1) + @backingInt(kind),
                 .gravity_x = 1,
                 .gravity_y = 1,
             })) {
-                try ac.shareSessionLeave(core, caller, id, .screen);
+                try ac.shareSessionLeave(core, caller, id, kind);
             }
-
-            continue;
-        }
-
-        const tex: *dvui.Texture = @ptrCast(@alignCast(if (screen.ui_data) |ui| ui.data.? else {
-            std.log.debug("no texture", .{});
-            continue;
-        }));
-        const preview_width_pixels = 160 * 3;
-        const width_ratio = tex.width / preview_width_pixels;
-        const preview_height_pixels = tex.height / width_ratio;
-
-        const w = dvui.floatingWindow(src, .{}, .{
-            .id_extra = id.toInt(),
-            .gravity_x = 1.0 - 0.5 * extraf,
-            .gravity_y = 1.0 - 0.5 * extraf,
-            // .background = false,
-            .border = null,
-            .padding = .all(0),
-            .margin = .all(0),
-            .expand = .ratio,
-            .min_size_content = .{
-                .w = @floatFromInt(preview_width_pixels),
-                .h = @floatFromInt(preview_height_pixels),
-            },
-        });
-        defer w.deinit();
-
-        try dvui.renderTexture(tex.*, w.wd.contentRectScale(), .{});
-
-        if (dvui.button(@src(), "Close", .{}, .{
-            .gravity_x = 1,
-            .gravity_y = 1,
-        })) {
-            try ac.shareSessionLeave(core, caller, id, .screen);
         }
     }
 }

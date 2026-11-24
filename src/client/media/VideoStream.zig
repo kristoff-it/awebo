@@ -16,7 +16,7 @@ const ffmpeg = @import("ffmpeg.zig");
 const buffer_len: usize = 32;
 /// Number of packets that must be present in the buffer
 /// before we start playing. Must be lower than `buffer_len`
-const start_count = 16; // 16 frames @ 33ms = 528ms jitter
+const start_count = 2; // 2 frames @ 33ms = 66ms jitter
 comptime {
     assert(std.math.isPowerOfTwo(buffer_len));
     assert(start_count < buffer_len);
@@ -86,7 +86,7 @@ pub const UiData = struct {
 core: *Core,
 format: awebo.protocol.media.Format,
 packets: JitterBuffer = .empty,
-video_thread: Io.Future(anyerror!void),
+video_thread: Io.Future(void),
 
 frame_back: std.atomic.Value(?*Decoder.Frame) = .init(null),
 frame_front: std.atomic.Value(?*Decoder.Frame) = .init(null),
@@ -110,26 +110,28 @@ pub fn create(core: *Core, format: awebo.protocol.media.Format) !*VideoStream {
     };
 
     vs.video_thread = try core.io.concurrent(videoThread, .{vs});
-    errdefer vs.video_thread.cancel(core.io) catch {};
+    errdefer vs.video_thread.cancel(core.io);
 
     vs.packets.packets.warmup(core.gpa) catch unreachable;
 
     return vs;
 }
+
 pub fn destroy(vs: *VideoStream, gpa: Allocator) void {
     // The video thread must exit before we can deinit decoder or packets.
-    vs.video_thread.cancel(vs.core.io) catch {};
+    vs.video_thread.cancel(vs.core.io);
     if (vs.decoder) |*d| d.deinit();
     vs.packets.deinit(gpa);
     if (vs.swapBackFrame(null)) |frame| frame.deinit();
     if (vs.swapFrontFrame(null)) |frame| frame.deinit();
     if (vs.ui_data) |ui| ui.deinit(gpa, ui.context, ui.data);
     gpa.destroy(vs);
+    log.debug("video stream destroyed", .{});
 }
 
 pub fn pushChunk(vs: *VideoStream, seq: u32, body: []u8) void {
     // const video_header: *align(1) awebo.protocol.media.Video = @ptrCast(body.ptr);
-    vs.packets.writeChunk(vs.core.gpa, seq, body);
+    vs.packets.writeChunk(vs.core.io, vs.core.gpa, seq, body);
 }
 
 /// Function with C callconv that the OS can invoke whenever
@@ -146,7 +148,100 @@ pub fn swapFrontFrame(vs: *VideoStream, new: ?*Decoder.Frame) ?*Decoder.Frame {
 /// Runs as a high priority thread, pulls at regular intervals
 /// from the JitterBuffer, decodes and schedules decoded frames
 /// to the UI.
-fn videoThread(vs: *VideoStream) anyerror!void {
+fn videoThread(vs: *VideoStream) void {
+    log.debug("video thread started", .{});
+    videoThreadFallible(vs) catch |err| switch (err) {
+        error.Canceled => {
+            // clean exit
+            log.debug("video thread exited cleanly", .{});
+        },
+        else => {
+            log.err("video thread exited with error {t}", .{err});
+            if (@errorReturnTrace()) |et| std.debug.dumpErrorReturnTrace(et);
+        },
+    };
+}
+fn videoThreadFallible(vs: *VideoStream) !void {
+    awebo.network_utils.setCurrentThreadRealtime(33);
+
+    const io = vs.core.io;
+    var start: Io.Timestamp = undefined;
+    var first_frame = true;
+    var restart_frame = true;
+    while (true) {
+        switch (vs.packets.nextPacketBegin()) {
+            .starting, .missing => {
+                restart_frame = true;
+                log.debug("waiting for the next ready packet...", .{});
+                try vs.packets.ready.wait(io);
+                log.debug("...awake!", .{});
+            },
+            .decode => |d| {
+                if (first_frame) {
+                    first_frame = false;
+                    start = Io.Clock.awake.now(io);
+                    assert(d.data.keyframe);
+                    assert(vs.decoder == null);
+                    vs.decoder = try .init(vs, d.data.slice());
+                }
+
+                const before_decoding = Io.Clock.awake.now(io);
+                const delta: u32 = media.read.int(u32, d.data.slice()[0..@sizeOf(u32)]);
+                const pts = start.addDuration(.fromMilliseconds(delta)).withClock(.awake);
+                if (before_decoding.compare(.gte, pts.raw)) {
+                    if (d.data.keyframe) {
+                        log.debug("we're late, fast-forwarding key frame'", .{});
+                        restart_frame = true;
+                    } else {
+                        log.debug("we're late, dropping frame'", .{});
+                        d.meta.seq = 0;
+                        vs.packets.nextPacketCommit(d);
+                        continue;
+                    }
+                }
+
+                _ = vs.decoder.?.decodeFrame(d.data.slice(), d.data.keyframe) catch |err| {
+                    log.err("error while decoding frame: {t}", .{err});
+                    d.meta.seq = 0;
+                    vs.packets.nextPacketCommit(d);
+                    continue;
+                };
+
+                const ready_time = Io.Clock.awake.now(io);
+
+                log.debug("decoding took {}ms {s}", .{
+                    before_decoding.durationTo(ready_time).toMilliseconds(),
+                    if (d.data.keyframe) "(k)" else "",
+                });
+
+                d.meta.seq = 0;
+                vs.packets.nextPacketCommit(d);
+
+                if (restart_frame) {
+                    restart_frame = false;
+                    start = ready_time;
+                    log.debug("restart frame, no sleep", .{});
+                } else {
+                    const timeout: Io.Timeout = .{ .deadline = pts };
+                    try timeout.sleep(io);
+
+                    if (d.data.keyframe) {
+                        start = Io.Clock.awake.now(io);
+                    }
+                }
+
+                const front = vs.swapFrontFrame(vs.swapBackFrame(null));
+                if (front) |f| {
+                    log.warn("UI did not consume front frame!", .{});
+                    f.deinit();
+                }
+                // vs.core.refresh(vs.core, @src(), null);
+            },
+        }
+    }
+}
+
+fn videoThreadOld(vs: *VideoStream) anyerror!void {
     awebo.network_utils.setCurrentThreadRealtime(33);
 
     const io = vs.core.io;
@@ -158,27 +253,23 @@ fn videoThread(vs: *VideoStream) anyerror!void {
     var target = start;
     while (true) {
         const now = Io.Clock.awake.now(io);
-        // log.warn("running video thread @ {} (delta {}ms) (target delta {}ms)", .{
-        //     now.toMilliseconds(),
-        //     last.durationTo(now).toMilliseconds(),
-        //     target.durationTo(now).toMilliseconds(),
-        // });
+        log.warn("running video thread @ {} (delta {}ms) (target delta {}ms)", .{
+            now.toMilliseconds(),
+            last.durationTo(now).toMilliseconds(),
+            target.durationTo(now).toMilliseconds(),
+        });
 
         last = now;
         switch (vs.packets.nextPacketBegin()) {
             .starting => {
-                try io.sleep(.fromMilliseconds(33), .awake);
+                try io.sleep(.fromMilliseconds(5), .awake);
             },
             .missing => {
                 restart_frame = true;
                 const front = vs.swapFrontFrame(vs.swapBackFrame(null));
-                if (front) |f| {
-                    log.warn("UI did not consume front frame!", .{});
-                    f.deinit();
-                }
+                if (front) |f| f.deinit();
                 vs.core.refresh(vs.core, @src(), null);
-
-                try io.sleep(.fromMilliseconds(33), .awake);
+                try io.sleep(.fromMilliseconds(5), .awake);
             },
             .decode => |d| {
                 if (first_frame) {
@@ -252,6 +343,7 @@ const JitterBuffer = struct {
 
     /// Shared
     packets: PacketRing,
+    ready: Io.Event = .unset,
 
     pub const empty: JitterBuffer = .{ .packets = .init };
 
@@ -260,24 +352,27 @@ const JitterBuffer = struct {
     }
 
     /// This function is meant to be called by the network thread.
-    pub fn writeChunk(jb: *JitterBuffer, gpa: Allocator, seq: u32, body: []u8) void {
+    pub fn writeChunk(jb: *JitterBuffer, io: Io, gpa: Allocator, seq: u32, body: []u8) void {
         if (jb.expected_next_seq == 0) {
             jb.expected_next_seq = seq;
         }
 
-        jb.packets.write(gpa, seq, body) catch {
+        jb.packets.write(io, gpa, &jb.ready, seq, body) catch {
             log.warn("dropping video packet, video thread is too slow!", .{});
         };
     }
 
     const NextPacket = union(enum) {
-        /// When starting we should play a loading animation.
+        /// When starting we should play a loading animation. Playback
+        /// thread must wait on 'ready' before calling 'nextPacketBegin'
+        /// again.
         starting,
 
         /// Contains a video frame to decode.
         decode: Decode,
 
-        /// We are missing a frame
+        /// We are missing a frame. Playback thread must wait on 'ready'
+        /// before calling 'nextPacketBegin' again.
         missing,
 
         const Decode = struct {
@@ -290,12 +385,13 @@ const JitterBuffer = struct {
 
     /// This function is meant to be called by the video thread.
     pub fn nextPacketBegin(jb: *JitterBuffer) NextPacket {
+        jb.ready.reset();
         const packet_slices = jb.packets.slices();
         switch (packet_slices.len()) {
             0 => if (jb.state == .playing) {
                 jb.state = .buffering;
             },
-            1...start_count - 1 => {},
+            1...start_count => {},
             else => if (jb.state != .playing) {
                 var discarded: usize = 0;
                 for (packet_slices.array()) |slice| for (slice) |idx| {
@@ -314,9 +410,6 @@ const JitterBuffer = struct {
                 }
 
                 if (packet_slices.len() - discarded >= start_count) {
-                    // if (jb.state == .buffering) {
-
-                    // }
                     jb.state = .playing;
                 }
             },
@@ -324,9 +417,7 @@ const JitterBuffer = struct {
 
         switch (jb.state) {
             .starting => return .starting,
-            .buffering => {
-                return .missing;
-            },
+            .buffering => return .missing,
             .playing => {},
         }
 
@@ -375,6 +466,7 @@ const JitterBuffer = struct {
         // jb.packets.commitRead(packet_slices.index + slot);
         // jb.expected_next_seq += 1;
         jb.state = .buffering;
+
         return .missing;
     }
 
@@ -431,7 +523,7 @@ const JitterBuffer = struct {
             }
         }
 
-        pub fn write(pb: *PacketRing, gpa: Allocator, seq: u32, body: []u8) !void {
+        pub fn write(pb: *PacketRing, io: Io, gpa: Allocator, ready: *Io.Event, seq: u32, body: []u8) !void {
             const max_data = media.Video.data_per_chunk;
             const video_header, const video_data = media.Video.parse(body) orelse {
                 log.debug("discarding malformed packet", .{});
@@ -491,7 +583,10 @@ const JitterBuffer = struct {
                     }
 
                     // Ignore duplicates
-                    if (data.seen_chunks.isSet(video_header.chunk_id)) return;
+                    if (data.seen_chunks.isSet(video_header.chunk_id)) {
+                        std.debug.panic("received duplicate chunk! ({})", .{video_header.chunk_id});
+                        return;
+                    }
 
                     data.seen_chunks.set(video_header.chunk_id);
                     if (video_header.chunk_id == data.total_chunks - 1) {
@@ -519,6 +614,7 @@ const JitterBuffer = struct {
                         pb.indexes[mask(w)] = idx;
                         pb.indexes[mask(w + slot)] = old_first;
                         pb.write_index.store(mask2(w + 1), .release);
+                        ready.set(io);
                     }
 
                     return;
@@ -547,7 +643,7 @@ const JitterBuffer = struct {
         /// The first slice contains older data.
         pub fn slices(pb: *PacketRing) Slices {
             const w = pb.write_index.load(.acquire);
-            const r = pb.read_index.load(.acquire);
+            const r = pb.read_index.load(.monotonic);
             const l = len(w, r);
 
             const slice1_start = mask(r);
@@ -568,7 +664,7 @@ const JitterBuffer = struct {
 
         pub fn emptySlices(pr: *PacketRing) Slices {
             const w = pr.write_index.load(.acquire);
-            const r = pr.read_index.load(.acquire);
+            const r = pr.read_index.load(.monotonic);
             const l = len(w, r);
             const free = buffer_len - l;
 
@@ -585,7 +681,7 @@ const JitterBuffer = struct {
         }
 
         pub fn commitRead(pb: *PacketRing, new_read_index: usize) void {
-            pb.read_index.store(mask2(new_read_index), .release);
+            pb.read_index.store(mask2(new_read_index), .monotonic);
         }
 
         fn mask(index: usize) usize {

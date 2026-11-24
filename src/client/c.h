@@ -11,6 +11,7 @@
 // ffmpeg
 #include "libavcodec/avcodec.h"
 #include "libavutil/avutil.h"
+#include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "libswscale/swscale.h"
 #include <errno.h>
