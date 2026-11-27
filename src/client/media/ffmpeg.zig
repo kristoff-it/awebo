@@ -485,7 +485,6 @@ pub const Decoder = struct {
 
         d.packet.data = @constCast(encoded.ptr);
         d.packet.size = @intCast(encoded.len);
-        // self.packet.buf = null;
 
         var ret = c.avcodec_send_packet(d.ctx, d.packet);
         if (ret < 0) return error.SendPacketFailed;

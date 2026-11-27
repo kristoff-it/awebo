@@ -13,10 +13,10 @@ const log = std.log.scoped(.@"video-stream");
 const ffmpeg = @import("ffmpeg.zig");
 
 /// Space for buffered packets. Must be a power of 2.
-const buffer_len: usize = 32;
+const buffer_len: usize = 8;
 /// Number of packets that must be present in the buffer
 /// before we start playing. Must be lower than `buffer_len`
-const start_count = 2; // 2 frames @ 33ms = 66ms jitter
+const start_count = 4; // 4 frames @ 33ms = 133ms jitter
 comptime {
     assert(std.math.isPowerOfTwo(buffer_len));
     assert(start_count < buffer_len);
@@ -209,7 +209,7 @@ fn videoThreadFallible(vs: *VideoStream) !void {
 
                 const ready_time = Io.Clock.awake.now(io);
 
-                log.debug("decoding took {}ms {s}", .{
+                if (false) log.debug("decoding took {}ms {s}", .{
                     before_decoding.durationTo(ready_time).toMilliseconds(),
                     if (d.data.keyframe) "(k)" else "",
                 });
@@ -394,7 +394,7 @@ const JitterBuffer = struct {
             1...start_count => {},
             else => if (jb.state != .playing) {
                 var discarded: usize = 0;
-                for (packet_slices.array()) |slice| for (slice) |idx| {
+                outer: for (packet_slices.array()) |slice| for (slice) |idx| {
                     const meta = &jb.packets.meta[idx];
                     const data = &jb.packets.data[idx];
                     if (!data.keyframe) {
@@ -402,7 +402,7 @@ const JitterBuffer = struct {
                         discarded += 1;
                     } else {
                         jb.expected_next_seq = meta.seq;
-                        break;
+                        break :outer;
                     }
                 };
                 if (discarded > 0) {
@@ -423,16 +423,16 @@ const JitterBuffer = struct {
 
         assert(packet_slices.len() > 0); // invariant
 
-        // for (packet_slices.array()) |slice| for (slice) |idx| {
-        //     log.debug("r [{}] -> {} {s}", .{
-        //         idx,
-        //         jb.packets.meta[idx].seq,
-        //         if (jb.packets.data[idx].keyframe) "K" else "",
-        //     });
-        // };
+        if (false) for (packet_slices.array()) |slice| for (slice) |idx| {
+            log.debug("  [{}] -> {} {s}", .{
+                idx,
+                jb.packets.meta[idx].seq,
+                if (jb.packets.data[idx].keyframe) "K" else "",
+            });
+        };
 
         var slot: usize = 0;
-        for (packet_slices.array()) |slice| for (slice) |idx| {
+        outer: for (packet_slices.array()) |slice| for (slice) |idx| {
             slot += 1;
 
             const next_meta = &jb.packets.meta[idx];
@@ -446,6 +446,7 @@ const JitterBuffer = struct {
             if (slot > 1) jb.packets.commitRead(packet_slices.index + slot - 1);
 
             if (next_meta.seq == jb.expected_next_seq) {
+                if (false) log.debug("jitter: read seq={d}", .{next_meta.seq});
                 jb.expected_next_seq += 1;
                 return .{
                     .decode = .{
@@ -457,7 +458,7 @@ const JitterBuffer = struct {
                 };
             }
 
-            break;
+            break :outer;
         };
 
         // We looked through the full buffer and only found old data
@@ -536,92 +537,117 @@ const JitterBuffer = struct {
 
             pb.newest_seq = @max(pb.newest_seq, seq);
             const oldest_acceptable_seq = pb.newest_seq -| empty_slices.len();
-
-            if (video_header.chunk_id == 0) {
-                // log.debug("received seq {}", .{seq});
+            if (seq < oldest_acceptable_seq) {
+                // This chunk is from a long time ago and only just got to us somehow, ignore it.
+                return;
             }
 
-            // for (empty_slices.array()) |slice| for (slice) |idx| {
-            //     const meta = &pb.meta[idx];
-            //     const data = &pb.data[idx];
-            //     log.debug("[{}] = seq {} chunks: {}, keyframe: {} ", .{
-            //         idx,
-            //         meta.seq,
-            //         data.seen_chunks.count(),
-            //         data.keyframe,
-            //     });
-            // };
+            if (false) log.debug("recv: seq=0x{x:0>3} chunk=0x{x:0>3}", .{ seq, video_header.chunk_id });
 
-            var slot: usize = 0;
-            for (empty_slices.array()) |slice| for (slice) |idx| {
-                defer slot += 1;
-
+            if (false) for (empty_slices.array()) |slice| for (slice) |idx| {
                 const meta = &pb.meta[idx];
                 const data = &pb.data[idx];
-                if (seq == meta.seq or meta.seq == 0 or meta.seq < oldest_acceptable_seq) {
-                    if (meta.seq == 0 or meta.seq < oldest_acceptable_seq) {
-                        // none of the previous slots had same seq, must start a new one
-                        const total_size = max_data * @as(usize, video_header.total_chunks);
-
-                        const old = meta.seq;
-                        meta.seq = seq;
-                        errdefer meta.seq = old;
-
-                        if (data.buffer.len < total_size) {
-                            const oldb = data.buffer;
-                            data.buffer = try gpa.alloc(u8, total_size);
-                            gpa.free(oldb);
-                            var oldc = data.seen_chunks;
-                            data.seen_chunks = try .initEmpty(gpa, video_header.total_chunks);
-                            oldc.deinit(gpa);
-                        } else {
-                            data.seen_chunks.unsetAll();
-                        }
-
-                        data.keyframe = video_header.keyframe;
-                        data.total_chunks = video_header.total_chunks;
-                    }
-
-                    // Ignore duplicates
-                    if (data.seen_chunks.isSet(video_header.chunk_id)) {
-                        std.debug.panic("received duplicate chunk! ({})", .{video_header.chunk_id});
-                        return;
-                    }
-
-                    data.seen_chunks.set(video_header.chunk_id);
-                    if (video_header.chunk_id == data.total_chunks - 1) {
-                        assert(video_data.len > 0);
-                        assert(video_data.len <= max_data);
-
-                        data.last_chunk_len = @intCast(video_data.len);
-                        @memcpy(
-                            data.buffer[max_data * video_header.chunk_id ..][0..video_data.len],
-                            video_data,
-                        );
-                    } else {
-                        assert(video_data.len == max_data);
-                        @memcpy(
-                            data.buffer[max_data * video_header.chunk_id ..][0..max_data],
-                            video_data[0..max_data],
-                        );
-                    }
-                    const seen = data.seen_chunks.count();
-                    if (seen == data.total_chunks) {
-                        // packet is fully reconstructed, ship it!
-                        // log.debug("packet {} ready, submitting!", .{seq});
-                        const w = empty_slices.index;
-                        const old_first = pb.indexes[mask(w)];
-                        pb.indexes[mask(w)] = idx;
-                        pb.indexes[mask(w + slot)] = old_first;
-                        pb.write_index.store(mask2(w + 1), .release);
-                        ready.set(io);
-                    }
-
-                    return;
+                if (meta.seq == 0) {
+                    log.debug("  [{}] = seq {}", .{ idx, meta.seq });
+                } else {
+                    log.debug("  [{}] = seq {} chunks: {}/{d}, keyframe: {}", .{
+                        idx,
+                        meta.seq,
+                        data.seen_chunks.count(),
+                        data.total_chunks,
+                        data.keyframe,
+                    });
                 }
             };
 
-            return error.Full;
+            var slot: usize = 0;
+            var reuse_slot: ?usize = null;
+            outer: for (empty_slices.array()) |slice| {
+                for (slice) |idx| {
+                    const meta = &pb.meta[idx];
+                    if (seq == meta.seq) {
+                        // We have already started building this packet!
+                        break :outer;
+                    } else if (meta.seq == 0) {
+                        // This is the first chunk we have seen of this packet, so we'll start
+                        // building it in this free slot.
+                        break :outer;
+                    } else if (meta.seq < oldest_acceptable_seq) {
+                        reuse_slot = slot;
+                    }
+                    slot += 1;
+                }
+            } else {
+                // This is the first chunk we have seen of this packet, so we'll start building it
+                // in some slot. The slot we reuse can be any which contains a packet so old we
+                // don't care about it any more.
+                slot = reuse_slot orelse return error.Full;
+            }
+
+            const idx = pb.indexes[mask(empty_slices.index + slot)];
+
+            const meta = &pb.meta[idx];
+            const data = &pb.data[idx];
+
+            if (meta.seq != seq) {
+                // none of the in-progress slots had same seq, must start a new one
+                assert(meta.seq == 0 or meta.seq < oldest_acceptable_seq);
+
+                const total_size = max_data * @as(usize, video_header.total_chunks);
+
+                const old = meta.seq;
+                meta.seq = seq;
+                errdefer meta.seq = old;
+
+                if (data.buffer.len < total_size) {
+                    const oldb = data.buffer;
+                    data.buffer = try gpa.alloc(u8, total_size);
+                    gpa.free(oldb);
+                    var oldc = data.seen_chunks;
+                    data.seen_chunks = try .initEmpty(gpa, video_header.total_chunks);
+                    oldc.deinit(gpa);
+                } else {
+                    data.seen_chunks.unsetAll();
+                }
+
+                data.keyframe = video_header.keyframe;
+                data.total_chunks = video_header.total_chunks;
+            }
+
+            // Ignore duplicates
+            if (data.seen_chunks.isSet(video_header.chunk_id)) {
+                std.debug.panic("received duplicate chunk! ({})", .{video_header.chunk_id});
+                return;
+            }
+
+            data.seen_chunks.set(video_header.chunk_id);
+            if (video_header.chunk_id == data.total_chunks - 1) {
+                assert(video_data.len > 0);
+                assert(video_data.len <= max_data);
+
+                data.last_chunk_len = @intCast(video_data.len);
+                @memcpy(
+                    data.buffer[max_data * video_header.chunk_id ..][0..video_data.len],
+                    video_data,
+                );
+            } else {
+                assert(video_data.len == max_data);
+                @memcpy(
+                    data.buffer[max_data * video_header.chunk_id ..][0..max_data],
+                    video_data[0..max_data],
+                );
+            }
+            const seen = data.seen_chunks.count();
+            if (seen == data.total_chunks) {
+                // packet is fully reconstructed, ship it!
+                // log.debug("packet {} ready, submitting!", .{seq});
+                const w = empty_slices.index;
+                const old_first = pb.indexes[mask(w)];
+                pb.indexes[mask(w)] = idx;
+                pb.indexes[mask(w + slot)] = old_first;
+                pb.write_index.store(mask2(w + 1), .release);
+                ready.set(io);
+            }
         }
 
         pub const Slices = struct {

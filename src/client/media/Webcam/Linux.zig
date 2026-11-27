@@ -11,6 +11,7 @@ const ScreenCapture = @import("../Screen.zig");
 const WebcamCapture = @import("../Webcam.zig");
 const c = @import("c");
 const log = std.log.scoped(.v4l2);
+const errno = std.os.linux.errno;
 
 pub const Webcam = struct {};
 pub const LinuxFrame = struct {
@@ -90,7 +91,7 @@ pub fn discoverDevicesAndListen(i: *Interface) !void {
                 },
             });
 
-            switch (std.posix.errno(result.device_io_control)) {
+            switch (errno(result.device_io_control)) {
                 else => continue,
                 .SUCCESS => {},
             }
@@ -166,7 +167,7 @@ pub fn startCapture(i: *Interface, device: ?*WebcamCapture.Device, width: i32, h
     i.capture_thread = try core.io.concurrent(captureThread, .{ i, device, width, height, fps });
 }
 
-pub fn captureThread(i: *Interface, device: ?*WebcamCapture.Device, width: i32, height: i32, fps: i32) void {
+fn captureThread(i: *Interface, device: ?*WebcamCapture.Device, width: i32, height: i32, fps: i32) void {
     captureThreadFallible(i, device, width, height, fps) catch |err| switch (err) {
         error.Canceled => {
             // This indicates a non-error exit of the capture loop.
@@ -186,7 +187,7 @@ pub fn captureThread(i: *Interface, device: ?*WebcamCapture.Device, width: i32, 
     };
 }
 
-pub fn captureThreadFallible(i: *Interface, device: ?*WebcamCapture.Device, width: i32, height: i32, fps: i32) !void {
+fn captureThreadFallible(i: *Interface, device: ?*WebcamCapture.Device, width: i32, height: i32, fps: i32) !noreturn {
     const wc: *WebcamCapture = @alignCast(@fieldParentPtr("os", i));
     const core: *Core = @alignCast(@fieldParentPtr("webcam_capture", wc));
     const io = core.io;
@@ -233,7 +234,6 @@ pub fn captureThreadFallible(i: *Interface, device: ?*WebcamCapture.Device, widt
         ctx.width = @intCast(src.width);
         ctx.height = @intCast(src.height);
         ctx.framerate = .{ .num = @intCast(src.fps), .den = 1 };
-        ctx.pix_fmt = c.AV_PIX_FMT_YUV420P;
 
         ctx.flags = c.AV_CODEC_FLAG_LOW_DELAY;
         ctx.flags2 = c.AV_CODEC_FLAG2_FAST;
@@ -284,32 +284,8 @@ pub fn captureThreadFallible(i: *Interface, device: ?*WebcamCapture.Device, widt
         c.av_frame_free(@ptrCast(&decoder_frame));
     };
 
-    const src_fmt = switch (src.pixfmt) {
-        c.V4L2_PIX_FMT_MJPEG => c.AV_PIX_FMT_YUV420P, // output from decoding mjpeg
-        c.V4L2_PIX_FMT_YUYV => c.AV_PIX_FMT_YUYV422,
-        else => std.debug.panic("missing support for this pixel format", .{}),
-    };
-
-    const sws_context = c.sws_getContext(
-        //src
-        @intCast(src.width),
-        @intCast(src.height),
-        src_fmt,
-
-        //dest
-        @intCast(width),
-        @intCast(height),
-        c.AV_PIX_FMT_NV12,
-        c.SWS_FAST_BILINEAR,
-
-        //filters
-        null,
-        null,
-        null,
-    ) orelse {
-        std.debug.panic("ffmpeg sws context creation failed", .{});
-    };
-    defer c.sws_freeContext(sws_context);
+    var maybe_sws_context: ?*c.SwsContext = null;
+    defer if (maybe_sws_context) |sws_context| c.sws_freeContext(sws_context);
 
     const c_width: usize = @intCast(width);
     const c_height: usize = @intCast(height);
@@ -355,7 +331,7 @@ pub fn captureThreadFallible(i: *Interface, device: ?*WebcamCapture.Device, widt
             },
         });
 
-        switch (std.posix.errno(result.device_io_control)) {
+        switch (errno(result.device_io_control)) {
             else => |err| {
                 log.err("unable to setup v4l2 memory buffers ({t}, {})", .{
                     err,
@@ -396,7 +372,6 @@ pub fn captureThreadFallible(i: *Interface, device: ?*WebcamCapture.Device, widt
     for (buffers) |*b| {
         b.info = std.mem.zeroes(c.v4l2_buffer);
         b.info.type = c.V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        b.info.memory = c.V4L2_MEMORY_MMAP;
         b.info.index = @intCast(init_index);
 
         const result = try io.operate(.{
@@ -407,7 +382,7 @@ pub fn captureThreadFallible(i: *Interface, device: ?*WebcamCapture.Device, widt
             },
         });
 
-        switch (std.posix.errno(result.device_io_control)) {
+        switch (errno(result.device_io_control)) {
             else => |err| {
                 log.err("unable query buffer info ({t}, {})", .{
                     err,
@@ -416,6 +391,11 @@ pub fn captureThreadFallible(i: *Interface, device: ?*WebcamCapture.Device, widt
                 return error.Failed;
             },
             .SUCCESS => {},
+        }
+
+        if (b.info.memory != c.V4L2_MEMORY_MMAP) {
+            log.err("buffer index {d} was in memory mode '{d}', wanted V4L2_MEMORY_MMAP", .{ init_index, b.info.memory });
+            return error.Failed;
         }
 
         log.debug("mmapping #{} {any}", .{ init_index, b.info });
@@ -442,7 +422,7 @@ pub fn captureThreadFallible(i: *Interface, device: ?*WebcamCapture.Device, widt
             },
         });
 
-        switch (std.posix.errno(result.device_io_control)) {
+        switch (errno(result.device_io_control)) {
             else => |err| {
                 log.err("unable enqueue buffer ({t}, {})", .{
                     err,
@@ -454,7 +434,7 @@ pub fn captureThreadFallible(i: *Interface, device: ?*WebcamCapture.Device, widt
         }
     }
 
-    var buf_type = c.V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    var buf_type: u32 = c.V4L2_BUF_TYPE_VIDEO_CAPTURE;
     {
         const result = try io.operate(.{
             .device_io_control = .{
@@ -464,7 +444,7 @@ pub fn captureThreadFallible(i: *Interface, device: ?*WebcamCapture.Device, widt
             },
         });
 
-        switch (std.posix.errno(result.device_io_control)) {
+        switch (errno(result.device_io_control)) {
             else => |err| {
                 log.err("unable to start streaming ({t}, {})", .{
                     err,
@@ -488,7 +468,7 @@ pub fn captureThreadFallible(i: *Interface, device: ?*WebcamCapture.Device, widt
         });
 
         if (try_result) |result| {
-            switch (std.posix.errno(result.device_io_control)) {
+            switch (errno(result.device_io_control)) {
                 else => |err| {
                     log.warn("error while stopping streaming ({t}, {})", .{
                         err,
@@ -534,7 +514,7 @@ pub fn captureThreadFallible(i: *Interface, device: ?*WebcamCapture.Device, widt
                 },
             };
 
-            switch (std.posix.errno(result.device_io_control)) {
+            switch (errno(result.device_io_control)) {
                 else => |err| {
                     log.err("unable to dequeue buffer ({t}, {})", .{
                         err,
@@ -562,35 +542,122 @@ pub fn captureThreadFallible(i: *Interface, device: ?*WebcamCapture.Device, widt
         };
 
         const b = buffers[buffer_info.index];
-        const src_planes: [8]?[*]const u8, const src_strides: [8]c_int = if (src.pixfmt != c.V4L2_PIX_FMT_MJPEG) .{
-            .{ b.bytes.ptr, null, null, null, null, null, null, null },
-            .{ @intCast(src.stride), 0, 0, 0, 0, 0, 0, 0 },
-        } else blk: {
-            decoder_packet.data = b.bytes.ptr;
-            decoder_packet.size = @intCast(buffer_info.length);
-            {
-                const ret = c.avcodec_send_packet(decoder, decoder_packet);
-                if (ret < 0) {
-                    log.err("avcodec_send_packet failed", .{});
-                    awebo_frame.release();
-                    continue;
+        const src_format: c.AVPixelFormat, const src_color_is_full_range: bool, const src_planes: [8]?[*]const u8, const src_strides: [8]c_int = switch (src.pixfmt) {
+            else => {
+                log.err(
+                    "missing support for V4L2 pixel format '{s}'",
+                    .{@as([4]u8, @bitCast(src.pixfmt))},
+                );
+                return error.Failed;
+            },
+            c.V4L2_PIX_FMT_YUYV => .{
+                c.AV_PIX_FMT_YUYV422,
+                false,
+                .{ b.bytes.ptr, null, null, null, null, null, null, null },
+                .{ @intCast(src.stride), 0, 0, 0, 0, 0, 0, 0 },
+            },
+            c.V4L2_PIX_FMT_MJPEG => blk: {
+                decoder_packet.data = b.bytes.ptr;
+                decoder_packet.size = @intCast(buffer_info.length);
+                {
+                    const ret = c.avcodec_send_packet(decoder, decoder_packet);
+                    if (ret < 0) {
+                        log.err("avcodec_send_packet failed", .{});
+                        awebo_frame.release();
+                        continue;
+                    }
                 }
-            }
 
-            {
-                const ret = c.avcodec_receive_frame(decoder, decoder_frame);
-                if (ret < 0) {
-                    log.err("avcodec_receive_frame failed", .{});
-                    awebo_frame.release();
-                    continue;
+                {
+                    const ret = c.avcodec_receive_frame(decoder, decoder_frame);
+                    if (ret < 0) {
+                        log.err("avcodec_receive_frame failed", .{});
+                        awebo_frame.release();
+                        continue;
+                    }
                 }
-            }
 
-            break :blk .{
-                decoder_frame.data,
-                decoder_frame.linesize,
-            };
+                break :blk .{
+                    // These formats are deprecated ways to communicate the color range which we
+                    // will instead get from `decoder_frame.color_range`. Unfortunately, libavcodec
+                    // gives us the deprecated formats anyway, so it's our job to convert to the
+                    // correct ones so that libswscale doesn't scream at us.
+                    switch (decoder_frame.format) {
+                        c.AV_PIX_FMT_YUVJ420P => c.AV_PIX_FMT_YUV420P,
+                        c.AV_PIX_FMT_YUVJ422P => c.AV_PIX_FMT_YUV422P,
+                        c.AV_PIX_FMT_YUVJ444P => c.AV_PIX_FMT_YUV444P,
+                        c.AV_PIX_FMT_YUVJ440P => c.AV_PIX_FMT_YUV440P,
+                        c.AV_PIX_FMT_YUVJ411P => c.AV_PIX_FMT_YUV411P,
+                        else => |format| format,
+                    },
+                    decoder_frame.color_range == c.AVCOL_RANGE_JPEG,
+                    decoder_frame.data,
+                    decoder_frame.linesize,
+                };
+            },
         };
+
+        const sws_context = c.sws_getCachedContext(
+            maybe_sws_context,
+
+            @intCast(src.width),
+            @intCast(src.height),
+            src_format,
+
+            @intCast(width),
+            @intCast(height),
+            c.AV_PIX_FMT_NV12,
+
+            c.SWS_FAST_BILINEAR,
+
+            // filters
+            null,
+            null,
+
+            null,
+        ) orelse {
+            @panic("ffmpeg sws context creation failed");
+        };
+        maybe_sws_context = sws_context;
+
+        // Annoyingly, `sws_getCachedContext` doesn't allow setting the color range, so we need to
+        // do that ourself. Even more annoyingly, the only way to do that is with a setter for like
+        // a million attributes we do not give a fuck about.
+        {
+            var inv_table: ?[*]c_int = undefined;
+            var table: ?[*]c_int = undefined;
+            var src_range: c_int = undefined;
+            var dst_range: c_int = undefined;
+            var brightness: c_int = undefined;
+            var contrast: c_int = undefined;
+            var saturation: c_int = undefined;
+            if (c.sws_getColorspaceDetails(
+                sws_context,
+                &inv_table,
+                &src_range,
+                &table,
+                &dst_range,
+                &brightness,
+                &contrast,
+                &saturation,
+            ) < 0) {
+                @panic("ffmpeg sws_getColorspaceDetails failed");
+            }
+            if (src_range != @intFromBool(src_color_is_full_range)) {
+                // This sometimes fails, but libswscale's own calls to this damn function ignore the
+                // errors, so I'm going to do that too! :)
+                _ = c.sws_setColorspaceDetails(
+                    sws_context,
+                    inv_table,
+                    @intFromBool(src_color_is_full_range),
+                    table,
+                    dst_range,
+                    brightness,
+                    contrast,
+                    saturation,
+                );
+            }
+        }
 
         const nv12_planes: [4:null]?[*]u8 = .{
             awebo_frame.bytes[0..],
@@ -601,7 +668,7 @@ pub fn captureThreadFallible(i: *Interface, device: ?*WebcamCapture.Device, widt
 
         const nv12_strides: [4]c_int = .{ @intCast(width), @intCast(width), 0, 0 };
 
-        _ = c.sws_scale(
+        assert(c.sws_scale(
             sws_context,
             &src_planes,
             &src_strides,
@@ -609,7 +676,7 @@ pub fn captureThreadFallible(i: *Interface, device: ?*WebcamCapture.Device, widt
             @intCast(src.height),
             &nv12_planes,
             &nv12_strides,
-        );
+        ) == height);
 
         // Release v4l2 frame
         {
@@ -621,7 +688,7 @@ pub fn captureThreadFallible(i: *Interface, device: ?*WebcamCapture.Device, widt
                 },
             });
 
-            switch (std.posix.errno(result.device_io_control)) {
+            switch (errno(result.device_io_control)) {
                 else => |err| {
                     log.err("unable to re-queue buffer ({t}, {})", .{
                         err,
@@ -679,7 +746,7 @@ fn negotiateFormat(io: Io, device_file: Io.File) !SrcFormat {
             },
         });
 
-        switch (std.posix.errno(result.device_io_control)) {
+        switch (errno(result.device_io_control)) {
             else => |err| {
                 log.err("unable to query pixel format ({t}, {})", .{
                     err,
@@ -747,7 +814,7 @@ fn negotiateFormat(io: Io, device_file: Io.File) !SrcFormat {
             },
         });
 
-        switch (std.posix.errno(change_result.device_io_control)) {
+        switch (errno(change_result.device_io_control)) {
             else => |err| {
                 log.err("unable to change pixel format ({t}, {})", .{
                     err,
@@ -771,7 +838,7 @@ fn negotiateFormat(io: Io, device_file: Io.File) !SrcFormat {
             },
         });
 
-        switch (std.posix.errno(result.device_io_control)) {
+        switch (errno(result.device_io_control)) {
             else => |err| {
                 log.err("unable to get stream info ({t}, {})", .{
                     err,
@@ -801,7 +868,7 @@ fn negotiateFormat(io: Io, device_file: Io.File) !SrcFormat {
             },
         });
 
-        switch (std.posix.errno(result.device_io_control)) {
+        switch (errno(result.device_io_control)) {
             else => |err| {
                 log.err("unable to set fps to 1/30 ({t}, {})", .{
                     err,
